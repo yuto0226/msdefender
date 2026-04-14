@@ -19,14 +19,14 @@ Extracting cabinet: ./mpam-fe.exe
 
 ## Signatures
 
-Use extractsig.py to extract all signatures from the .vdm files.
+Use `extractvdm.py` to extract all signatures from the .vdm files.
 
 ```bash
-uv run .\extractsig.py .\bin\1.447.226.0\mpasbase.vdm .\bin\1.447.226.0\mpasdlta.vdm
-uv run .\extractsig.py .\bin\1.447.226.0\mpavbase.vdm .\bin\1.447.226.0\mpavdlta.vdm
+uv run ./extractvdm.py ./bin/1.447.226.0/mpasbase.vdm ./bin/1.447.226.0/mpasdlta.vdm
+uv run ./extractvdm.py ./bin/1.447.226.0/mpavbase.vdm ./bin/1.447.226.0/mpavdlta.vdm
 ```
 
-Run sigstats.py to view the statistics.
+Run `sigstats.py` to view the statistics.
 
 ```shell-session
 $ uv run .\sigstats.py mpav.sig --top 10
