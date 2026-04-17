@@ -1,4 +1,6 @@
-# claude
+# Agents
+CLAUDE.md
+AGENTS.md
 .claude/settings.local.json
 
 # Python
@@ -7,4 +9,7 @@ __pycache__/
 # Artifact
 bin/*
 sig/*
+docs/*
+tests/*
 *.sig
+.worktrees/
