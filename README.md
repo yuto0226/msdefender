@@ -1,5 +1,18 @@
 # Microsoft Defender
 
+## 依版本下載 engine
+
+```powershell
+uv run geteng.py list
+uv run geteng.py update
+uv run geteng.py download 1.443.6.0
+uv run geteng.py download 1.447.224.0 1.447.226.0
+```
+
+`list` 列出 package、engine 與發布日期；`update` 更新 `defender_version.json`；`download` 保留 `mpam-fe.exe`，並將套件內容解到 `bin/<package>/<arch>/extracted/`。uv 依 inline metadata 處理 Requests、Rich 與 tqdm 相依套件；解包使用 7-Zip 或 cabextract。
+
+## 手動下載
+
 Download `mpam-fe.exe` from the Microsoft Security Intelligence updates page.
 
 > <https://www.microsoft.com/en-us/wdsi/defenderupdates>
@@ -30,7 +43,7 @@ Run `sigstats.py` to view the statistics.
 
 ```shell-session
 $ uv run .\sigstats.py mpav.sig --top 10
-[i] mpav.sig: 3527409 records, 62 unique types
+[*] mpav.sig: 3527409 records, 62 unique types
 
 [mpav.sig]
 total records: 3,527,409
