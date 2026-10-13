@@ -1,4 +1,4 @@
-"""Lightweight debug/logging helpers with ANSI colors and hexdump."""
+"""Logging helpers with ANSI colors and hexdump."""
 
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ def _fmt_message(fmt: str, args: tuple[Any, ...]) -> str:
 def log(
     fmt: str,
     *args: Any,
-    symbol: str = "[i]",
+    symbol: str = "[*]",
     color: str = ANSI_BLUE,
     to_err: bool = False,
     template: str = "{symbol} {context}\n",
@@ -176,7 +176,7 @@ def warn(fmt: str, *args: Any) -> None:
 
 
 def info(fmt: str, *args: Any) -> None:
-    log(fmt, *args, symbol="[i]", color=ANSI_BLUE)
+    log(fmt, *args, symbol="[*]", color=ANSI_BLUE)
 
 
 def ok(fmt: str, *args: Any) -> None:
@@ -184,7 +184,7 @@ def ok(fmt: str, *args: Any) -> None:
 
 
 def debug(fmt: str, *args: Any) -> None:
-    log(fmt, *args, symbol="[d]", color=ANSI_CYAN)
+    log(fmt, *args, symbol="[#]", color=ANSI_CYAN)
 
 
 # Helper
