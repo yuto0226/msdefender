@@ -4,9 +4,13 @@ from typing import Any
 
 from .core import FamilySpec
 from .types.bm_info import SPEC as BM_INFO_SPEC
+from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 
 DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
-    {BM_INFO_SPEC.type_byte: BM_INFO_SPEC}
+    {
+        spec.type_byte: spec
+        for spec in (SIGTREE_SPEC, SIGTREE_EXT_SPEC, BM_INFO_SPEC, SIGTREE_BM_SPEC)
+    }
 )
 
 

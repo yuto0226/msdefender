@@ -9,7 +9,16 @@ from .core import (
 )
 from .decode import decode_payload
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
-from .types import BMInfo, parse_bm_info, render_bm_info
+from .types import (
+    BMInfo,
+    SigtreeEntry,
+    SigtreeParam,
+    SigtreePayload,
+    parse_bm_info,
+    parse_sigtree,
+    render_bm_info,
+    render_sigtree,
+)
 
 __all__ = [
     "DEFAULT_REGISTRY",
@@ -20,10 +29,15 @@ __all__ = [
     "FormatResult",
     "Parser",
     "Renderer",
+    "SigtreeEntry",
+    "SigtreeParam",
+    "SigtreePayload",
     "build_registry",
     "decode_payload",
     "get_spec",
     "parse_bm_info",
+    "parse_sigtree",
     "render_bm_info",
+    "render_sigtree",
     "type_name",
 ]
