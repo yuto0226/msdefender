@@ -3,8 +3,11 @@ from types import MappingProxyType
 from typing import Any
 
 from .core import FamilySpec
+from .types.bm_info import SPEC as BM_INFO_SPEC
 
-DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType({})
+DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
+    {BM_INFO_SPEC.type_byte: BM_INFO_SPEC}
+)
 
 
 def build_registry(

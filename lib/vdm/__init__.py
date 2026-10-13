@@ -8,6 +8,7 @@ from .core import (
 )
 from .decode import decode_payload
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
+from .types import BMInfo, parse_bm_info, render_bm_info
 
 __all__ = [
     "DisplaySection",
@@ -20,4 +21,7 @@ __all__ = [
     "DEFAULT_REGISTRY",
     "build_registry",
     "get_spec",
+    "BMInfo",
+    "parse_bm_info",
+    "render_bm_info",
 ]
