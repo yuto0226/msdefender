@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 Field = tuple[str, str]
 
@@ -23,7 +23,7 @@ Renderer = Callable[[T], FormatResult]
 
 
 @dataclass(frozen=True, slots=True)
-class FamilySpec(Generic[T]):
+class FamilySpec[T]:
     type_byte: int
     name: str
     parser: Parser[T]

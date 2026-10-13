@@ -121,7 +121,7 @@ def _fmt_message(fmt: str, args: tuple[Any, ...]) -> str:
         return str(fmt)
     try:
         return fmt % args
-    except Exception:
+    except Exception:  # noqa: BLE001 - diagnostic fallback must catch formatting failures
         return "<format error>"
 
 
@@ -137,7 +137,7 @@ def log(
     symbol += ANSI_RESET
     try:
         rendered = template.format(symbol=symbol, context=context)
-    except Exception:
+    except Exception:  # noqa: BLE001 - rendering fallback must survive template failures
         rendered = f"{symbol} {context}\n"
 
     if not rendered.endswith("\n"):

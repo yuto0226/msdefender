@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import struct
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from lib.debug import warn
-
 
 # Wire-format record iterator (in-memory)
 

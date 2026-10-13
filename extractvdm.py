@@ -54,7 +54,7 @@ def _parse_rmdx_header(data: bytes, rmdx_off: int) -> dict:
         raise ValueError(f"File too short for RMDX header at 0x{rmdx_off:X}")
 
     words = struct.unpack_from("<16I", data, rmdx_off)
-    magic, version, unk08, flags, unk10, unk14, data_rel_off, uncomp_size = words[:8]
+    magic, version, _unk08, flags, _unk10, _unk14, data_rel_off, uncomp_size = words[:8]
 
     if magic != RMDX_MAGIC:
         raise ValueError(f"Bad RMDX magic: 0x{magic:08X}")

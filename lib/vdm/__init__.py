@@ -12,18 +12,18 @@ from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 from .types import BMInfo, parse_bm_info, render_bm_info
 
 __all__ = [
-    "type_name",
+    "DEFAULT_REGISTRY",
+    "BMInfo",
     "DisplaySection",
     "FamilySpec",
     "Field",
     "FormatResult",
     "Parser",
     "Renderer",
-    "decode_payload",
-    "DEFAULT_REGISTRY",
     "build_registry",
+    "decode_payload",
     "get_spec",
-    "BMInfo",
     "parse_bm_info",
     "render_bm_info",
+    "type_name",
 ]

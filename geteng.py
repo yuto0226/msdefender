@@ -34,7 +34,7 @@ import subprocess
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Never
 
@@ -251,7 +251,7 @@ def rmdx_metadata(path: Path) -> dict:
                         timestamp = None
                         if 946684800 <= raw_value < 4102444800:
                             timestamp = (
-                                datetime.fromtimestamp(raw_value, timezone.utc)
+                                datetime.fromtimestamp(raw_value, UTC)
                                 .isoformat()
                                 .replace("+00:00", "Z")
                             )
@@ -395,7 +395,7 @@ def fetch_package(url: str, path: Path, timeout: float) -> dict:
         "bytes": count,
         "sha256": sha256.hexdigest(),
         "content_md5_verified": "content-md5" in headers,
-        "downloaded_at": datetime.now(timezone.utc).isoformat(),
+        "downloaded_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -732,7 +732,7 @@ def observed_records() -> list[dict[str, Any]]:
                         "platform_version": None,
                         "release_date": None,
                         "observed_at": datetime.fromtimestamp(
-                            file.stat().st_mtime, timezone.utc
+                            file.stat().st_mtime, UTC
                         ).isoformat(),
                         "kind": "local",
                         "needs_review": False,
@@ -954,7 +954,7 @@ def update_catalog(
 
     data = {
         "schema_version": 2,
-        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "collected_at": datetime.now(UTC).isoformat(),
         "scope": "Defender release and DISM notes, WDSI package timestamps, HTTP capture, and local samples. Daily signature coverage and download availability are incomplete.",
         "sources": sources,
         "versions": records,
@@ -981,11 +981,8 @@ def load_or_update_catalog(args: argparse.Namespace) -> dict:
             try:
                 collected = datetime.fromisoformat(collected_at)
                 if collected.tzinfo is None:
-                    collected = collected.replace(tzinfo=timezone.utc)
-                stale = (
-                    datetime.now(timezone.utc) - collected.astimezone(timezone.utc)
-                    >= CATALOG_MAX_AGE
-                )
+                    collected = collected.replace(tzinfo=UTC)
+                stale = datetime.now(UTC) - collected.astimezone(UTC) >= CATALOG_MAX_AGE
             except ValueError:
                 stale = True
     if not stale:

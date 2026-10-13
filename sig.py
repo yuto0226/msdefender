@@ -43,7 +43,6 @@ from lib.debug import (
 )
 from lib.threat import parse_threat_id, parse_threat_name
 from lib.utils import iter_records_from_file, iter_records_with_context
-
 from lib.vdm import type_name as _type_name
 
 # Semantic annotation tables
@@ -1223,10 +1222,12 @@ def fmt_sigtree(p: bytes) -> list[Field]:
         fields.append(
             (
                 f"entry[{i}]",
-                f"flags={eflags:#010x}{flag_annot}"
-                f"  fid={fid_hi:02x}{ANSI_GRAY}({fhi_label}){ANSI_RESET}:{fid_lo:02x}"
-                f"  sub={sub_str}"
-                f"  val={val_str}",
+                (
+                    f"flags={eflags:#010x}{flag_annot}"
+                    f"  fid={fid_hi:02x}{ANSI_GRAY}({fhi_label}){ANSI_RESET}:{fid_lo:02x}"
+                    f"  sub={sub_str}"
+                    f"  val={val_str}"
+                ),
             )
         )
 
@@ -1242,8 +1243,10 @@ def fmt_sigtree(p: bytes) -> list[Field]:
         fields.append(
             (
                 "payload_size",
-                f"{len(p)} B"
-                f"  {ANSI_GRAY}(base {expected_base} B + {remaining} B extended params){ANSI_RESET}",
+                (
+                    f"{len(p)} B"
+                    f"  {ANSI_GRAY}(base {expected_base} B + {remaining} B extended params){ANSI_RESET}"
+                ),
             )
         )
     elif remaining != 0:
