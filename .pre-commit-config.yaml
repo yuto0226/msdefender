@@ -24,3 +24,11 @@ repos:
     hooks:
       - id: rumdl-fmt
       - id: rumdl-check
+
+  - repo: local
+    hooks:
+      - id: check-commit-msg
+        name: check commit message
+        entry: uv run --no-project scripts/check_commit_msg.py
+        language: system
+        stages: [commit-msg]
