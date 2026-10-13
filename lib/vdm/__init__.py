@@ -6,6 +6,7 @@ from .core import (
     Parser,
     Renderer,
 )
+from .decode import decode_payload
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "FormatResult",
     "Parser",
     "Renderer",
+    "decode_payload",
     "DEFAULT_REGISTRY",
     "build_registry",
     "get_spec",
