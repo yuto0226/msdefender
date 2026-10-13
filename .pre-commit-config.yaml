@@ -1,0 +1,26 @@
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.0
+    hooks:
+      - id: ruff-check
+        args: [--isolated, --fix, --select=E4,E7,E9,F,I]
+      - id: ruff-format
+        args: [--isolated]
+
+  - repo: https://github.com/rvben/rumdl-pre-commit
+    rev: v0.2.79
+    hooks:
+      - id: rumdl-fmt
+      - id: rumdl-check
