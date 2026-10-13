@@ -6,6 +6,7 @@ from .core import (
     Parser,
     Renderer,
 )
+from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 
 __all__ = [
     "DisplaySection",
@@ -14,4 +15,7 @@ __all__ = [
     "FormatResult",
     "Parser",
     "Renderer",
+    "DEFAULT_REGISTRY",
+    "build_registry",
+    "get_spec",
 ]
