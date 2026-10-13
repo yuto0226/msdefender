@@ -843,7 +843,10 @@ def update_catalog(
     records = []
 
     for name in NAMES:
-        raw_url = f"https://raw.githubusercontent.com/MicrosoftDocs/defender-docs/public/defender-endpoint/{name}.md"
+        # GitHub raw access to MicrosoftDocs/defender-docs (and defender-docs-pr)
+        # now 404s on both the API and raw.githubusercontent.com; the docs site's
+        # markdown content-negotiation endpoint still serves the same content.
+        raw_url = f"https://learn.microsoft.com/en-us/defender-endpoint/{name}?accept=text/markdown"
         path = folder / (name + ".md")
         if not args.offline:
             report("fetch", "Fetch", name)
