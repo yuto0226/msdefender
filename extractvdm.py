@@ -21,7 +21,7 @@ import struct
 import zlib
 from pathlib import Path
 
-from lib.debug import error, debug, info, ok, warn
+from lib.debug import debug, error, info, ok, warn
 
 # RMDX header constants
 RMDX_MAGIC = 0x58444D52  # b'RMDX' little-endian

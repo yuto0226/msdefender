@@ -25,17 +25,17 @@ if sys.platform == "win32":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 from lib.debug import (
-    ANSI_RESET,
     ANSI_BOLD,
-    ANSI_CYAN,
-    ANSI_YELLOW,
-    ANSI_GRAY,
-    ANSI_WHITE,
     ANSI_BWHITE,
-    ok,
-    info,
-    warn,
+    ANSI_CYAN,
+    ANSI_GRAY,
+    ANSI_RESET,
+    ANSI_WHITE,
+    ANSI_YELLOW,
     error,
+    info,
+    ok,
+    warn,
 )
 
 # ─── Constants ────────────────────────────────────────────────────────────── #

@@ -8,7 +8,6 @@ import os
 import sys
 from typing import Any
 
-
 # Colors
 ANSI_RESET = "\x1b[0m"
 ANSI_RESET_FG = "\x1b[39m"
