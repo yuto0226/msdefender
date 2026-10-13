@@ -481,7 +481,7 @@ def download_one(
         )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    url = download_url(package, engine, arch)
+    url = download_url(package, engine, args.arch)
     report("download", "Download", f"package {package} / engine {engine} / {arch}")
 
     # Rename staging after validation; remove temporary files on failure.
