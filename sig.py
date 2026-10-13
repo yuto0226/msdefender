@@ -26,25 +26,22 @@ if sys.platform == "win32":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 from lib.debug import (
-    ANSI_RESET,
+    ANSI_BCYAN,
     ANSI_BOLD,
-    ANSI_GRAY,
-    ANSI_WHITE,
     ANSI_BWHITE,
+    ANSI_BYELLOW,
     ANSI_CYAN,
+    ANSI_GRAY,
     ANSI_GREEN,
-    ANSI_YELLOW,
     ANSI_MAGENTA,
     ANSI_RED,
-    ANSI_BLUE,
-    ANSI_BRED,
-    ANSI_BCYAN,
-    ANSI_BYELLOW,
-    info,
-    warn,
+    ANSI_RESET,
+    ANSI_WHITE,
+    ANSI_YELLOW,
     error,
+    info,
 )
-from lib.threat import parse_threat_name, parse_threat_id
+from lib.threat import parse_threat_id, parse_threat_name
 from lib.utils import iter_records_from_file, iter_records_with_context
 
 # Type name table
