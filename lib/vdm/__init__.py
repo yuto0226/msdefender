@@ -1,3 +1,4 @@
+from .catalog import type_name
 from .core import (
     DisplaySection,
     FamilySpec,
@@ -11,6 +12,7 @@ from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 from .types import BMInfo, parse_bm_info, render_bm_info
 
 __all__ = [
+    "type_name",
     "DisplaySection",
     "FamilySpec",
     "Field",
