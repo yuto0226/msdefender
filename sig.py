@@ -47,7 +47,7 @@ from lib.debug import (
 from lib.threat import parse_threat_name, parse_threat_id
 from lib.utils import iter_records_from_file, iter_records_with_context
 
-# ─── Type name table ──────────────────────────────────────────────────────── #
+# Type name table
 # Short names (without SIGNATURE_TYPE_ prefix) for compact display.
 # fmt: off
 TYPE_NAMES: dict[int, str] = {
@@ -140,10 +140,10 @@ def type_name(tb: int) -> str:
     return TYPE_NAMES.get(tb, f"TYPE_{tb:#04x}")
 
 
-# ─── Semantic annotation tables ───────────────────────────────────────────── #
+# Semantic annotation tables
 
 # THREAT_BEGIN: category WORD → __mpthreat_category_t enum label.
-# Fully reversed from get_category_from_name @ 0x180131108 (Table1/Table2 + switch),
+# Reversed from get_category_from_name @ 0x180131108 (Table1/Table2 + switch),
 # cross-validated against category distribution in mpas.sig (17,989 threats).
 # fmt: off
 _THREAT_CATEGORY: dict[int, str] = {
@@ -223,7 +223,7 @@ _AGGREGATOR_FLAG_BITS: list[tuple[int, str]] = [
 ]
 
 # hstr_internal_push_ex / add_sstring_internal per-subsignature flags.
-# Only the bits below are currently supported by direct IDA evidence.
+# Direct IDA evidence supports the bits below.
 _HSTR_SUBSIG_FLAG_BITS: list[tuple[int, str]] = [
     (0x0001, "preserve_case"),
     (0x0002, "bm_pattern"),
@@ -240,7 +240,7 @@ _SIGTREE_TYPE_WORD: dict[int, str] = {
     0xF000: "special/wildcard",  # special value; handled differently in siga_cksig_impl
 }
 
-# SIGTREE: fid_hi byte → field family (empirically observed; gktab confirmation pending).
+# SIGTREE: fid_hi byte → field family (observed in samples; gktab confirmation pending).
 _SIGTREE_FID_HI: dict[int, str] = {
     0x70: "PE attrs",
     0x60: "generic attrs",
@@ -269,16 +269,19 @@ _SIGTREE_FID_HI: dict[int, str] = {
 #   0x1000  ext_bm_B       — BM string matcher data follows for B-side (primary slot +16)
 #                            (prev. documented as "ext_hash"; both bits call process_extended_param)
 _SIGTREE_ENTRY_FLAG_BITS: list[tuple[int, str]] = [
-    (0x0002, "always_match_A"),  # A-side param always passes (MatchParameter early-return 1)
-    (0x0010, "ext_bm_A"),        # extended BM data follows for A-side (secondary param slot)
-    (0x1000, "ext_bm_B"),        # extended BM data follows for B-side (primary param slot)
+    (
+        0x0002,
+        "always_match_A",
+    ),  # A-side param always passes (MatchParameter early-return 1)
+    (0x0010, "ext_bm_A"),  # extended BM data follows for A-side (secondary param slot)
+    (0x1000, "ext_bm_B"),  # extended BM data follows for B-side (primary param slot)
 ]
 
 # SIGTREE: n3 (high byte of entry_count_word) → extra bytes appended per entry
 # beyond the base 16B.  n3=0..3 confirmed from SigtreeHandlerInstance::push disasm;
-# n3=4 empirically confirmed (TelnetoverNonStandardPort.A: 27×24B=648, body=652).
+# n3=4 confirmed by TelnetoverNonStandardPort.A (27×24B=648, body=652).
 # These extra bytes encode secondary parameter values for MatchParameter's
-# secondary slot — discovered via port-number inspection of n3=4 records.
+# secondary slot; n3=4 records contain matching port numbers.
 _SIGTREE_N3_EXTRA: dict[int, int] = {0: 0, 1: 4, 2: 8, 3: 9, 4: 8}
 
 
@@ -302,7 +305,7 @@ def _annotate_bits(value: int, bit_table: list[tuple[int, str]]) -> str:
     return f"  ({', '.join(parts)})" if parts else ""
 
 
-# ─── Display helpers ──────────────────────────────────────────────────────── #
+# Display helpers
 # A formatter returns a list of (label, value) pairs.
 # Return [] to fall through to raw hexdump.
 Field = tuple[str, str]
@@ -318,6 +321,7 @@ class DisplaySection:
 class FormatResult:
     fields: list[Field] = field(default_factory=list)
     sections: list[DisplaySection] = field(default_factory=list)
+
 
 INDENT = "    "
 SEP_W = 72
@@ -420,7 +424,7 @@ def print_record(
         print()
         _print_preview(payload)
     elif not show_hex and not fields and not sections:
-        # Print first 16 bytes as a quick preview even without --hex
+        # Print the first 16 bytes without --hex.
         _print_preview(payload)
         return
 
@@ -430,7 +434,7 @@ def print_record(
         _print_hexdump(payload)
 
 
-# ─── Per-type formatters ──────────────────────────────────────────────────── #
+# Per-type formatters
 # Each function receives the raw payload bytes and returns a list of Fields.
 # Return [] to trigger hexdump fallback in print_record().
 _FPATH_KIND: dict[int, str] = {
@@ -456,7 +460,7 @@ _REG_HIVES = (
 _TRUSTED_PUBLISHER_PREFIXES = ("HASH:", "BADHASH:", "BY:", "TO:", "TEAMID:")
 
 # Publisher labels are confirmed from the string-prefix table in the signature
-# docs. REGKEY labels are conservative descriptors inferred from observed
+# docs. REGKEY labels are inferred from observed
 # payload shapes and receiver behavior, not official enum names.
 _CSIDL_LABELS: dict[int, str] = {
     0x001A: "CSIDL_APPDATA",
@@ -535,7 +539,9 @@ def _decode_pehstr_subsig_text(data: bytes) -> tuple[str | None, str | None]:
         ascii_body = data[1:]
         ascii_trimmed = ascii_body[:-1] if ascii_body.endswith(b"\x00") else ascii_body
         if b"\x00" not in ascii_trimmed and _looks_ascii_blob(ascii_body):
-            return ascii_body.decode("latin-1", errors="replace").rstrip("\x00"), "ascii"
+            return ascii_body.decode("latin-1", errors="replace").rstrip(
+                "\x00"
+            ), "ascii"
     if _looks_utf16le_blob(data):
         return data.decode("utf-16le", errors="replace").rstrip("\x00"), "wide"
     ascii_trimmed = data[:-1] if data.endswith(b"\x00") else data
@@ -545,7 +551,12 @@ def _decode_pehstr_subsig_text(data: bytes) -> tuple[str | None, str | None]:
 
 
 def _escape_yara_text(text: str) -> str:
-    return text.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "\\r").replace("\n", "\\n")
+    return (
+        text.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
 
 
 def _format_hstr_yara_hex(data: bytes) -> str:
@@ -560,7 +571,9 @@ def _format_hstr_raw_preview(data: bytes, max_bytes: int = 24) -> str:
 
 
 def _format_hstr_bm_preview(data: bytes) -> str:
-    safe_ascii = set(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ./\\:_-")
+    safe_ascii = set(
+        b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ./\\:_-"
+    )
     parts: list[str] = []
     for byte in data:
         if byte in safe_ascii:
@@ -618,7 +631,9 @@ def _read_hstr_varflags(data: bytes, off: int) -> tuple[int, int] | None:
     return flags, off
 
 
-def _decode_hstr_string_modifier(text_modifier: str | None, flags_raw: int | None) -> str | None:
+def _decode_hstr_string_modifier(
+    text_modifier: str | None, flags_raw: int | None
+) -> str | None:
     if text_modifier == "wide":
         return "wide"
     if text_modifier == "ascii":
@@ -715,7 +730,10 @@ def _split_registry_hive(path: str) -> tuple[str | None, str | None]:
 def fmt_fpath_like(p: bytes, type_byte: int = 0) -> list[Field]:
     """FILEPATH/FOLDERNAME/ASEP path family."""
     if len(p) < 2:
-        return [("kind", _FPATH_KIND.get(type_byte, f"type={type_byte:#04x}")), ("error", "truncated payload")]
+        return [
+            ("kind", _FPATH_KIND.get(type_byte, f"type={type_byte:#04x}")),
+            ("error", "truncated payload"),
+        ]
 
     csidl_flags = int.from_bytes(p[0:2], "little")
     path_bytes, pcode = _split_path_and_tail(p[2:])
@@ -825,7 +843,11 @@ def fmt_trusted_publisher(p: bytes) -> list[Field]:
             return fields
 
         prefix = next(
-            (label[:-1] for label in _TRUSTED_PUBLISHER_PREFIXES if key_text.startswith(label)),
+            (
+                label[:-1]
+                for label in _TRUSTED_PUBLISHER_PREFIXES
+                if key_text.startswith(label)
+            ),
             "UNKNOWN",
         )
         fields.extend(
@@ -840,7 +862,10 @@ def fmt_trusted_publisher(p: bytes) -> list[Field]:
         fields.extend(
             [
                 ("mode", "binary"),
-                ("key_type", _format_labeled_hex(key_type, 4, _TRUSTED_PUBLISHER_KEY_TYPES)),
+                (
+                    "key_type",
+                    _format_labeled_hex(key_type, 4, _TRUSTED_PUBLISHER_KEY_TYPES),
+                ),
                 ("key_data", key_data[1:].hex(" ") if len(key_data) > 1 else "(empty)"),
             ]
         )
@@ -873,12 +898,12 @@ def fmt_threat_begin(p: bytes) -> list[Field]:
     threat_id = int.from_bytes(p[0:4], "little")
     dep_count = int.from_bytes(p[4:6], "little")
     ext_count = int.from_bytes(p[6:8], "little")
-    category  = int.from_bytes(p[8:10], "little")
-    name_len  = int.from_bytes(p[10:12], "little")
-    name      = parse_threat_name(p)
+    category = int.from_bytes(p[8:10], "little")
+    name_len = int.from_bytes(p[10:12], "little")
+    name = parse_threat_name(p)
 
     cat_label = _THREAT_CATEGORY.get(category, "?")
-    cat_str   = f"{category:#06x}  ({cat_label})"
+    cat_str = f"{category:#06x}  ({cat_label})"
 
     magic_label = _MAGIC_THREAT_ID.get(threat_id, "")
     tid_str = f"{threat_id:#010x}" + (
@@ -887,11 +912,11 @@ def fmt_threat_begin(p: bytes) -> list[Field]:
 
     return [
         ("threat_id", tid_str),
-        ("category",  cat_str),
+        ("category", cat_str),
         ("dep_count", str(dep_count)),
         ("ext_count", str(ext_count)),
-        ("name_len",  str(name_len)),
-        ("name",      f"{ANSI_BOLD}{name}{ANSI_RESET}"),
+        ("name_len", str(name_len)),
+        ("name", f"{ANSI_BOLD}{name}{ANSI_RESET}"),
     ]
 
 
@@ -910,10 +935,10 @@ def fmt_snid(p: bytes) -> list[Field]:
     key = int.from_bytes(p[0:4], "little")
     category = p[4]
     raw = p[5:] if len(p) > 5 else b""
-    null_pos = raw.find(b"\x00")       # null-terminated string
+    null_pos = raw.find(b"\x00")  # null-terminated string
     if null_pos != -1:
         raw = raw[:null_pos]
-    while raw and raw[0] >= 0x80:     # skip internal category marker prefix
+    while raw and raw[0] >= 0x80:  # skip internal category marker prefix
         raw = raw[1:]
     name = raw.decode("utf-8", errors="replace")
     fields: list[Field] = [
@@ -1006,7 +1031,10 @@ def fmt_pehstr_ext(p: bytes, type_byte: int = 0) -> FormatResult:
         _HSTR_SHOW_LIMIT = 8
         if sig_data and len(sig_data) % 4 == 0:
             n = len(sig_data) // 4
-            entries = [int.from_bytes(sig_data[i * 4 : (i + 1) * 4], "little") for i in range(n)]
+            entries = [
+                int.from_bytes(sig_data[i * 4 : (i + 1) * 4], "little")
+                for i in range(n)
+            ]
             shown = [f"{v:#010x}" for v in entries[:_HSTR_SHOW_LIMIT]]
             tail = f", … +{n - _HSTR_SHOW_LIMIT} more" if n > _HSTR_SHOW_LIMIT else ""
             sig_data_str = (
@@ -1032,7 +1060,9 @@ def fmt_pehstr_ext(p: bytes, type_byte: int = 0) -> FormatResult:
         if trailing:
             preview = trailing[:8].hex(" ")
             ellipsis = "…" if len(trailing) > 8 else ""
-            fields.append(("trailing_bytes", f"{len(trailing)} B [{preview}{ellipsis}]"))
+            fields.append(
+                ("trailing_bytes", f"{len(trailing)} B [{preview}{ellipsis}]")
+            )
         return FormatResult(fields=fields)
 
     parsed, error_text = _parse_hstr_signature_payload(p, type_byte)
@@ -1058,7 +1088,10 @@ def fmt_pehstr_ext(p: bytes, type_byte: int = 0) -> FormatResult:
         ("header_word0", f"{parsed['header_word0']:#06x}"),
         ("header_word1", f"{parsed['header_word1']:#06x}"),
         ("subsig_count", str(parsed["subsig_count"])),
-        ("name", name_bytes.decode("latin-1", errors="replace") if name_bytes else "(empty)"),
+        (
+            "name",
+            name_bytes.decode("latin-1", errors="replace") if name_bytes else "(empty)",
+        ),
     ]
     sections: list[DisplaySection] = []
 
@@ -1126,22 +1159,26 @@ def fmt_static(p: bytes) -> list[Field]:
 
     k0, k1, k2 = struct.unpack_from("<3I", p, 0)
     score_flags = int.from_bytes(p[12:16], "little")
-    score       = score_flags & 0x0FFFFFFF          # bits 0..27
-    ext_word    = int.from_bytes(p[16:18], "little")
-    ext_type    = (ext_word >> 13) & 0x7             # bits 13..15
+    score = score_flags & 0x0FFFFFFF  # bits 0..27
+    ext_word = int.from_bytes(p[16:18], "little")
+    ext_type = (ext_word >> 13) & 0x7  # bits 13..15
 
-    ext_label = {0: "no-extra", 1: "extra-20B", 2: "sub_key", 3: "sub_key", 4: "extra-32B"}.get(
-        ext_type, "?"
-    )
+    ext_label = {
+        0: "no-extra",
+        1: "extra-20B",
+        2: "sub_key",
+        3: "sub_key",
+        4: "extra-32B",
+    }.get(ext_type, "?")
 
     fields: list[Field] = [
-        ("key[0]",      f"{k0:#010x}"),
-        ("key[1]",      f"{k1:#010x}"),
-        ("key[2]",      f"{k2:#010x}"),
+        ("key[0]", f"{k0:#010x}"),
+        ("key[1]", f"{k1:#010x}"),
+        ("key[2]", f"{k2:#010x}"),
         ("score_flags", f"{score_flags:#010x}"),
-        ("score",       f"{score:#08x}  {ANSI_GRAY}(28-bit){ANSI_RESET}"),
-        ("ext_word",    f"{ext_word:#06x}"),
-        ("ext_type",    f"{ext_type}  {ANSI_GRAY}({ext_label}){ANSI_RESET}"),
+        ("score", f"{score:#08x}  {ANSI_GRAY}(28-bit){ANSI_RESET}"),
+        ("ext_word", f"{ext_word:#06x}"),
+        ("ext_type", f"{ext_type}  {ANSI_GRAY}({ext_label}){ANSI_RESET}"),
     ]
 
     # Extension-specific fields
@@ -1168,7 +1205,11 @@ def fmt_static(p: bytes) -> list[Field]:
     if off < len(p):
         tail = p[off:]
         null_pos = tail.find(b"\x00")
-        class_name = tail[:null_pos].decode("utf-8", errors="replace") if null_pos != -1 else tail.decode("utf-8", errors="replace")
+        class_name = (
+            tail[:null_pos].decode("utf-8", errors="replace")
+            if null_pos != -1
+            else tail.decode("utf-8", errors="replace")
+        )
         if class_name:
             fields.append(("class_name", class_name))
 
@@ -1204,22 +1245,28 @@ def fmt_sigtree(p: bytes) -> list[Field]:
         return []
 
     entry_count_word = int.from_bytes(p[0:2], "little")
-    entry_count = entry_count_word & 0xFF           # low byte
-    n3          = (entry_count_word >> 8) & 0xFF    # high byte: per-entry size modifier
-    n3_extra    = _SIGTREE_N3_EXTRA.get(n3, 0)
+    entry_count = entry_count_word & 0xFF  # low byte
+    n3 = (entry_count_word >> 8) & 0xFF  # high byte: per-entry size modifier
+    n3_extra = _SIGTREE_N3_EXTRA.get(n3, 0)
     entry_stride = 16 + n3_extra
 
-    type_word    = int.from_bytes(p[2:4], "little")
-    tw_label     = _SIGTREE_TYPE_WORD.get(type_word, "?")
-    instance_idx = (type_word >> 8) & 0xFF           # p[3] = SigtreeHandlerInstance index
+    type_word = int.from_bytes(p[2:4], "little")
+    tw_label = _SIGTREE_TYPE_WORD.get(type_word, "?")
+    instance_idx = (type_word >> 8) & 0xFF  # p[3] = SigtreeHandlerInstance index
 
-    n3_note = f"  {ANSI_GRAY}(n3={n3}, stride={entry_stride}B/entry){ANSI_RESET}" if n3 else ""
+    n3_note = (
+        f"  {ANSI_GRAY}(n3={n3}, stride={entry_stride}B/entry){ANSI_RESET}"
+        if n3
+        else ""
+    )
     inst_note = f"  {ANSI_GRAY}inst={instance_idx}{ANSI_RESET}"
 
     fields: list[Field] = [
         ("entry_count", f"{entry_count}{n3_note}"),
-        ("type_word",
-         f"{type_word:#06x}  {ANSI_YELLOW}({tw_label}){ANSI_RESET}{inst_note}"),
+        (
+            "type_word",
+            f"{type_word:#06x}  {ANSI_YELLOW}({tw_label}){ANSI_RESET}{inst_note}",
+        ),
     ]
 
     # p[4] is the first byte of null-terminated attr_name; 0x00 = no name
@@ -1241,23 +1288,23 @@ def fmt_sigtree(p: bytes) -> list[Field]:
         if eoff + 16 > len(p):
             fields.append((f"entry[{i}]", f"{ANSI_YELLOW}truncated{ANSI_RESET}"))
             break
-        e         = p[eoff : eoff + 16]
-        eflags    = int.from_bytes(e[0:4], "little")
-        fid_lo    = e[4]
-        fid_hi    = e[5]
-        sub_lo    = e[6]   # A-side comparison data size (MatchParameter, a8[0]==0 path)
-        sub_hi    = e[7]   # B-side comparison data size (MatchParameter, a8[0]!=0 path)
-        val_lo    = int.from_bytes(e[8:12], "little")
-        val_hi    = int.from_bytes(e[12:16], "little")
+        e = p[eoff : eoff + 16]
+        eflags = int.from_bytes(e[0:4], "little")
+        fid_lo = e[4]
+        fid_hi = e[5]
+        sub_lo = e[6]  # A-side comparison data size (MatchParameter, a8[0]==0 path)
+        sub_hi = e[7]  # B-side comparison data size (MatchParameter, a8[0]!=0 path)
+        val_lo = int.from_bytes(e[8:12], "little")
+        val_hi = int.from_bytes(e[12:16], "little")
         fhi_label = _SIGTREE_FID_HI.get(fid_hi, "?")
 
-        # val display: omit val_hi when it is zero (common single-DWORD case)
+        # Omit val_hi when it is zero.
         if val_hi == 0:
             val_str = f"{val_lo:#010x}"
         else:
             val_str = f"{val_lo:#010x}|{val_hi:#010x}"
 
-        # sub_lo / sub_hi: show concisely; suppress zero bytes when both are 0
+        # Omit sub_lo and sub_hi when both are zero.
         if sub_lo == 0 and sub_hi == 0:
             sub_str = f"{ANSI_GRAY}0x00:0x00{ANSI_RESET}"
         else:
@@ -1267,13 +1314,15 @@ def fmt_sigtree(p: bytes) -> list[Field]:
         if eflags & (0x0010 | 0x1000):
             has_ext_data = True
 
-        fields.append((
-            f"entry[{i}]",
-            f"flags={eflags:#010x}{flag_annot}"
-            f"  fid={fid_hi:02x}{ANSI_GRAY}({fhi_label}){ANSI_RESET}:{fid_lo:02x}"
-            f"  sub={sub_str}"
-            f"  val={val_str}",
-        ))
+        fields.append(
+            (
+                f"entry[{i}]",
+                f"flags={eflags:#010x}{flag_annot}"
+                f"  fid={fid_hi:02x}{ANSI_GRAY}({fhi_label}){ANSI_RESET}:{fid_lo:02x}"
+                f"  sub={sub_str}"
+                f"  val={val_str}",
+            )
+        )
 
         # Show n3 extension bytes when present
         if n3_extra and eoff + entry_stride <= len(p):
@@ -1282,24 +1331,28 @@ def fmt_sigtree(p: bytes) -> list[Field]:
 
     # Payload size annotation
     expected_base = off + entry_count * entry_stride
-    remaining     = len(p) - expected_base
+    remaining = len(p) - expected_base
     if has_ext_data and remaining > 0:
-        fields.append((
-            "payload_size",
-            f"{len(p)} B"
-            f"  {ANSI_GRAY}(base {expected_base} B + {remaining} B extended params){ANSI_RESET}",
-        ))
+        fields.append(
+            (
+                "payload_size",
+                f"{len(p)} B"
+                f"  {ANSI_GRAY}(base {expected_base} B + {remaining} B extended params){ANSI_RESET}",
+            )
+        )
     elif remaining != 0:
-        fields.append((
-            "payload_size",
-            f"{len(p)} B  (expected {expected_base} B)"
-            + (f"  {ANSI_YELLOW}← MISMATCH{ANSI_RESET}" if remaining != 0 else ""),
-        ))
+        fields.append(
+            (
+                "payload_size",
+                f"{len(p)} B  (expected {expected_base} B)"
+                + (f"  {ANSI_YELLOW}← MISMATCH{ANSI_RESET}" if remaining != 0 else ""),
+            )
+        )
 
     return fields
 
 
-# ─── Formatter dispatch table ─────────────────────────────────────────────── #
+# Formatter dispatch table
 FORMATTERS: dict[int, object] = {
     0x5C: fmt_threat_begin,
     0x5D: fmt_threat_end,
@@ -1309,8 +1362,8 @@ FORMATTERS: dict[int, object] = {
     0x70: fmt_trusted_publisher,
     0x71: fmt_fpath_like,  # ASEP_FILEPATH
     0x75: fmt_fpath_like,  # ASEP_FOLDERNAME
-    0x55: fmt_snid,       # NID
-    0x7E: fmt_snid,       # SNID
+    0x55: fmt_snid,  # NID
+    0x7E: fmt_snid,  # SNID
     0x80: fmt_kcrce,
     0xA0: fmt_friendlyfile_sha256,
     0x69: fmt_latent_threat,
@@ -1327,11 +1380,11 @@ FORMATTERS: dict[int, object] = {
     0x96: fmt_pehstr_ext,  # AAGGREGATOR
     0xE7: fmt_pehstr_ext,  # AAGGREGATOREX
     0x67: fmt_static,
-    0x40: fmt_sigtree,    # SIGTREE
-    0x41: fmt_sigtree,    # SIGTREE_EXT
+    0x40: fmt_sigtree,  # SIGTREE
+    0x41: fmt_sigtree,  # SIGTREE_EXT
 }
 
-# Formatters that accept (payload, type_byte) instead of just (payload).
+# Formatters that accept (payload, type_byte) instead of (payload).
 _TYPE_AWARE_FORMATTERS: frozenset = frozenset({fmt_fpath_like, fmt_pehstr_ext})
 
 
@@ -1343,19 +1396,19 @@ def format_payload(type_byte: int, payload: bytes) -> FormatResult:
     if fn in _TYPE_AWARE_FORMATTERS:
         raw_result = fn(payload, type_byte)  # type: ignore[call-arg]
     else:
-        raw_result = fn(payload) # type: ignore
+        raw_result = fn(payload)  # type: ignore
     if isinstance(raw_result, FormatResult):
         return raw_result
     return FormatResult(fields=raw_result)
 
 
-# ─── File banner ─────────────────────────────────────────────────────────── #
+# File banner
 def _print_file_banner(path: Path) -> None:
     size_mb = path.stat().st_size / 1_048_576
     info("%s  %.1f MB", path.name, size_mb)
 
 
-# ─── List-threats mode ────────────────────────────────────────────────────── #
+# List-threats mode
 def run_list_threats(
     path: Path,
     filter_name: str | None,
@@ -1412,7 +1465,9 @@ def run_list_threats(
                     break
             cur_name = parse_threat_name(payload)
             cur_id = parse_threat_id(payload)
-            cur_cat = int.from_bytes(payload[8:10], "little") if len(payload) >= 10 else 0
+            cur_cat = (
+                int.from_bytes(payload[8:10], "little") if len(payload) >= 10 else 0
+            )
             cur_counts = Counter()
             in_block = True
         elif type_byte == 0x5D:
@@ -1431,11 +1486,13 @@ def run_list_threats(
 
     print(sep)
     if limit > 0 and shown >= limit:
-        print(f"{ANSI_GRAY}  … stopped after {shown} threats  (use -n 0 for unlimited){ANSI_RESET}")
+        print(
+            f"{ANSI_GRAY}  … stopped after {shown} threats  (use -n 0 for unlimited){ANSI_RESET}"
+        )
     print()
 
 
-# ─── Records mode ─────────────────────────────────────────────────────────── #
+# Records mode
 def run_records(
     path: Path,
     filter_type: int | None,
@@ -1495,7 +1552,7 @@ def run_records(
         print(f"{ANSI_YELLOW}[!] no matching records found{ANSI_RESET}")
 
 
-# ─── CLI dispatch ─────────────────────────────────────────────────────────── #
+# CLI dispatch
 def _parse_type_arg(args: argparse.Namespace) -> int | None:
     if not args.type:
         return None
@@ -1536,12 +1593,23 @@ def build_parser() -> argparse.ArgumentParser:
     # Shared positional + options inherited by both subcommands via parents=
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("sig", metavar="file.sig", help="Input .sig file")
-    shared.add_argument("--type", "-t", metavar="HEX",
-                        help="Filter by record type (hex, e.g. 0x67)")
-    shared.add_argument("--threat", "-T", metavar="SUBSTR",
-                        help="Filter by threat name substring (case-insensitive)")
-    shared.add_argument("--limit", "-n", type=int, default=20, metavar="N",
-                        help="Max threats/records to display (default: 20; 0 = unlimited)")
+    shared.add_argument(
+        "--type", "-t", metavar="HEX", help="Filter by record type (hex, e.g. 0x67)"
+    )
+    shared.add_argument(
+        "--threat",
+        "-T",
+        metavar="SUBSTR",
+        help="Filter by threat name substring (case-insensitive)",
+    )
+    shared.add_argument(
+        "--limit",
+        "-n",
+        type=int,
+        default=20,
+        metavar="N",
+        help="Max threats/records to display (default: 20; 0 = unlimited)",
+    )
 
     top = argparse.ArgumentParser(
         description="Inspect Microsoft Defender .sig signature files.",
@@ -1550,24 +1618,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = top.add_subparsers(dest="subcommand", metavar="{threats,records}")
 
-    p_threats = sub.add_parser("threats", parents=[shared],
-                               help="List threats (default view)")
+    p_threats = sub.add_parser(
+        "threats", parents=[shared], help="List threats (default view)"
+    )
     p_threats.set_defaults(func=cmd_threats)
 
-    p_records = sub.add_parser("records", parents=[shared],
-                               help="Inspect individual records")
-    p_records.add_argument("--hex", "-x", action="store_true",
-                           help="Show full hexdump for each record")
-    p_records.add_argument("--skip-framing", action="store_true",
-                           help="Suppress THREAT_BEGIN/END; show threat separator instead")
+    p_records = sub.add_parser(
+        "records", parents=[shared], help="Inspect individual records"
+    )
+    p_records.add_argument(
+        "--hex", "-x", action="store_true", help="Show full hexdump for each record"
+    )
+    p_records.add_argument(
+        "--skip-framing",
+        action="store_true",
+        help="Suppress THREAT_BEGIN/END; show threat separator instead",
+    )
     p_records.set_defaults(func=cmd_records)
 
     return top
 
 
-# ─── Main ─────────────────────────────────────────────────────────────────── #
+# Main
 def main() -> None:
     import sys
+
     ap = build_parser()
 
     # Bare invocation: `sig.py file.sig` → default to `threats` subcommand.

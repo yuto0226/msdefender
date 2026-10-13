@@ -9,7 +9,8 @@ from typing import Iterator
 from lib.debug import warn
 
 
-# ── Wire-format record iterator (in-memory) ──────────────────────────────── #
+# Wire-format record iterator (in-memory)
+
 
 def iter_records(stream: bytes) -> Iterator[tuple[int, bytes]]:
     """Yield (type_byte, payload_bytes) for every record in a byte buffer.
@@ -25,7 +26,7 @@ def iter_records(stream: bytes) -> Iterator[tuple[int, bytes]]:
 
     while pos + 4 <= end:
         type_byte = stream[pos]
-        size = stream[pos+1] | (stream[pos+2] << 8) | (stream[pos+3] << 16)
+        size = stream[pos + 1] | (stream[pos + 2] << 8) | (stream[pos + 3] << 16)
 
         if size == 0xFFFFFF:
             if pos + 8 > end:
@@ -39,7 +40,8 @@ def iter_records(stream: bytes) -> Iterator[tuple[int, bytes]]:
         pos = data_off + size
 
 
-# ── Wire-format record iterator (streaming, memory-efficient) ─────────────── #
+# Wire-format record iterator (streaming, memory-efficient)
+
 
 def iter_records_from_file(path: Path) -> Iterator[tuple[int, bytes]]:
     """Yield (type_byte, payload_bytes) by streaming a .sig file.
@@ -67,15 +69,17 @@ def iter_records_from_file(path: Path) -> Iterator[tuple[int, bytes]]:
 
             payload = f.read(size)
             if len(payload) < size:
-                warn("truncated payload at EOF (expected %d, got %d)", size, len(payload))
+                warn(
+                    "truncated payload at EOF (expected %d, got %d)", size, len(payload)
+                )
                 break
 
             yield type_byte, payload
 
 
-# ── Contextual iterator: tracks current threat ───────────────────────────── #
+# Contextual iterator: tracks current threat
 SIG_THREAT_BEGIN = 0x5C
-SIG_THREAT_END   = 0x5D
+SIG_THREAT_END = 0x5D
 
 
 def iter_records_with_context(
@@ -87,7 +91,7 @@ def iter_records_with_context(
     sig_index    — 0-based index of the record within its threat block
                    (THREAT_BEGIN itself is index 0)
     """
-    from lib.threat import parse_threat_name   # local import to avoid circularity
+    from lib.threat import parse_threat_name  # local import to avoid circularity
 
     current_name = ""
     sig_idx = 0

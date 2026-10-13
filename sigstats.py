@@ -356,7 +356,12 @@ def main() -> None:
         ok("Combined stats:")
         print_chart(combined, None if args.all else args.top, args.width, "[combined]")
     else:
-        print_chart(combined, None if args.all else args.top, args.width, f"[{Path(args.sig[0]).name}]")
+        print_chart(
+            combined,
+            None if args.all else args.top,
+            args.width,
+            f"[{Path(args.sig[0]).name}]",
+        )
 
 
 if __name__ == "__main__":
