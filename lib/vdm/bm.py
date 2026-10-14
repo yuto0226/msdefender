@@ -278,7 +278,8 @@ _RANGE_OPERATIONS = {
     0x10: ("RANGE_SEARCH", "g_NRRange"),
     0x11: ("RANGE_REPEAT", "g_ALRange"),
     0x12: ("RANGE_SEARCH", "g_ALRange"),
-    0x1D: ("RANGE_REPEAT", "g_ALNRange"),
+    0x1C: ("RANGE_NEGATIVE_REPEAT", "g_ALNRange"),
+    0x1D: ("RANGE_SEARCH", "g_ALNRange"),
     0x1E: ("RANGE_REPEAT", "g_HexRange"),
     0x1F: ("RANGE_SEARCH", "g_HexRange"),
 }
@@ -319,9 +320,8 @@ def _interpret_opcode(token: BmToken) -> BmSemanticOperation:
         return BmClass(*source, token, operands[0], operands[2:])
     if dispatch == 0x13:
         return BmExtension(*source, token, "FOLLOW_X86_RELATIVE_TARGET")
-    if dispatch in (0x1B, 0x1C):
-        name = "CAPTURE_MARKER" if dispatch == 0x1B else "BACKREF"
-        return BmExtension(*source, token, name, operands[0])
+    if dispatch == 0x1B:
+        return BmExtension(*source, token, "BACKREF", operands[0])
     if dispatch in (0x20, 0x21):
         width = 32 if dispatch == 0x20 else 64
         return BmExtension(
