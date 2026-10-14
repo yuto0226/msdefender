@@ -4,6 +4,7 @@ from typing import Any
 
 from .core import FamilySpec
 from .types.bm_info import SPEC as BM_INFO_SPEC
+from .types.friendlyfile import SPEC as FRIENDLYFILE_SHA256_SPEC
 from .types.hstr import HSTR_SPECS
 from .types.nid import NID_SPECS
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
@@ -16,6 +17,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
             BM_INFO_SPEC,
+            FRIENDLYFILE_SHA256_SPEC,
             SIGTREE_BM_SPEC,
             *THREAT_SPECS,
             *HSTR_SPECS,

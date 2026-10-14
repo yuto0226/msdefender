@@ -1,4 +1,9 @@
 from .bm_info import SPEC, BMInfo, parse_bm_info, render_bm_info
+from .friendlyfile import (
+    FriendlyFileSha256,
+    parse_friendlyfile_sha256,
+    render_friendlyfile_sha256,
+)
 from .hstr import (
     HSTR_SPECS,
     HstrFlags,
@@ -42,6 +47,7 @@ __all__ = [
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
     "BMInfo",
+    "FriendlyFileSha256",
     "HstrFlags",
     "HstrPayload",
     "HstrSubsignature",
@@ -52,12 +58,14 @@ __all__ = [
     "ThreatBegin",
     "ThreatEnd",
     "parse_bm_info",
+    "parse_friendlyfile_sha256",
     "parse_hstr",
     "parse_nid",
     "parse_sigtree",
     "parse_threat_begin",
     "parse_threat_end",
     "render_bm_info",
+    "render_friendlyfile_sha256",
     "render_hstr",
     "render_nid",
     "render_sigtree",

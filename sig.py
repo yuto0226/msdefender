@@ -612,22 +612,6 @@ def fmt_trusted_publisher(p: bytes) -> list[Field]:
     return fields
 
 
-def fmt_friendlyfile_sha256(p: bytes) -> list[Field]:
-    """FRIENDLYFILE_SHA256 (0xA0) — fixed SHA-256 with optional PCode."""
-    if len(p) < 32:
-        return [("error", f"payload too short for sha256 ({len(p)} B)")]
-
-    sha256 = p[:32]
-    pcode = p[32:]
-    fields: list[Field] = [
-        ("sha256", sha256.hex()),
-        ("usage", "friendly/allowlist"),
-    ]
-    if pcode:
-        fields.append(("pcode_len", f"{len(pcode)} B"))
-    return fields
-
-
 def fmt_kcrce(p: bytes) -> list[Field]:
     """KCRCE (0x80) — §1.3.  16B min, 4×DWORD CRC key."""
     if len(p) < 16:
@@ -827,7 +811,6 @@ FORMATTERS: dict[int, object] = {
     0x71: fmt_fpath_like,  # ASEP_FILEPATH
     0x75: fmt_fpath_like,  # ASEP_FOLDERNAME
     0x80: fmt_kcrce,
-    0xA0: fmt_friendlyfile_sha256,
     0x69: fmt_latent_threat,
     0xAF: fmt_common_code,
     0x7A: fmt_versioncheck,
