@@ -388,6 +388,12 @@ _FAMILY_NAMES = MappingProxyType(
         0xBE: "DEXHSTR_EXT",
         0xBF: "JAVAHSTR_EXT",
         0xC5: "ARHSTR_EXT",
+        0xD1: "SWFHSTR_EXT",
+        0xD3: "AUTOITHSTR_EXT",
+        0xD4: "INNOHSTR_EXT",
+        0xD7: "CMDHSTR_EXT",
+        0xE4: "MDBHSTR_EXT",
+        0xEA: "DMGHSTR_EXT",
         0xEF: "ARHSTR_POSIX_EXT",
     }
 )
