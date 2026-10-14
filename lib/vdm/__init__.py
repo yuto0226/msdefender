@@ -10,23 +10,33 @@ from .core import (
 from .decode import decode_payload
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 from .types import (
+    HSTR_SPECS,
     BMInfo,
+    HstrFlags,
+    HstrPayload,
+    HstrSubsignature,
     SigtreeEntry,
     SigtreeParam,
     SigtreePayload,
     parse_bm_info,
+    parse_hstr,
     parse_sigtree,
     render_bm_info,
+    render_hstr,
     render_sigtree,
 )
 
 __all__ = [
     "DEFAULT_REGISTRY",
+    "HSTR_SPECS",
     "BMInfo",
     "DisplaySection",
     "FamilySpec",
     "Field",
     "FormatResult",
+    "HstrFlags",
+    "HstrPayload",
+    "HstrSubsignature",
     "Parser",
     "Renderer",
     "SigtreeEntry",
@@ -36,8 +46,10 @@ __all__ = [
     "decode_payload",
     "get_spec",
     "parse_bm_info",
+    "parse_hstr",
     "parse_sigtree",
     "render_bm_info",
+    "render_hstr",
     "render_sigtree",
     "type_name",
 ]
