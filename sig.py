@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import io
 import shutil
-import struct
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -163,6 +162,18 @@ def print_record(
     if type_byte == 0x67:
         _print_static_record(
             seq, payload, threat_name, result, show_hex, show_threat_heading
+        )
+        return
+    if type_byte == 0x80:
+        _print_structured_record(
+            seq,
+            0x80,
+            "KCRCE",
+            payload,
+            threat_name,
+            result,
+            show_hex,
+            show_threat_heading,
         )
         return
     if type_byte in _HSTR_PUSH_FAMILY:
@@ -957,17 +968,6 @@ def fmt_trusted_publisher(p: bytes) -> list[Field]:
     return fields
 
 
-def fmt_kcrce(p: bytes) -> list[Field]:
-    """KCRCE (0x80) — §1.3.  16B min, 4×DWORD CRC key."""
-    if len(p) < 16:
-        return []
-    crcs = struct.unpack_from("<4I", p, 0)
-    fields: list[Field] = [(f"crc[{i}]", f"{c:#010x}") for i, c in enumerate(crcs)]
-    if len(p) > 16:
-        fields.append(("pcode_len", f"{len(p) - 16} B (tail)"))
-    return fields
-
-
 def fmt_latent_threat(p: bytes) -> list[Field]:
     """LATENT_THREAT (0x69) — §2.7.  Exactly 8B."""
     if len(p) < 8:
@@ -1072,7 +1072,6 @@ FORMATTERS: dict[int, object] = {
     0x70: fmt_trusted_publisher,
     0x71: fmt_fpath_like,  # ASEP_FILEPATH
     0x75: fmt_fpath_like,  # ASEP_FOLDERNAME
-    0x80: fmt_kcrce,
     0x69: fmt_latent_threat,
     0xAF: fmt_common_code,
     0x7A: fmt_versioncheck,

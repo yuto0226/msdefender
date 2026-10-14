@@ -12,6 +12,7 @@ from .hstr import (
     parse_hstr,
     render_hstr,
 )
+from .kcrce import KcrcePayload, parse_kcrce, render_kcrce
 from .nid import NID_SPECS, NidPayload, parse_nid, render_nid
 from .sigtree import (
     SIGTREE_BM_SPEC,
@@ -57,6 +58,7 @@ __all__ = [
     "HstrFlags",
     "HstrPayload",
     "HstrSubsignature",
+    "KcrcePayload",
     "NidPayload",
     "SigtreeEntry",
     "SigtreeParam",
@@ -68,6 +70,7 @@ __all__ = [
     "parse_bm_info",
     "parse_friendlyfile_sha256",
     "parse_hstr",
+    "parse_kcrce",
     "parse_nid",
     "parse_sigtree",
     "parse_static",
@@ -76,6 +79,7 @@ __all__ = [
     "render_bm_info",
     "render_friendlyfile_sha256",
     "render_hstr",
+    "render_kcrce",
     "render_nid",
     "render_sigtree",
     "render_static",
