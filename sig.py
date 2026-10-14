@@ -217,6 +217,29 @@ def _print_static_record(
     show_hex: bool,
     show_threat_heading: bool,
 ) -> None:
+    _print_structured_record(
+        seq,
+        0x67,
+        "STATIC",
+        payload,
+        threat_name,
+        result,
+        show_hex,
+        show_threat_heading,
+    )
+
+
+def _print_structured_record(
+    seq: int,
+    type_byte: int,
+    family_label: str,
+    payload: bytes,
+    threat_name: str,
+    result: FormatResult,
+    show_hex: bool,
+    show_threat_heading: bool,
+) -> None:
+    """Print a structured family record with shared framing and sections."""
     if threat_name and show_threat_heading:
         print(f"{ANSI_GRAY}{'─' * SEP_W}{ANSI_RESET}")
         print(
@@ -232,7 +255,7 @@ def _print_static_record(
     if error_value is not None:
         print(
             f"{ANSI_RED}[-]{ANSI_RESET} "
-            f"{ANSI_BOLD}{ANSI_BWHITE}STATIC(0x67){ANSI_RESET}"
+            f"{ANSI_BOLD}{ANSI_BWHITE}{family_label}(0x{type_byte:02x}){ANSI_RESET}"
             f"  {ANSI_GRAY}#{seq} / {len(payload)} B{ANSI_RESET}"
         )
         print(
@@ -247,7 +270,7 @@ def _print_static_record(
 
     print(
         f"{ANSI_BLUE}[*]{ANSI_RESET} "
-        f"{ANSI_BOLD}{ANSI_BWHITE}STATIC(0x67){ANSI_RESET}"
+        f"{ANSI_BOLD}{ANSI_BWHITE}{family_label}(0x{type_byte:02x}){ANSI_RESET}"
         f"  {ANSI_GRAY}#{seq} / {len(payload)} B{ANSI_RESET}"
     )
     for section_index, section in enumerate(result.sections):
