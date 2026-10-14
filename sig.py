@@ -160,6 +160,11 @@ def print_record(
     show_threat_heading: bool = True,
 ) -> None:
     """Print one record with header, parsed fields, and optional hexdump."""
+    if type_byte == 0x67:
+        _print_static_record(
+            seq, payload, threat_name, result, show_hex, show_threat_heading
+        )
+        return
     if type_byte in _HSTR_PUSH_FAMILY:
         _print_hstr_record(
             seq, type_byte, payload, threat_name, result, show_hex, show_threat_heading
@@ -201,6 +206,62 @@ def print_record(
     if show_hex:
         if fields:
             print()  # blank line before hexdump
+        _print_hexdump(payload)
+
+
+def _print_static_record(
+    seq: int,
+    payload: bytes,
+    threat_name: str,
+    result: FormatResult,
+    show_hex: bool,
+    show_threat_heading: bool,
+) -> None:
+    if threat_name and show_threat_heading:
+        print(f"{ANSI_GRAY}{'─' * SEP_W}{ANSI_RESET}")
+        print(
+            f"{ANSI_GREEN}[+]{ANSI_RESET} "
+            f"{ANSI_BOLD}{ANSI_BWHITE}{threat_name}{ANSI_RESET}"
+        )
+    elif not show_threat_heading:
+        print()
+
+    error_value = next(
+        (value for label, value in result.fields if label.lower() == "error"), None
+    )
+    if error_value is not None:
+        print(
+            f"{ANSI_RED}[-]{ANSI_RESET} "
+            f"{ANSI_BOLD}{ANSI_BWHITE}STATIC(0x67){ANSI_RESET}"
+            f"  {ANSI_GRAY}#{seq} / {len(payload)} B{ANSI_RESET}"
+        )
+        print(
+            f"{INDENT}{ANSI_RED}[-]{ANSI_RESET} "
+            f"{ANSI_BOLD}{ANSI_BWHITE}Parse Error{ANSI_RESET}"
+        )
+        _print_fields([("error", error_value)], indent=INDENT * 2)
+        if show_hex:
+            print()
+            _print_hexdump(payload)
+        return
+
+    print(
+        f"{ANSI_BLUE}[*]{ANSI_RESET} "
+        f"{ANSI_BOLD}{ANSI_BWHITE}STATIC(0x67){ANSI_RESET}"
+        f"  {ANSI_GRAY}#{seq} / {len(payload)} B{ANSI_RESET}"
+    )
+    for section_index, section in enumerate(result.sections):
+        # STATIC's first section is its primary info section; later sections are detail.
+        is_primary_section = section_index == 0
+        icon = "[*]" if is_primary_section else "[>]"
+        color = ANSI_BLUE if is_primary_section else ANSI_GRAY
+        print(
+            f"{INDENT}{color}{icon}{ANSI_RESET} "
+            f"{ANSI_BOLD}{ANSI_BWHITE}{section.title}{ANSI_RESET}"
+        )
+        _print_fields(list(section.rows), indent=INDENT * 2)
+    if show_hex:
+        print()
         _print_hexdump(payload)
 
 
@@ -980,89 +1041,6 @@ def fmt_aggregator(p: bytes, type_byte: int) -> FormatResult | list[Field]:
     return FormatResult(fields=fields)
 
 
-def fmt_static(p: bytes) -> list[Field]:
-    """STATIC (0x67) — IDA-confirmed via staticrec_t::Load (0x1800faabc).
-
-    Confirmed layout (minimum 18 bytes):
-        +0    4B  key[0]       — DWORD
-        +4    4B  key[1]       — DWORD
-        +8    4B  key[2]       — DWORD
-        +12   4B  score_flags  — DWORD: bits 0..27 = score (28-bit), bits 28..31 = upper flags
-        +16   2B  ext_word     — WORD: bits 13..15 = ext_type (0..4), bits 0..12 = misc flags
-        -- min 18 B --
-        Extension layout depends on ext_type (bits 13..15 of ext_word):
-          ext_type 0:  +18  16B  extra   (stored via MpSignatureExtraStore)
-                       +34  var  class_name
-          ext_type 1:  +18  20B  extra
-                       +38  var  class_name
-          ext_type 2:  +18   4B  sub_key (DWORD)
-          ext_type 3:  +18   4B  sub_key (DWORD)
-                       +22  var  class_name
-          ext_type 4:  +18  32B  extra
-                       +50  var  class_name
-    """
-    if len(p) < 18:
-        return []
-
-    k0, k1, k2 = struct.unpack_from("<3I", p, 0)
-    score_flags = int.from_bytes(p[12:16], "little")
-    score = score_flags & 0x0FFFFFFF  # bits 0..27
-    ext_word = int.from_bytes(p[16:18], "little")
-    ext_type = (ext_word >> 13) & 0x7  # bits 13..15
-
-    ext_label = {
-        0: "no-extra",
-        1: "extra-20B",
-        2: "sub_key",
-        3: "sub_key",
-        4: "extra-32B",
-    }.get(ext_type, "?")
-
-    fields: list[Field] = [
-        ("key[0]", f"{k0:#010x}"),
-        ("key[1]", f"{k1:#010x}"),
-        ("key[2]", f"{k2:#010x}"),
-        ("score_flags", f"{score_flags:#010x}"),
-        ("score", f"{score:#08x}  {ANSI_GRAY}(28-bit){ANSI_RESET}"),
-        ("ext_word", f"{ext_word:#06x}"),
-        ("ext_type", f"{ext_type}  {ANSI_GRAY}({ext_label}){ANSI_RESET}"),
-    ]
-
-    # Extension-specific fields
-    if ext_type in (2, 3):
-        if len(p) >= 22:
-            sub_key = int.from_bytes(p[18:22], "little")
-            fields.append(("sub_key", f"{sub_key:#010x}"))
-        off = 22
-    elif ext_type == 0:
-        if len(p) >= 34:
-            fields.append(("extra", p[18:34].hex(" ")))
-        off = 34
-    elif ext_type == 1:
-        if len(p) >= 38:
-            fields.append(("extra", p[18:38].hex(" ")))
-        off = 38
-    elif ext_type == 4:
-        if len(p) >= 50:
-            fields.append(("extra", p[18:50].hex(" ")))
-        off = 50
-    else:
-        off = 18
-
-    if off < len(p):
-        tail = p[off:]
-        null_pos = tail.find(b"\x00")
-        class_name = (
-            tail[:null_pos].decode("utf-8", errors="replace")
-            if null_pos != -1
-            else tail.decode("utf-8", errors="replace")
-        )
-        if class_name:
-            fields.append(("class_name", class_name))
-
-    return fields
-
-
 # Formatter dispatch table
 FORMATTERS: dict[int, object] = {
     0x5F: fmt_fpath_like,  # FILEPATH
@@ -1077,7 +1055,6 @@ FORMATTERS: dict[int, object] = {
     0x7A: fmt_versioncheck,
     0x96: fmt_aggregator,  # AAGGREGATOR
     0xE7: fmt_aggregator,  # AAGGREGATOREX
-    0x67: fmt_static,
 }
 
 # Formatters that accept (payload, type_byte) instead of (payload).
