@@ -114,6 +114,81 @@ class BmPattern:
     profile: str
 
 
+@dataclass(frozen=True, slots=True)
+class BmOperation:
+    offset: int
+    raw: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class BmLiteral(BmOperation):
+    value: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class BmGap(BmOperation):
+    minimum: int
+    maximum: int
+    bounded: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BmAlternatives(BmOperation):
+    token: BmToken
+    widths: tuple[int, ...]
+    choices: tuple[bytes, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BmScan(BmOperation):
+    kind: Literal["fixed_skip", "forward_search", "backward_scan", "backward_search"]
+    operand: int
+    support_note: str
+
+
+@dataclass(frozen=True, slots=True)
+class BmClass(BmOperation):
+    token: BmToken
+    count: int
+    spec: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class BmExtension(BmOperation):
+    token: BmToken
+    name: str
+    value: int | None = None
+    bitmap: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BmOpaque(BmOperation):
+    token: BmToken
+
+
+@dataclass(frozen=True, slots=True)
+class BmEnd(BmOperation):
+    pass
+
+
+BmSemanticOperation = (
+    BmLiteral
+    | BmGap
+    | BmAlternatives
+    | BmScan
+    | BmClass
+    | BmExtension
+    | BmOpaque
+    | BmEnd
+)
+
+
+@dataclass(frozen=True, slots=True)
+class BmSemanticPattern:
+    pattern: BmPattern
+    operations: tuple[BmSemanticOperation, ...]
+
+
 def decode_bm_pattern(data: bytes, *, profile: str = _PROFILE) -> BmPattern:
     """Frame one stream, preserving a safe prefix on malformed input.
 
@@ -194,6 +269,134 @@ def decode_bm_pattern(data: bytes, *, profile: str = _PROFILE) -> BmPattern:
     return BmPattern(raw, tuple(tokens), offset, ended, issue, raw[offset:], profile)
 
 
+_RANGE_OPERATIONS = {
+    0x0B: ("RANGE_REPEAT", "g_NLRange"),
+    0x0C: ("RANGE_SEARCH", "g_NLRange"),
+    0x0D: ("RANGE_REPEAT", "g_WSRange"),
+    0x0E: ("RANGE_SEARCH", "g_WSRange"),
+    0x0F: ("RANGE_REPEAT", "g_NRRange"),
+    0x10: ("RANGE_SEARCH", "g_NRRange"),
+    0x11: ("RANGE_REPEAT", "g_ALRange"),
+    0x12: ("RANGE_SEARCH", "g_ALRange"),
+    0x1D: ("RANGE_REPEAT", "g_ALNRange"),
+    0x1E: ("RANGE_REPEAT", "g_HexRange"),
+    0x1F: ("RANGE_SEARCH", "g_HexRange"),
+}
+_SCAN_OPERATIONS = {
+    0x07: (
+        "fixed_skip",
+        "Buffer reader may skip mapped-zero prefix; file reader rejects this family.",
+    ),
+    0x08: (
+        "forward_search",
+        "Candidate count includes the first attempt; mapped-zero handling applies.",
+    ),
+    0x09: (
+        "backward_scan",
+        "File reader counts mapped-nonzero bytes; buffer reader rejects this family.",
+    ),
+    0x0A: (
+        "backward_search",
+        "Backward suffix retries and mapped-zero handling apply.",
+    ),
+}
+
+
+def _interpret_opcode(token: BmToken) -> BmSemanticOperation:
+    dispatch = token.dispatch_id
+    operands = token.operands
+    source = (token.offset, token.raw)
+    if dispatch == 0x01:
+        return BmGap(*source, operands[0], operands[0])
+    if dispatch == 0x02:
+        return BmGap(*source, 0, operands[0], bounded=True)
+    if dispatch in _SCAN_OPERATIONS:
+        kind, note = _SCAN_OPERATIONS[dispatch]
+        return BmScan(*source, kind, int.from_bytes(operands, "little"), note)
+    if dispatch in _CLASS_DISPATCH_IDS:
+        # Preserve the wire count: flags and reader-specific predicates prevent
+        # a general conversion to regex/YARA membership or repetition.
+        return BmClass(*source, token, operands[0], operands[2:])
+    if dispatch == 0x13:
+        return BmExtension(*source, token, "FOLLOW_X86_RELATIVE_TARGET")
+    if dispatch in (0x1B, 0x1C):
+        name = "CAPTURE_MARKER" if dispatch == 0x1B else "BACKREF"
+        return BmExtension(*source, token, name, operands[0])
+    if dispatch in (0x20, 0x21):
+        width = 32 if dispatch == 0x20 else 64
+        return BmExtension(
+            *source, token, f"EXPORT_ADDRESS{width}", int.from_bytes(operands, "little")
+        )
+    if dispatch in _RANGE_OPERATIONS:
+        name, bitmap = _RANGE_OPERATIONS[dispatch]
+        count = int.from_bytes(operands, "little")
+        effective = count * (2 if token.descriptor_flags & 1 else 1)
+        return BmExtension(*source, token, name, effective, bitmap)
+    return BmOpaque(*source, token)
+
+
+def interpret_bm_pattern(pattern: BmPattern) -> BmSemanticPattern:
+    """Interpret framed bytes without executing the matcher or parsing display text.
+
+    Operations partition the framed raw prefix, including END. Alternatives
+    consume only a shared block fully contained in the immediately following
+    ordinary literal token; a common suffix remains a separate operation.
+    Opaque fallbacks consume no following bytes. The original framing and
+    undecoded tail remain available on ``pattern``.
+    """
+    operations: list[BmSemanticOperation] = []
+    index = 0
+    while index < len(pattern.tokens):
+        token = pattern.tokens[index]
+        if token.kind == "LITERAL":
+            operations.append(BmLiteral(token.offset, token.raw, token.literal))
+        elif token.kind == "END":
+            operations.append(BmEnd(token.offset, token.raw))
+        elif token.dispatch_id in (0x03, 0x17):
+            widths = tuple(
+                token.operands if token.dispatch_id == 0x03 else token.operands[1:]
+            )
+            shared_length = sum(widths)
+            following = (
+                pattern.tokens[index + 1] if index + 1 < len(pattern.tokens) else None
+            )
+            if (
+                widths
+                and following is not None
+                and following.kind == "LITERAL"
+                and following.offset == token.offset + len(token.raw)
+                and following.raw == following.literal
+                and shared_length <= len(following.literal)
+            ):
+                shared = following.literal[:shared_length]
+                choices: list[bytes] = []
+                start = 0
+                for width in widths:
+                    choices.append(shared[start : start + width])
+                    start += width
+                operations.append(
+                    BmAlternatives(
+                        token.offset,
+                        token.raw + shared,
+                        token,
+                        widths,
+                        tuple(choices),
+                    )
+                )
+                suffix = following.literal[shared_length:]
+                if suffix:
+                    operations.append(
+                        BmLiteral(following.offset + shared_length, suffix, suffix)
+                    )
+                index += 1
+            else:
+                operations.append(BmOpaque(token.offset, token.raw, token))
+        else:
+            operations.append(_interpret_opcode(token))
+        index += 1
+    return BmSemanticPattern(pattern, tuple(operations))
+
+
 def render_byte_fragments(data: bytes) -> str:
     """Render lossless quoted ASCII and hex fragments, without matching claims.
 
@@ -227,52 +430,53 @@ def render_byte_fragments(data: bytes) -> str:
     return " ".join(parts) if parts else "{ }"
 
 
-def _render_opcode(token: BmToken) -> str:
-    dispatch = token.dispatch_id
-    operands = token.operands
+def _render_extension(operation: BmExtension) -> str:
+    token = operation.token
     alias = f" raw=0x{token.raw_id:02X}" if token.raw_id != token.dispatch_id else ""
-    if dispatch == 0x01:
-        return f"[{operands[0]}]"
-    if dispatch in (0x02, 0x08):
-        bound = int.from_bytes(operands, "little")
-        return f"[0-{bound}]"
-    if dispatch in _CLASS_DISPATCH_IDS:
-        # Expose count and class-spec without asserting regex quantifiers,
-        # membership polarity, or mapping rules for partially decoded cases.
-        spec = render_byte_fragments(operands[2:])
-        return f"<CLASS_{dispatch:02X} count={operands[0]} spec={spec}{alias}>"
-    if dispatch == 0x13:
+    if operation.name == "FOLLOW_X86_RELATIVE_TARGET":
         return "<FOLLOW_X86_RELATIVE_TARGET>"
-    if dispatch == 0x1B:
-        return f"<CAPTURE_MARKER id={operands[0]}; boundaries unresolved>"
-    if dispatch == 0x1C:
-        return f"<BACKREF id={operands[0]}{alias}>"
-    if dispatch in (0x20, 0x21):
-        width = 32 if dispatch == 0x20 else 64
-        export_id = int.from_bytes(operands, "little")
-        return f"<EXPORT_ADDRESS{width} id=0x{export_id:08X}>"
-    ranges = {
-        0x0B: ("RANGE_REPEAT", "g_NLRange"),
-        0x0C: ("RANGE_SEARCH", "g_NLRange"),
-        0x0D: ("RANGE_REPEAT", "g_WSRange"),
-        0x0E: ("RANGE_SEARCH", "g_WSRange"),
-        0x0F: ("RANGE_REPEAT", "g_NRRange"),
-        0x10: ("RANGE_SEARCH", "g_NRRange"),
-        0x11: ("RANGE_REPEAT", "g_ALRange"),
-        0x12: ("RANGE_SEARCH", "g_ALRange"),
-        0x1D: ("RANGE_REPEAT", "g_ALNRange"),
-        0x1E: ("RANGE_REPEAT", "g_HexRange"),
-        0x1F: ("RANGE_SEARCH", "g_HexRange"),
-    }
-    if dispatch in ranges:
-        operation, bitmap = ranges[dispatch]
-        count = int.from_bytes(operands, "little")
-        effective = count * (2 if token.descriptor_flags & 1 else 1)
-        return f"<{operation} bitmap={bitmap} count={effective}; mapping/flags apply{alias}>"
-    # In particular, 03 and relative families 14/15/16 remain descriptive
-    # opcodes. Their operand bytes must not be guessed from subsequent tokens.
-    operand_text = f" {operands.hex(' ').upper()}" if operands else ""
-    return f"<OP_{token.raw_id:02X}{operand_text}>"
+    if operation.name == "CAPTURE_MARKER":
+        return f"<CAPTURE_MARKER id={operation.value}; boundaries unresolved>"
+    if operation.name == "BACKREF":
+        return f"<BACKREF id={operation.value}{alias}>"
+    if operation.name.startswith("EXPORT_ADDRESS"):
+        return f"<{operation.name} id=0x{operation.value:08X}>"
+    return (
+        f"<{operation.name} bitmap={operation.bitmap} count={operation.value}; "
+        f"mapping/flags apply{alias}>"
+    )
+
+
+def _render_operation(operation: BmSemanticOperation) -> str:
+    if isinstance(operation, BmGap):
+        if not operation.bounded:
+            return f"[{operation.maximum}]"
+        return f"[{operation.minimum}-{operation.maximum}]"
+    if isinstance(operation, BmAlternatives):
+        choices = " | ".join(
+            render_byte_fragments(choice) if choice else '""'
+            for choice in operation.choices
+        )
+        return f"( {choices} )"
+    if isinstance(operation, BmScan):
+        label = "candidates" if operation.kind == "forward_search" else "budget"
+        if operation.kind == "fixed_skip":
+            return f"<fixed_skip {operation.operand}>"
+        return f"<{operation.kind} {label}={operation.operand}>"
+    if isinstance(operation, BmClass):
+        token = operation.token
+        alias = (
+            f" raw=0x{token.raw_id:02X}" if token.raw_id != token.dispatch_id else ""
+        )
+        spec = render_byte_fragments(operation.spec)
+        return f"<class_{token.dispatch_id:02X} count={operation.count} spec={spec}{alias}>"
+    if isinstance(operation, BmExtension):
+        return _render_extension(operation)
+    if isinstance(operation, BmOpaque):
+        token = operation.token
+        operands = f" {token.operands.hex(' ').upper()}" if token.operands else ""
+        return f"<OP_{token.raw_id:02X}{operands}>"
+    return ""
 
 
 def render_bm_pattern(pattern: BmPattern) -> str:
@@ -289,13 +493,13 @@ def render_bm_pattern(pattern: BmPattern) -> str:
             parts.append(render_byte_fragments(b"".join(literals)))
             literals.clear()
 
-    for token in pattern.tokens:
-        if token.kind == "LITERAL":
-            literals.append(token.literal)
+    for operation in interpret_bm_pattern(pattern).operations:
+        if isinstance(operation, BmLiteral):
+            literals.append(operation.value)
         else:
             flush_literals()
-            if token.kind != "END":
-                parts.append(_render_opcode(token))
+            if not isinstance(operation, BmEnd):
+                parts.append(_render_operation(operation))
     flush_literals()
     if pattern.issue is not None:
         parts.append(f"<DECODE_ERROR {pattern.issue.code}@+0x{pattern.issue.offset:X}>")
