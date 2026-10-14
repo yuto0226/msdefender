@@ -341,12 +341,19 @@ def _print_hstr_fields(
             elif bm_yara.body is None:
                 codes = ", ".join(issue.code for issue in bm_yara.diagnostics)
                 declaration = f"yara: unsupported ({codes})"
+                if bm_yara.printable_preview is not None:
+                    declaration += f"  // preview: {bm_yara.printable_preview}"
+                    declaration = _highlight_bm_strings(declaration)
             else:
                 declaration = f"{identifier} = {bm_yara.body}"
+                clauses = []
+                if bm_yara.printable_preview is not None:
+                    clauses.append(f"preview: {bm_yara.printable_preview}")
                 if bm_yara.fidelity == BmYaraFidelity.CONDITIONAL:
-                    declaration += "  // conditional: " + "; ".join(
-                        bm_yara.requirements
-                    )
+                    clauses.append("conditional: " + ", ".join(bm_yara.requirements))
+                if clauses:
+                    declaration += "  // " + "; ".join(clauses)
+                declaration = _highlight_bm_strings(declaration)
             print(f"{indent}{declaration}")
             fields = [
                 (label, value)

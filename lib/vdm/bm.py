@@ -428,3 +428,53 @@ def render_byte_fragments(data: bytes) -> str:
     if binary:
         parts.append(f"{{ {binary.hex(' ').upper()} }}")
     return " ".join(parts) if parts else "{ }"
+
+
+def render_bm_printable_preview(pattern: BmPattern) -> str | None:
+    """Show printable runs from interpreted literals, without matcher claims."""
+    pieces: list[str | None] = []
+
+    def mark_omitted() -> None:
+        if not pieces or pieces[-1] is not None:
+            pieces.append(None)
+
+    for operation in interpret_bm_pattern(pattern).operations:
+        if isinstance(operation, BmEnd):
+            continue
+        if not isinstance(operation, BmLiteral):
+            mark_omitted()
+            continue
+        offset = 0
+        while offset < len(operation.value):
+            printable = 0x20 <= operation.value[offset] <= 0x7E
+            end = offset + 1
+            while (
+                end < len(operation.value)
+                and (0x20 <= operation.value[end] <= 0x7E) == printable
+            ):
+                end += 1
+            if printable and end - offset >= 3:
+                pieces.append(json.dumps(operation.value[offset:end].decode("ascii")))
+            else:
+                mark_omitted()
+            offset = end
+    if pattern.issue is not None or pattern.remaining_raw:
+        mark_omitted()
+
+    if not any(piece is not None for piece in pieces):
+        return None
+    result = "… " if pieces[0] is None else ""
+    seen_fragment = False
+    omitted = pieces[0] is None
+    for piece in pieces:
+        if piece is None:
+            omitted = True
+            continue
+        if seen_fragment:
+            result += " … " if omitted else " "
+        result += piece
+        seen_fragment = True
+        omitted = False
+    if omitted and seen_fragment:
+        result += " …"
+    return result

@@ -15,6 +15,7 @@ from .bm import (
     BmPattern,
     BmScan,
     interpret_bm_pattern,
+    render_bm_printable_preview,
 )
 
 
@@ -59,6 +60,7 @@ class BmYaraRender:
     fidelity: BmYaraFidelity
     diagnostics: tuple[BmRenderIssue, ...] = ()
     requirements: tuple[str, ...] = ()
+    printable_preview: str | None = None
 
 
 _IDENTITY_TRANSLATION = bytes(range(256))
@@ -114,6 +116,7 @@ def render_bm_yara(
     """
     requirements, context_issues = _context_requirements(context)
     issues = list(context_issues)
+    printable_preview = render_bm_printable_preview(pattern)
     if pattern.issue is not None:
         issue = pattern.issue
         issues.append(BmRenderIssue(f"decode.{issue.code}", issue.offset, issue.raw_id))
@@ -183,8 +186,17 @@ def render_bm_yara(
             issues.append(BmRenderIssue("trailing_jump", parts[-1][1], parts[-1][3]))
     if issues:
         return BmYaraRender(
-            None, BmYaraFidelity.UNSUPPORTED, tuple(issues), requirements
+            None,
+            BmYaraFidelity.UNSUPPORTED,
+            tuple(issues),
+            requirements,
+            printable_preview,
         )
     body = "{ " + " ".join(part for part, _, _, _ in parts) + " }"
     fidelity = BmYaraFidelity.CONDITIONAL if requirements else BmYaraFidelity.EXACT
-    return BmYaraRender(body, fidelity, requirements=requirements)
+    return BmYaraRender(
+        body,
+        fidelity,
+        requirements=requirements,
+        printable_preview=printable_preview,
+    )
