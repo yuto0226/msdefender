@@ -37,6 +37,7 @@ from lib.debug import (
     ok,
     warn,
 )
+from lib.vdm.types.threat import parse_threat_begin
 
 # ─── Constants ────────────────────────────────────────────────────────────── #
 
@@ -259,62 +260,6 @@ def encode_record(type_byte: int, payload: bytes) -> bytes:
         )
 
 
-# ─── Threat name extraction ────────────────────────────────────────────────── #
-def parse_threat_name(payload: bytes) -> str:
-    """Extract the human-readable threat name from a THREAT_BEGIN (0x5C) payload.
-
-    Confirmed payload layout (RE of threat_info_receiver @ 0x1809EB590):
-
-        Offset   Size   Field
-        ───────  ─────  ──────────────────────────────────────────────────────
-        +0x00    4      threat_id      (LE uint32) → dword_18127F9A8
-        +0x04    2      dep_count      (LE uint16) number of 4-byte dep IDs
-        +0x06    2      ext_count      (LE uint16) number of 2-byte ext entries
-        +0x08    2      category       (LE uint16) 0x0B=generic, 0x0C=monitool
-        +0x0A    2      name_len       (LE uint16) byte count of name_obj[]
-        +0x0C    n      name_obj[]     n = name_len bytes:
-                          if name_obj[0] >= 0x80 → internal category marker (skip)
-                                        else      → first char of display name
-                          remainder: ASCII/UTF-8, NOT null-terminated in these n bytes
-        +0x0C+n  2      post_name_pad  = 0x0000 (null terminator lives here)
-        …               dep_ids[], ext_entries[], trailing 6-byte metadata
-
-    Full struct documented in docs/signature_payload_formats.md §4.1.
-    """
-    # Minimum payload size check (confirmed: cmp rdi, 0Ch @ 0x1809EB66A)
-    if len(payload) < 0x0C:
-        tid = int.from_bytes(payload[:4], "little") if len(payload) >= 4 else 0
-        return f"threat_{tid:08x}"
-
-    name_len = int.from_bytes(payload[0x0A:0x0C], "little")
-
-    if name_len == 0 or 0x0C + name_len > len(payload):
-        tid = int.from_bytes(payload[:4], "little")
-        return f"threat_{tid:08x}"
-
-    raw = payload[0x0C : 0x0C + name_len]
-
-    # name_obj may start with 0, 1, or 2 bytes >= 0x80 (internal category/encoding
-    # markers).  Skip all of them; the display name begins at the first byte < 0x80.
-    # Observed: 0xF4 (1 byte) for "!Aconti"-style names,
-    #           0xC0 0xE1 (2 bytes) for "WsTunnel.A"-style names,
-    #           no prefix for "MonitoringTool:Win32/..."-style names.
-    while raw and raw[0] >= 0x80:
-        raw = raw[1:]
-
-    # name_str is NOT null-terminated within name_len bytes (null lives in post_name_pad).
-    # Guard against malformed payloads with an embedded null.
-    null_pos = raw.find(b"\x00")
-    if null_pos != -1:
-        raw = raw[:null_pos]
-
-    name = raw.decode("utf-8", errors="replace").strip()
-    if not name:
-        tid = int.from_bytes(payload[:4], "little")
-        return f"threat_{tid:08x}"
-    return name
-
-
 # ─── Stream partitioning ──────────────────────────────────────────────────── #
 # A Threat groups the THREAT_BEGIN record, all interior records, and the
 # THREAT_END record so they can be written out as a self-contained .sig file.
@@ -347,7 +292,7 @@ def partition_stream(stream: bytes) -> tuple[list[Threat], list[Record]]:
                     current_name,
                 )
                 threats.append((current_name, current_recs))
-            current_name = parse_threat_name(payload)
+            current_name = parse_threat_begin(payload).name
             current_recs = [(type_byte, payload)]
             in_block = True
 

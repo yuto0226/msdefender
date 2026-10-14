@@ -6,6 +6,7 @@ from .core import FamilySpec
 from .types.bm_info import SPEC as BM_INFO_SPEC
 from .types.hstr import HSTR_SPECS
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
+from .types.threat import THREAT_SPECS
 
 DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
     {
@@ -15,6 +16,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             SIGTREE_EXT_SPEC,
             BM_INFO_SPEC,
             SIGTREE_BM_SPEC,
+            *THREAT_SPECS,
             *HSTR_SPECS,
         )
     }

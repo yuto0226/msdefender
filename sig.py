@@ -42,69 +42,14 @@ from lib.debug import (
     error,
     info,
 )
-from lib.threat import parse_threat_id, parse_threat_name
 from lib.utils import iter_records_from_file, iter_records_with_context
-from lib.vdm import FamilySpec
+from lib.vdm import DEFAULT_REGISTRY, decode_payload
 from lib.vdm import type_name as _type_name
 from lib.vdm.bm_yara import BmYaraFidelity, BmYaraRender
 from lib.vdm.types.hstr import HSTR_SPECS
+from lib.vdm.types.threat import parse_threat_begin, threat_category_name
 
 # Semantic annotation tables
-
-# THREAT_BEGIN: category WORD → __mpthreat_category_t enum label.
-# Reversed from get_category_from_name @ 0x180131108 (Table1/Table2 + switch),
-# cross-validated against category distribution in mpas.sig (17,989 threats).
-# fmt: off
-_THREAT_CATEGORY: dict[int, str] = {
-    0x01: "Adware",           # ~10%  in mpas.sig
-    0x02: "Spyware",
-    0x03: "PWS",              # Password Stealer; 0 in mpas.sig (in mpav.sig)
-    0x04: "TrojanDownloader", # ~6%
-    0x05: "Worm",             # ~11%
-    0x06: "Backdoor",
-    0x08: "Trojan",           # ~16%  generic malware fallback
-    0x09: "Spammer",          # EmailFlooder / Spammer
-    0x0B: "Dialer",           # ~1%   adult-content / premium-rate dialers
-    0x0C: "MonitoringTool",   # ~5%
-    0x0D: "BrowserModifier",  # ~4%
-    0x13: "Joke",
-    0x15: "SoftwareBundler",  # ~1%
-    0x16: "TrojanClicker",
-    0x17: "SettingsModifier", # ~4%
-    0x1B: "PUA",              # ~16%  Potentially Unwanted Application
-    0x1E: "Exploit",
-    0x20: "VirTool",          # also: Constructor
-    0x21: "RemoteAccess",
-    0x22: "Tool",             # HackTool / Program / EICAR test files
-    0x24: "DoS",              # also: DDoS
-    0x25: "TrojanDropper",
-    0x26: "Flooder",
-    0x27: "TrojanSpy",
-    0x28: "TrojanProxy",
-    0x2A: "Virus",            # 0 in mpas.sig (in mpav.sig)
-    0x2B: "PseudoThreat",     # ~19%  synthetic test threats (!PseudoThreat_XXXXXXXX)
-    0x2D: "SPP",              # Software Protection Platform; 0 in mpas.sig
-    0x31: "EUS",              # End-User Software; 0 in mpas.sig
-    0x32: "Ransom",           # 0 in mpas.sig (in mpav.sig)
-    0x33: "HipsRule",         # Behavioral/HIPS rule; 0 in mpas.sig
-}
-# fmt: on
-
-# THREAT_BEGIN: sentinel threat_id values that set engine global flags.
-# Reversed from threat_info_receiver @ 0x1809EB590 / DispatchRecords @ 0x1800F99A8.
-# Note: these are NOT in the magic threat range (0x7FFE0000–0x7FFE9FFF /
-# 0x7FFF0000–0x7FFF9FFF) — they are a distinct category of special IDs.
-_MAGIC_THREAT_ID: dict[int, str] = {
-    0x00040E1A: "hosts_loaded",
-    0x7FFFFFFE: "unknown_loaded",
-    0x7FFFFFFF: "friendly_loaded",
-    0xFFFFFFF0: "infrastructure",
-    0xFFFFFFF9: "behaviordetection_loaded",
-    0xFFFFFFFA: "infrastructure",
-    0x7FFFFFF0: "infrastructure",
-    0x7FFFFFFA: "infrastructure",
-    0xFFFFFFFF: "avfriendly_loaded",
-}
 
 # Aggregator receiver families use a different expression-buffer wire format.
 _AGGREGATOR_FAMILY: dict[int, str] = {
@@ -119,81 +64,6 @@ _HSTR_PUSH_FAMILY = frozenset(_HSTR_FAMILY_NAMES)
 _AGGREGATOR_FLAG_BITS: list[tuple[int, str]] = [
     (0x01, "fuzzy"),
 ]
-
-# SIGTREE: type_word → combination logic label.
-# LE uint16: wire bytes 01 03 → 0x0301, 01 05 → 0x0501.
-# High byte (p[3]) = SigtreeHandlerInstance index (0–6); 0xF0 = special.
-# Confirmed from siga_cksig_impl @ 0x18013d6a0.
-_SIGTREE_TYPE_WORD: dict[int, str] = {
-    0x0301: "any-of",
-    0x0501: "all-of",
-    0xF000: "special/wildcard",  # special value; handled differently in siga_cksig_impl
-}
-
-# SIGTREE: fid_hi byte → field family (observed in samples; gktab confirmation pending).
-_SIGTREE_FID_HI: dict[int, str] = {
-    0x70: "PE attrs",
-    0x60: "generic attrs",
-    0x30: "family_0x30",
-}
-
-# SIGTREE: entry_flags bitmask (wire DWORD at entry[0..3]).
-# IDA-confirmed from SigtreeHandlerInstance::push @ 0x1800f1d84
-# and MatchParameter @ 0x1800ec6b0.
-#
-# Runtime 64B slot layout (after push()):
-#   +0  packed DWORD:  [fid_lo][fid_hi][sub_lo][sub_hi]
-#   +4  entry_flags DWORD
-#   +8  n3_ext slot A (0 if n3<1)      +16  val_A (primary CRC target)
-#   +24 BM ptr A (initially 0)          +32  n3_ext slot B (0 if n3<2)
-#   +40 val_B (secondary CRC target)   +48  BM ptr B (initially 0)
-#   +56 1
-#
-# entry_flags split:
-#   byte 0 (bits 0–7)  → "A-side" param dispatch  (flags_A)
-#   byte 1 (bits 8–15) → "B-side" param dispatch  (flags_B)
-#
-# Confirmed bits:
-#   0x0002  always_match_A  — MatchParameter returns true immediately (no CRC check) for A-side
-#   0x0010  ext_bm_A       — BM string matcher data follows for A-side (secondary slot +40)
-#   0x1000  ext_bm_B       — BM string matcher data follows for B-side (primary slot +16)
-#                            (prev. documented as "ext_hash"; both bits call process_extended_param)
-_SIGTREE_ENTRY_FLAG_BITS: list[tuple[int, str]] = [
-    (
-        0x0002,
-        "always_match_A",
-    ),  # A-side param always passes (MatchParameter early-return 1)
-    (0x0010, "ext_bm_A"),  # extended BM data follows for A-side (secondary param slot)
-    (0x1000, "ext_bm_B"),  # extended BM data follows for B-side (primary param slot)
-]
-
-# SIGTREE: n3 (high byte of entry_count_word) → extra bytes appended per entry
-# beyond the base 16B.  n3=0..3 confirmed from SigtreeHandlerInstance::push disasm;
-# n3=4 confirmed by TelnetoverNonStandardPort.A (27×24B=648, body=652).
-# These extra bytes encode secondary parameter values for MatchParameter's
-# secondary slot; n3=4 records contain matching port numbers.
-_SIGTREE_N3_EXTRA: dict[int, int] = {0: 0, 1: 4, 2: 8, 3: 9, 4: 8}
-
-
-def _annotate_bits(value: int, bit_table: list[tuple[int, str]]) -> str:
-    """Return a parenthesised annotation for a bitmask value.
-
-    Known bits are listed by name; unknown set bits shown as 'unk_bitN'.
-    Returns '' when value is 0.
-    """
-    if value == 0:
-        return ""
-    parts: list[str] = []
-    known_mask = 0
-    for bit, name in bit_table:
-        known_mask |= bit
-        if value & bit:
-            parts.append(name)
-    for n in range(32):
-        if (value & ~known_mask) & (1 << n):
-            parts.append(f"unk_bit{n}")
-    return f"  ({', '.join(parts)})" if parts else ""
-
 
 # Display helpers
 # A formatter returns a list of (label, value) pairs.
@@ -758,43 +628,6 @@ def fmt_friendlyfile_sha256(p: bytes) -> list[Field]:
     return fields
 
 
-def fmt_threat_begin(p: bytes) -> list[Field]:
-    """THREAT_BEGIN (0x5C) — documented in §4.1."""
-    if len(p) < 0x0C:
-        return []
-    threat_id = int.from_bytes(p[0:4], "little")
-    dep_count = int.from_bytes(p[4:6], "little")
-    ext_count = int.from_bytes(p[6:8], "little")
-    category = int.from_bytes(p[8:10], "little")
-    name_len = int.from_bytes(p[10:12], "little")
-    name = parse_threat_name(p)
-
-    cat_label = _THREAT_CATEGORY.get(category, "?")
-    cat_str = f"{category:#06x}  ({cat_label})"
-
-    magic_label = _MAGIC_THREAT_ID.get(threat_id, "")
-    tid_str = f"{threat_id:#010x}" + (
-        f"  {ANSI_YELLOW}[{magic_label}]{ANSI_RESET}" if magic_label else ""
-    )
-
-    return [
-        ("threat_id", tid_str),
-        ("category", cat_str),
-        ("dep_count", str(dep_count)),
-        ("ext_count", str(ext_count)),
-        ("name_len", str(name_len)),
-        ("name", f"{ANSI_BOLD}{name}{ANSI_RESET}"),
-    ]
-
-
-def fmt_threat_end(p: bytes) -> list[Field]:
-    """THREAT_END (0x5D) — 4-byte checksum."""
-    if len(p) < 4:
-        return []
-    csum = int.from_bytes(p[:4], "little")
-    return [("checksum", f"{csum:#010x}")]
-
-
 def fmt_snid(p: bytes) -> list[Field]:
     """SNID (0x7E) / NID (0x55) — §1.1.  5B min payload."""
     if len(p) < 5:
@@ -1007,150 +840,8 @@ def fmt_static(p: bytes) -> list[Field]:
     return fields
 
 
-def fmt_sigtree(p: bytes) -> list[Field]:
-    """SIGTREE (0x40) / SIGTREE_EXT (0x41).
-
-    IDA-confirmed layout (SigtreeHandlerInstance::push @ 0x1800f1d84,
-    siga_cksig_impl @ 0x18013d6a0, MatchParameter @ 0x1800ec6b0):
-
-        +0  2B  entry_count_word — low byte = entry count; high byte = n3 (per-entry
-                                   size modifier: 0→+0B, 1→+4B, 2→+8B, 3→+9B)
-        +2  2B  type_word        — high byte = SigtreeHandlerInstance index (0–6);
-                                   0x0301 = any-of, 0x0501 = all-of
-        +4  ?B  attr_name[]      — null-terminated; p[4]==0x00 means unnamed
-        +?  entry_count × (16 + n3_extra) B entries:
-              [0..3]  4B  entry_flags  — bit 0x0002: always_match_A (A-side trivially passes),
-                                         bit 0x0010: ext_bm_A (BM data follows for A-side),
-                                         bit 0x1000: ext_bm_B (BM data follows for B-side)
-              [4]     1B  fid_lo       — field sub-code (gktab lookup key)
-              [5]     1B  fid_hi       — field family (0x70=PE, 0x60=generic, 0x30=?)
-              [6]     1B  sub_lo       — A-side comparison data length (bytes to CRC; 0=full)
-              [7]     1B  sub_hi       — B-side comparison data length (bytes to CRC; 0=full)
-              [8..11] 4B  val_lo       — match value low DWORD
-              [12..15]4B  val_hi       — match value high DWORD (0x00 = single DWORD)
-              [16..]  n3_extra B       — n3-driven fixed extension (semantics TBD)
-        After all fixed entries: optional variable-length BM matcher / hash data
-        per entry (presence gated by entry_flags; size requires gktab at runtime).
-    """
-    if len(p) < 5:
-        return []
-
-    entry_count_word = int.from_bytes(p[0:2], "little")
-    entry_count = entry_count_word & 0xFF  # low byte
-    n3 = (entry_count_word >> 8) & 0xFF  # high byte: per-entry size modifier
-    n3_extra = _SIGTREE_N3_EXTRA.get(n3, 0)
-    entry_stride = 16 + n3_extra
-
-    type_word = int.from_bytes(p[2:4], "little")
-    tw_label = _SIGTREE_TYPE_WORD.get(type_word, "?")
-    instance_idx = (type_word >> 8) & 0xFF  # p[3] = SigtreeHandlerInstance index
-
-    n3_note = (
-        f"  {ANSI_GRAY}(n3={n3}, stride={entry_stride}B/entry){ANSI_RESET}"
-        if n3
-        else ""
-    )
-    inst_note = f"  {ANSI_GRAY}inst={instance_idx}{ANSI_RESET}"
-
-    fields: list[Field] = [
-        ("entry_count", f"{entry_count}{n3_note}"),
-        (
-            "type_word",
-            f"{type_word:#06x}  {ANSI_YELLOW}({tw_label}){ANSI_RESET}{inst_note}",
-        ),
-    ]
-
-    # p[4] is the first byte of null-terminated attr_name; 0x00 = no name
-    off = 5
-    if p[4] != 0 and len(p) > 4:
-        end = p.find(b"\x00", 4)
-        if end != -1:
-            attr_name = p[4:end].decode("utf-8", errors="replace")
-            off = end + 1
-        else:
-            attr_name = p[4:].decode("utf-8", errors="replace")
-            off = len(p)
-        fields.append(("attr_name", f"{ANSI_GREEN}{attr_name}{ANSI_RESET}"))
-
-    # Iterate entries; track whether any entry has variable-length extended params
-    has_ext_data = False
-    for i in range(entry_count):
-        eoff = off + i * entry_stride
-        if eoff + 16 > len(p):
-            fields.append((f"entry[{i}]", f"{ANSI_YELLOW}truncated{ANSI_RESET}"))
-            break
-        e = p[eoff : eoff + 16]
-        eflags = int.from_bytes(e[0:4], "little")
-        fid_lo = e[4]
-        fid_hi = e[5]
-        sub_lo = e[6]  # A-side comparison data size (MatchParameter, a8[0]==0 path)
-        sub_hi = e[7]  # B-side comparison data size (MatchParameter, a8[0]!=0 path)
-        val_lo = int.from_bytes(e[8:12], "little")
-        val_hi = int.from_bytes(e[12:16], "little")
-        fhi_label = _SIGTREE_FID_HI.get(fid_hi, "?")
-
-        # Omit val_hi when it is zero.
-        if val_hi == 0:
-            val_str = f"{val_lo:#010x}"
-        else:
-            val_str = f"{val_lo:#010x}|{val_hi:#010x}"
-
-        # Omit sub_lo and sub_hi when both are zero.
-        if sub_lo == 0 and sub_hi == 0:
-            sub_str = f"{ANSI_GRAY}0x00:0x00{ANSI_RESET}"
-        else:
-            sub_str = f"{sub_lo:#04x}:{sub_hi:#04x}"
-
-        flag_annot = _annotate_bits(eflags, _SIGTREE_ENTRY_FLAG_BITS)
-        if eflags & (0x0010 | 0x1000):
-            has_ext_data = True
-
-        fields.append(
-            (
-                f"entry[{i}]",
-                (
-                    f"flags={eflags:#010x}{flag_annot}"
-                    f"  fid={fid_hi:02x}{ANSI_GRAY}({fhi_label}){ANSI_RESET}:{fid_lo:02x}"
-                    f"  sub={sub_str}"
-                    f"  val={val_str}"
-                ),
-            )
-        )
-
-        # Show n3 extension bytes when present
-        if n3_extra and eoff + entry_stride <= len(p):
-            ext_bytes = p[eoff + 16 : eoff + entry_stride]
-            fields.append((f"entry[{i}].n3_ext", ext_bytes.hex(" ")))
-
-    # Payload size annotation
-    expected_base = off + entry_count * entry_stride
-    remaining = len(p) - expected_base
-    if has_ext_data and remaining > 0:
-        fields.append(
-            (
-                "payload_size",
-                (
-                    f"{len(p)} B"
-                    f"  {ANSI_GRAY}(base {expected_base} B + {remaining} B extended params){ANSI_RESET}"
-                ),
-            )
-        )
-    elif remaining != 0:
-        fields.append(
-            (
-                "payload_size",
-                f"{len(p)} B  (expected {expected_base} B)"
-                + (f"  {ANSI_YELLOW}← MISMATCH{ANSI_RESET}" if remaining != 0 else ""),
-            )
-        )
-
-    return fields
-
-
 # Formatter dispatch table
 FORMATTERS: dict[int, object] = {
-    0x5C: fmt_threat_begin,
-    0x5D: fmt_threat_end,
     0x5F: fmt_fpath_like,  # FILEPATH
     0x60: fmt_fpath_like,  # FOLDERNAME
     0x63: fmt_regkey,
@@ -1167,28 +858,20 @@ FORMATTERS: dict[int, object] = {
     0x96: fmt_aggregator,  # AAGGREGATOR
     0xE7: fmt_aggregator,  # AAGGREGATOREX
     0x67: fmt_static,
-    0x40: fmt_sigtree,  # SIGTREE
-    0x41: fmt_sigtree,  # SIGTREE_EXT
 }
 
 # Formatters that accept (payload, type_byte) instead of (payload).
 _TYPE_AWARE_FORMATTERS: frozenset = frozenset({fmt_fpath_like, fmt_aggregator})
 
-# Migrated families execute their module-owned parser and style-free renderer.
-FORMATTERS.update({spec.type_byte: spec for spec in HSTR_SPECS})
-
 
 def format_payload(type_byte: int, payload: bytes) -> FormatResult:
-    fn = FORMATTERS.get(type_byte)
-    if fn is None:
-        return FormatResult()
-    if isinstance(fn, FamilySpec):
-        try:
-            rendered = fn.renderer(fn.parser(payload))
-        except ValueError as exc:
-            return FormatResult(fields=[("error", str(exc))])
+    if type_byte in DEFAULT_REGISTRY:
+        rendered = decode_payload(type_byte, payload)
         return FormatResult(
-            fields=list(rendered.fields),
+            fields=[
+                ("error" if label == "Error" else label, value)
+                for label, value in rendered.fields
+            ],
             sections=[
                 DisplaySection(
                     title=section.title,
@@ -1198,6 +881,10 @@ def format_payload(type_byte: int, payload: bytes) -> FormatResult:
                 for section in rendered.sections
             ],
         )
+
+    fn = FORMATTERS.get(type_byte)
+    if fn is None:
+        return FormatResult()
     raw_result: list[Field] | FormatResult
     if fn in _TYPE_AWARE_FORMATTERS:
         raw_result = fn(payload, type_byte)  # type: ignore[call-arg]
@@ -1246,7 +933,7 @@ def run_list_threats(
             return True
         if filter_type is not None and filter_type not in cur_counts:
             return True
-        cat_name = _THREAT_CATEGORY.get(cur_cat, f"0x{cur_cat:02x}")
+        cat_name = threat_category_name(cur_cat) or f"0x{cur_cat:02x}"
         top = "  " + ", ".join(
             f"{ANSI_WHITE}{_type_name(t)}{ANSI_RESET}{ANSI_GRAY}×{c}{ANSI_RESET}"
             for t, c in cur_counts.most_common(4)
@@ -1269,11 +956,10 @@ def run_list_threats(
                 threat_idx += 1
                 if not _flush(threat_idx):
                     break
-            cur_name = parse_threat_name(payload)
-            cur_id = parse_threat_id(payload)
-            cur_cat = (
-                int.from_bytes(payload[8:10], "little") if len(payload) >= 10 else 0
-            )
+            threat = parse_threat_begin(payload)
+            cur_name = threat.name
+            cur_id = threat.threat_id
+            cur_cat = threat.category
             cur_counts = Counter()
             in_block = True
         elif type_byte == 0x5D:

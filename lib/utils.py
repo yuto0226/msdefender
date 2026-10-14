@@ -90,14 +90,14 @@ def iter_records_with_context(
     sig_index    — 0-based index of the record within its threat block
                    (THREAT_BEGIN itself is index 0)
     """
-    from lib.threat import parse_threat_name  # local import to avoid circularity
+    from lib.vdm.types.threat import parse_threat_begin
 
     current_name = ""
     sig_idx = 0
 
     for type_byte, payload in iter_records_from_file(path):
         if type_byte == SIG_THREAT_BEGIN:
-            current_name = parse_threat_name(payload)
+            current_name = parse_threat_begin(payload).name
             sig_idx = 0
             yield type_byte, payload, current_name, sig_idx
         elif type_byte == SIG_THREAT_END:
