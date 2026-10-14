@@ -2,6 +2,23 @@ from dataclasses import dataclass
 
 from ..core import DisplaySection, FamilySpec, FormatResult
 
+_HANDLER_LOGIC = {
+    3: "any-of",
+    5: "all-of",
+}
+
+_FIELD_FAMILIES = {
+    0x30: "unknown",
+    0x60: "generic attributes",
+    0x70: "PE attributes",
+}
+
+_ENTRY_FLAG_BITS = (
+    (0x0002, "ALWAYS_MATCH_A"),
+    (0x0010, "EXT_BM_A"),
+    (0x1000, "EXT_BM_B"),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SigtreeParam:
@@ -13,9 +30,16 @@ class SigtreeParam:
 @dataclass(frozen=True, slots=True)
 class SigtreeEntry:
     fixed_raw: bytes
+    flags: int
+    fid_lo: int
+    fid_hi: int
+    sub_lo: int
+    sub_hi: int
+    val_lo: int
+    val_hi: int
     level_extra_raw: bytes
-    param_a: SigtreeParam | None
-    param_b: SigtreeParam | None
+    param_b: SigtreeParam | None  # wire-first: fixed_raw[1], sub_hi
+    param_a: SigtreeParam | None  # wire-second: fixed_raw[0], sub_lo
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +53,12 @@ class SigtreePayload:
     record_extra_raw: bytes
     entries: tuple[SigtreeEntry, ...]
     trailing_raw: bytes
+
+
+def _classify_match_logic(handler_index: int) -> str:
+    return _HANDLER_LOGIC.get(
+        handler_index, f"handler-specific (index {handler_index})"
+    )
 
 
 def _take(payload: bytes, cursor: int, size: int, label: str) -> tuple[bytes, int]:
@@ -100,30 +130,37 @@ def parse_sigtree(payload: bytes) -> SigtreePayload:
             level_extra_size,
             f"SIGTREE entry {index} extension",
         )
-        hash_gate_a = len(level_extra_raw) >= 3 and bool(level_extra_raw[2] & 1)
-        hash_gate_b = len(level_extra_raw) >= 2 and bool(level_extra_raw[1] & 1)
-        param_a, cursor = _parse_param(
+        hash_gate_b = len(level_extra_raw) >= 3 and bool(level_extra_raw[2] & 1)
+        hash_gate_a = len(level_extra_raw) >= 2 and bool(level_extra_raw[1] & 1)
+        param_b, cursor = _parse_param(
             payload,
             cursor,
             size_hint=fixed_raw[7],
             flags=fixed_raw[1],
-            hash_enabled=hash_gate_a,
-            label=f"SIGTREE entry {index} param 1",
+            hash_enabled=hash_gate_b,
+            label=f"SIGTREE entry {index} param B",
         )
-        param_b, cursor = _parse_param(
+        param_a, cursor = _parse_param(
             payload,
             cursor,
             size_hint=fixed_raw[6],
             flags=fixed_raw[0],
-            hash_enabled=hash_gate_b,
-            label=f"SIGTREE entry {index} param 2",
+            hash_enabled=hash_gate_a,
+            label=f"SIGTREE entry {index} param A",
         )
         entries.append(
             SigtreeEntry(
                 fixed_raw=fixed_raw,
+                flags=int.from_bytes(fixed_raw[0:4], "little"),
+                fid_lo=fixed_raw[4],
+                fid_hi=fixed_raw[5],
+                sub_lo=fixed_raw[6],
+                sub_hi=fixed_raw[7],
+                val_lo=int.from_bytes(fixed_raw[8:12], "little"),
+                val_hi=int.from_bytes(fixed_raw[12:16], "little"),
                 level_extra_raw=level_extra_raw,
-                param_a=param_a,
                 param_b=param_b,
+                param_a=param_a,
             )
         )
 
@@ -152,26 +189,53 @@ def render_sigtree(parsed: SigtreePayload) -> FormatResult:
         subtype = f" subtype={param.subtype}" if param.subtype is not None else ""
         return f"{param.kind}{subtype}, {preview(param.raw)}"
 
+    def render_flags(value: int) -> str:
+        names = [name for bit, name in _ENTRY_FLAG_BITS if value & bit]
+        known_mask = sum(bit for bit, _ in _ENTRY_FLAG_BITS)
+        unknown = value & ~known_mask
+        if unknown:
+            names.append(f"UNKNOWN_BITS({unknown:#010x})")
+        annotation = f" ({' | '.join(names)})" if names else ""
+        return f"{value:#010x}{annotation}"
+
+    def render_width(value: int) -> str:
+        return "full" if value == 0 else f"{value} B"
+
     sections: list[DisplaySection] = []
     for index, entry in enumerate(parsed.entries, 1):
         rows = [
+            ("flags", render_flags(entry.flags)),
+            (
+                "field",
+                (
+                    f"{entry.fid_hi:#04x}:{entry.fid_lo:#04x} "
+                    f"({_FIELD_FAMILIES.get(entry.fid_hi, 'unknown family')})"
+                ),
+            ),
+            (
+                "sub_widths",
+                f"A={render_width(entry.sub_lo)}, B={render_width(entry.sub_hi)}",
+            ),
+            ("values", f"A={entry.val_lo:#010x}, B={entry.val_hi:#010x}"),
             ("fixed_raw", entry.fixed_raw.hex(" ")),
             ("level_extra_raw", entry.level_extra_raw.hex(" ") or "(empty)"),
         ]
         if entry.param_a is not None:
-            rows.append(("param_1", render_param(entry.param_a)))
+            rows.append(("param_A", render_param(entry.param_a)))
         if entry.param_b is not None:
-            rows.append(("param_2", render_param(entry.param_b)))
+            rows.append(("param_B", render_param(entry.param_b)))
         sections.append(DisplaySection(title=f"> Entry #{index}", rows=tuple(rows)))
     return FormatResult(
         fields=(
             ("entry_count", str(parsed.entry_count)),
             ("format_level", str(parsed.format_level)),
+            ("match_logic", _classify_match_logic(parsed.handler_index)),
             ("raw_header_2", f"{parsed.raw_header_2:#04x}"),
             ("handler_index", str(parsed.handler_index)),
             ("name_raw", parsed.name_raw.hex(" ") or "(empty)"),
             ("name", parsed.name_raw.decode("latin-1")),
             ("record_extra_raw", parsed.record_extra_raw.hex(" ") or "(empty)"),
+            ("payload_consumption", f"{len(parsed.trailing_raw)} B unconsumed"),
             ("trailing_raw", preview(parsed.trailing_raw)),
         ),
         sections=tuple(sections),
