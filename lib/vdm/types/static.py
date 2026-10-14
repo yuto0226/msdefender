@@ -5,6 +5,7 @@ from enum import IntEnum
 from typing import Final
 
 from ..core import DisplaySection, FamilySpec, FormatResult
+from ..recid import RecIdTail, parse_recid_tail
 
 STATIC_TYPE: Final = 0x67
 HEADER_SIZE: Final = 18
@@ -31,17 +32,6 @@ _HASH_LENGTHS: Final = {
 
 
 @dataclass(frozen=True, slots=True)
-class StaticRecIdTail:
-    """Lossless tail bytes and the engine's bounded type-1 object view."""
-
-    raw: bytes
-    length_prefix: int
-    object_raw: bytes
-    trailing_raw: bytes
-    has_object: bool
-
-
-@dataclass(frozen=True, slots=True)
 class StaticPayload:
     raw: bytes
     first_page_crc: int
@@ -53,31 +43,12 @@ class StaticPayload:
     mode_value: int
     mode: StaticHashMode | None
     hash_raw: bytes
-    recid_tail: StaticRecIdTail | None
+    recid_tail: RecIdTail | None
     opaque_raw: bytes
 
     @property
     def ignored_flags(self) -> int:
         return self.flags & IGNORED_FLAGS_MASK
-
-
-def _parse_recid_tail(raw: bytes) -> StaticRecIdTail | None:
-    if not raw:
-        return None
-    length_prefix = raw[0]
-    object_end = min(length_prefix, len(raw) - 1)
-    object_raw = raw[1 : 1 + object_end]
-    trailing_raw = raw[1 + object_end :]
-    # Engine creates a RecID without a type-1 object for an empty or zero-first
-    # object, while the original prefix and bytes remain available in `raw`.
-    has_object = bool(object_raw) and object_raw[0] != 0
-    return StaticRecIdTail(
-        raw=raw,
-        length_prefix=length_prefix,
-        object_raw=object_raw,
-        trailing_raw=trailing_raw,
-        has_object=has_object,
-    )
 
 
 def parse_static(payload: bytes) -> StaticPayload:
@@ -131,7 +102,7 @@ def parse_static(payload: bytes) -> StaticPayload:
         mode_value=mode_value,
         mode=mode,
         hash_raw=payload[HEADER_SIZE:hash_end],
-        recid_tail=_parse_recid_tail(payload[hash_end:]),
+        recid_tail=parse_recid_tail(payload[hash_end:]),
         opaque_raw=b"",
     )
 
@@ -190,7 +161,7 @@ def render_static(parsed: StaticPayload) -> FormatResult:
         tail = parsed.recid_tail
         identity_rows = [
             ("recid_tail_len", f"{len(tail.raw)} B"),
-            ("object_length_limit", f"{tail.length_prefix} B"),
+            ("object_length_limit", f"{tail.length_limit} B"),
             ("effective_object_len", f"{len(tail.object_raw)} B"),
         ]
         if tail.has_object:

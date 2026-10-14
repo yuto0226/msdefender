@@ -26,7 +26,6 @@ from .sigtree import (
 from .static import (
     StaticHashMode,
     StaticPayload,
-    StaticRecIdTail,
     parse_static,
     render_static,
 )
@@ -64,7 +63,6 @@ __all__ = [
     "SigtreePayload",
     "StaticHashMode",
     "StaticPayload",
-    "StaticRecIdTail",
     "ThreatBegin",
     "ThreatEnd",
     "parse_bm_info",

@@ -8,6 +8,7 @@ from .core import (
     Renderer,
 )
 from .decode import decode_payload
+from .recid import RecIdTail, parse_recid_tail
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 from .types import (
     HSTR_SPECS,
@@ -25,7 +26,6 @@ from .types import (
     SigtreePayload,
     StaticHashMode,
     StaticPayload,
-    StaticRecIdTail,
     ThreatBegin,
     ThreatEnd,
     parse_bm_info,
@@ -64,13 +64,13 @@ __all__ = [
     "HstrSubsignature",
     "NidPayload",
     "Parser",
+    "RecIdTail",
     "Renderer",
     "SigtreeEntry",
     "SigtreeParam",
     "SigtreePayload",
     "StaticHashMode",
     "StaticPayload",
-    "StaticRecIdTail",
     "ThreatBegin",
     "ThreatEnd",
     "build_registry",
@@ -80,6 +80,7 @@ __all__ = [
     "parse_friendlyfile_sha256",
     "parse_hstr",
     "parse_nid",
+    "parse_recid_tail",
     "parse_sigtree",
     "parse_static",
     "parse_threat_begin",
