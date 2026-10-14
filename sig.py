@@ -628,28 +628,6 @@ def fmt_friendlyfile_sha256(p: bytes) -> list[Field]:
     return fields
 
 
-def fmt_snid(p: bytes) -> list[Field]:
-    """SNID (0x7E) / NID (0x55) — §1.1.  5B min payload."""
-    if len(p) < 5:
-        return []
-    key = int.from_bytes(p[0:4], "little")
-    category = p[4]
-    raw = p[5:] if len(p) > 5 else b""
-    null_pos = raw.find(b"\x00")  # null-terminated string
-    if null_pos != -1:
-        raw = raw[:null_pos]
-    while raw and raw[0] >= 0x80:  # skip internal category marker prefix
-        raw = raw[1:]
-    name = raw.decode("utf-8", errors="replace")
-    fields: list[Field] = [
-        ("snid/nid", f"{key:#010x}"),
-        ("category", f"{category:#04x}"),
-    ]
-    if name:
-        fields.append(("name", name))
-    return fields
-
-
 def fmt_kcrce(p: bytes) -> list[Field]:
     """KCRCE (0x80) — §1.3.  16B min, 4×DWORD CRC key."""
     if len(p) < 16:
@@ -848,8 +826,6 @@ FORMATTERS: dict[int, object] = {
     0x70: fmt_trusted_publisher,
     0x71: fmt_fpath_like,  # ASEP_FILEPATH
     0x75: fmt_fpath_like,  # ASEP_FOLDERNAME
-    0x55: fmt_snid,  # NID
-    0x7E: fmt_snid,  # SNID
     0x80: fmt_kcrce,
     0xA0: fmt_friendlyfile_sha256,
     0x69: fmt_latent_threat,

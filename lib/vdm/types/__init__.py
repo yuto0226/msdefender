@@ -7,6 +7,7 @@ from .hstr import (
     parse_hstr,
     render_hstr,
 )
+from .nid import NID_SPECS, NidPayload, parse_nid, render_nid
 from .sigtree import (
     SIGTREE_BM_SPEC,
     SIGTREE_EXT_SPEC,
@@ -33,6 +34,7 @@ from .threat import (
 __all__ = [
     "HSTR_SPECS",
     "MAGIC_THREAT_IDS",
+    "NID_SPECS",
     "SIGTREE_BM_SPEC",
     "SIGTREE_EXT_SPEC",
     "SIGTREE_SPEC",
@@ -43,6 +45,7 @@ __all__ = [
     "HstrFlags",
     "HstrPayload",
     "HstrSubsignature",
+    "NidPayload",
     "SigtreeEntry",
     "SigtreeParam",
     "SigtreePayload",
@@ -50,11 +53,13 @@ __all__ = [
     "ThreatEnd",
     "parse_bm_info",
     "parse_hstr",
+    "parse_nid",
     "parse_sigtree",
     "parse_threat_begin",
     "parse_threat_end",
     "render_bm_info",
     "render_hstr",
+    "render_nid",
     "render_sigtree",
     "render_threat_begin",
     "render_threat_end",
