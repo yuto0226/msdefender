@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from dataclasses import dataclass
+from itertools import combinations
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +127,157 @@ def evaluate(expr: Expr, matched_ids: Collection[str]) -> bool:
     if isinstance(expr, Not):
         return not evaluate(expr.term, matched_ids)
     raise TypeError(f"unsupported expression {type(expr).__name__}")
+
+
+def _node_count(expr: Expr) -> int:
+    if isinstance(expr, AtLeast):
+        return 1 + len(expr.atoms)
+    if isinstance(expr, (And, Or)):
+        return 1 + sum(_node_count(term) for term in expr.terms)
+    return 1 + _node_count(expr.term) if isinstance(expr, Not) else 1
+
+
+def _expression_cost(expr: Expr) -> tuple[int, int, str]:
+    return rendered_length(expr), _node_count(expr), render_yara_like(expr)
+
+
+def _atom_identifiers(expr: Expr) -> frozenset[str]:
+    if isinstance(expr, Atom):
+        return frozenset((expr.identifier,))
+    if isinstance(expr, AtLeast):
+        return frozenset(atom.identifier for atom in expr.atoms)
+    if isinstance(expr, (And, Or)):
+        return frozenset().union(*(_atom_identifiers(term) for term in expr.terms))
+    return _atom_identifiers(expr.term) if isinstance(expr, Not) else frozenset()
+
+
+def select_equivalent(
+    source: Expr, candidates: Collection[Expr], identifiers: tuple[str, ...]
+) -> Expr:
+    """Choose the cheapest fully equivalent candidate over a bounded atom universe."""
+    universe = frozenset(identifiers)
+    if (
+        len(identifiers) > 8
+        or len(candidates) > 8
+        or not _atom_identifiers(source) <= universe
+    ):
+        return source
+    assignments = tuple(
+        frozenset(
+            identifier
+            for index, identifier in enumerate(identifiers)
+            if mask & (1 << index)
+        )
+        for mask in range(1 << len(identifiers))
+    )
+    expected = tuple(evaluate(source, matched) for matched in assignments)
+    valid = [source]
+    for candidate in candidates:
+        if not _atom_identifiers(candidate) <= universe:
+            continue
+        if all(
+            evaluate(candidate, matched) == value
+            for matched, value in zip(assignments, expected)
+        ):
+            valid.append(candidate)
+    return min(valid, key=_expression_cost)
+
+
+def minimize_dnf(expr: Expr) -> Expr:
+    """Factor common conjuncts in at most four monotone clauses/eight variables.
+
+    Search is deterministic and bounded to 64 states/128 candidates. The only
+    rewrite is distributivity plus the existing local smart constructors. Every
+    candidate is checked against its source on all Boolean assignments.
+    """
+    roots = expr.terms if isinstance(expr, Or) else (expr,)
+    if not 2 <= len(roots) <= 4:
+        return expr
+    clauses = tuple(term.terms if isinstance(term, And) else (term,) for term in roots)
+    if any(
+        not isinstance(leaf, (Atom, AtLeast, Const))
+        for clause in clauses
+        for leaf in clause
+    ):
+        return expr
+    identifiers = sorted(
+        {
+            atom.identifier
+            for clause in clauses
+            for leaf in clause
+            for atom in (
+                (leaf,)
+                if isinstance(leaf, Atom)
+                else leaf.atoms
+                if isinstance(leaf, AtLeast)
+                else ()
+            )
+        }
+    )
+    if len(identifiers) > 8:
+        return expr
+    assignments = tuple(
+        frozenset(
+            identifier
+            for index, identifier in enumerate(identifiers)
+            if mask & (1 << index)
+        )
+        for mask in range(1 << len(identifiers))
+    )
+    memo: dict[tuple[tuple[Expr, ...], ...], Expr] = {}
+    candidates = 0
+
+    def solve(parts: tuple[tuple[Expr, ...], ...]) -> Expr:
+        nonlocal candidates
+        baseline = disjunction(*(conjunction(*clause) for clause in parts))
+        if parts in memo:
+            return memo[parts]
+        if len(memo) >= 64 or candidates >= 128:
+            return baseline
+        memo[parts] = baseline
+        expected = tuple(evaluate(baseline, matched) for matched in assignments)
+        best = baseline
+        for size in range(2, len(parts) + 1):
+            for selected in combinations(range(len(parts)), size):
+                common = tuple(
+                    leaf
+                    for leaf in parts[selected[0]]
+                    if all(leaf in parts[index] for index in selected[1:])
+                )
+                if not common:
+                    continue
+                candidates += 1
+                if candidates > 128:
+                    memo[parts] = best
+                    return best
+                remainder = tuple(
+                    tuple(leaf for leaf in parts[index] if leaf not in common)
+                    for index in selected
+                )
+                others = tuple(
+                    clause
+                    for index, clause in enumerate(parts)
+                    if index not in selected
+                )
+                factored = conjunction(*common, solve(remainder))
+                candidate = disjunction(factored, solve(others)) if others else factored
+                if all(
+                    evaluate(candidate, matched) == value
+                    for matched, value in zip(assignments, expected)
+                ) and _expression_cost(candidate) < _expression_cost(best):
+                    best = candidate
+        memo[parts] = best
+        return best
+
+    result = solve(clauses)
+    return (
+        result
+        if all(
+            evaluate(result, matched) == evaluate(expr, matched)
+            for matched in assignments
+        )
+        else expr
+    )
 
 
 def _precedence(expr: Expr) -> int:
