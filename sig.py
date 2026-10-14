@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import shutil
 import struct
 import sys
 from dataclasses import dataclass, field
@@ -76,6 +77,8 @@ class DisplaySection:
     title: str
     rows: list[Field] = field(default_factory=list)
     bm_yara: BmYaraRender | None = None
+    printable_preview: str | None = None
+    yara_unsupported: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -238,6 +241,8 @@ def _print_hstr_record(
             [(label, value) for label, value in section.rows if label != "raw"],
             INDENT * 2,
             bm_yara=section.bm_yara,
+            printable_preview=section.printable_preview,
+            yara_unsupported=section.yara_unsupported,
         )
         if is_detail and "raw" in rows:
             has_subsignature_data = True
@@ -316,8 +321,233 @@ def _highlight_bm_strings(value: str) -> str:
     return "".join(parts)
 
 
+def _yara_tokens(value: str) -> list[str]:
+    """Split display syntax without breaking quoted, gap, or alternative tokens."""
+    tokens = []
+    cursor = 0
+    while cursor < len(value):
+        if value[cursor].isspace():
+            cursor += 1
+            continue
+        start = cursor
+        char = value[cursor]
+        if char == '"':
+            cursor += 1
+            while cursor < len(value):
+                if value[cursor] == "\\":
+                    cursor += 2
+                elif value[cursor] == '"':
+                    cursor += 1
+                    break
+                else:
+                    cursor += 1
+        elif char in "([":
+            opening, closing = ("(", ")") if char == "(" else ("[", "]")
+            depth = 0
+            while cursor < len(value):
+                if value[cursor] == opening:
+                    depth += 1
+                elif value[cursor] == closing:
+                    depth -= 1
+                    if depth == 0:
+                        cursor += 1
+                        break
+                cursor += 1
+        elif char in "{}":
+            cursor += 1
+        else:
+            while cursor < len(value) and not value[cursor].isspace():
+                cursor += 1
+        tokens.append(value[start:cursor])
+    return tokens
+
+
+def _wrap_tokens(
+    tokens: list[str],
+    *,
+    first: str,
+    indent: str,
+    width: int,
+    continuation: str | None = None,
+) -> list[str]:
+    """Wrap complete syntax tokens; an oversized atomic token stays intact."""
+    lines = []
+    current = indent + first
+    continuation = continuation or indent + "    "
+    has_token = bool(first)
+    for token in tokens:
+        candidate = current + (" " if has_token else "") + token
+        if has_token and len(candidate) > width:
+            lines.append(current)
+            current = continuation + token
+            has_token = True
+        elif not has_token and len(candidate) > width and current.strip():
+            lines.append(current.rstrip())
+            current = continuation + token
+            has_token = True
+        else:
+            current = candidate
+            has_token = True
+    if current.strip() or not lines:
+        lines.append(current.rstrip())
+    return lines
+
+
+def _wrap_comment_tokens(
+    tokens: list[str], *, prefix: str, indent: str, width: int
+) -> list[str]:
+    if not tokens:
+        return [indent + prefix.rstrip()]
+    lines = []
+    current = indent + prefix
+    has_token = False
+    for token in tokens:
+        candidate = current + (" " if has_token else "") + token
+        if has_token and len(candidate) > width:
+            lines.append(current)
+            current = indent + prefix + token
+        else:
+            current = candidate
+        has_token = True
+    lines.append(current)
+    return lines
+
+
+def _preview_tokens(preview: str) -> list[str]:
+    return _yara_tokens(preview)
+
+
+def _comment_lines(
+    *, preview: str | None, conditional: tuple[str, ...], indent: str, width: int
+) -> list[str]:
+    lines = []
+    if preview is not None:
+        preview_tokens = _preview_tokens(preview)
+        inline = f"// preview: {preview}"
+        if len(indent + inline) <= width:
+            lines.append(indent + inline)
+        else:
+            lines.append(indent + "// preview:")
+            lines.extend(
+                _wrap_comment_tokens(
+                    preview_tokens, prefix="//   ", indent=indent, width=width
+                )
+            )
+    if conditional:
+        inline = "// conditional: " + ", ".join(conditional)
+        if len(indent + inline) <= width:
+            lines.append(indent + inline)
+        else:
+            lines.append(indent + "// conditional:")
+            requirements = []
+            for index, requirement in enumerate(conditional):
+                words = requirement.split()
+                if words and index + 1 < len(conditional):
+                    words[-1] += ","
+                requirements.extend(words or (requirement,))
+            lines.extend(
+                _wrap_comment_tokens(
+                    requirements, prefix="//   ", indent=indent, width=width
+                )
+            )
+    return lines
+
+
+def _format_yara_declaration(
+    *,
+    identifier: str | None,
+    rhs: str | None,
+    indent: str,
+    width: int,
+    preview: str | None = None,
+    conditional: tuple[str, ...] = (),
+    unsupported: tuple[str, ...] | None = None,
+) -> list[str]:
+    """Format one YARA-like declaration and its terminal-only annotations."""
+    if unsupported is not None:
+        codes = unsupported or ("unsupported",)
+        lines = []
+        current = indent + "yara: "
+        has_code = False
+        continuation = indent + "      "
+        for index, code in enumerate(codes):
+            token = code + ("," if index + 1 < len(codes) else "")
+            candidate = current + (" " if has_code else "") + token
+            if has_code and len(candidate) > width:
+                lines.append(current.rstrip())
+                current = continuation + token
+            else:
+                current = candidate
+            has_code = True
+        lines.append(current.rstrip())
+
+        if preview is not None:
+            comment = "// preview: " + preview
+            if len(lines) == 1 and len(lines[0] + "  " + comment) <= width:
+                return [_highlight_bm_strings(lines[0] + "  " + comment)]
+            lines.extend(
+                _comment_lines(
+                    preview=preview, conditional=(), indent=indent, width=width
+                )
+            )
+        return [_highlight_bm_strings(line) for line in lines]
+
+    prefix = f"{identifier} = "
+    body = rhs or ""
+    base = prefix + body
+    clauses = []
+    if preview is not None:
+        clauses.append("preview: " + preview)
+    if conditional:
+        clauses.append("conditional: " + ", ".join(conditional))
+    full = indent + base
+    if clauses:
+        full += "  // " + "; ".join(clauses)
+    if len(full) <= width:
+        return [_highlight_bm_strings(full)]
+
+    if body.startswith("{") and body.endswith("}"):
+        tokens = _yara_tokens(body)
+        if len(indent + prefix + body) > width:
+            inner = [token for token in tokens if token not in ("{", "}")]
+            lines = [indent + prefix.rstrip() + " {"]
+            if inner:
+                lines.extend(
+                    _wrap_tokens(
+                        inner,
+                        first="",
+                        indent=indent + "    ",
+                        width=width,
+                        continuation=indent + "    ",
+                    )
+                )
+            lines.append(indent + "}")
+        else:
+            lines = [indent + base]
+    else:
+        lines = _wrap_tokens(
+            _yara_tokens(body), first=prefix.rstrip(), indent=indent, width=width
+        )
+    lines.extend(
+        _comment_lines(
+            preview=preview, conditional=conditional, indent=indent, width=width
+        )
+    )
+    return [_highlight_bm_strings(line) for line in lines]
+
+
+def _terminal_width() -> int:
+    columns = shutil.get_terminal_size(fallback=(100, 24)).columns
+    return max(80, min(160, columns or 100))
+
+
 def _print_hstr_fields(
-    fields: list[Field], indent: str, *, bm_yara: BmYaraRender | None = None
+    fields: list[Field],
+    indent: str,
+    *,
+    bm_yara: BmYaraRender | None = None,
+    printable_preview: str | None = None,
+    yara_unsupported: tuple[str, ...] = (),
 ) -> None:
     if fields:
         values = dict(fields)
@@ -336,25 +566,49 @@ def _print_hstr_fields(
         identifier = values.get("identifier")
         display = values.get("display")
         if identifier is not None and display is not None:
-            if bm_yara is None:
-                declaration = _highlight_bm_strings(f"{identifier} = {display}")
+            if yara_unsupported:
+                lines = _format_yara_declaration(
+                    identifier=None,
+                    rhs=None,
+                    indent=indent,
+                    width=_terminal_width(),
+                    preview=printable_preview,
+                    unsupported=yara_unsupported,
+                )
+            elif bm_yara is None:
+                lines = _format_yara_declaration(
+                    identifier=identifier,
+                    rhs=display,
+                    indent=indent,
+                    width=_terminal_width(),
+                    preview=printable_preview,
+                )
             elif bm_yara.body is None:
-                codes = ", ".join(issue.code for issue in bm_yara.diagnostics)
-                declaration = f"yara: unsupported ({codes})"
-                if bm_yara.printable_preview is not None:
-                    declaration += f"  // preview: {bm_yara.printable_preview}"
-                    declaration = _highlight_bm_strings(declaration)
+                codes = tuple(issue.code for issue in bm_yara.diagnostics)
+                lines = _format_yara_declaration(
+                    identifier=None,
+                    rhs=None,
+                    indent=indent,
+                    width=_terminal_width(),
+                    preview=bm_yara.printable_preview,
+                    unsupported=codes,
+                )
             else:
-                declaration = f"{identifier} = {bm_yara.body}"
-                clauses = []
-                if bm_yara.printable_preview is not None:
-                    clauses.append(f"preview: {bm_yara.printable_preview}")
-                if bm_yara.fidelity == BmYaraFidelity.CONDITIONAL:
-                    clauses.append("conditional: " + ", ".join(bm_yara.requirements))
-                if clauses:
-                    declaration += "  // " + "; ".join(clauses)
-                declaration = _highlight_bm_strings(declaration)
-            print(f"{indent}{declaration}")
+                conditional = (
+                    bm_yara.requirements
+                    if bm_yara.fidelity == BmYaraFidelity.CONDITIONAL
+                    else ()
+                )
+                lines = _format_yara_declaration(
+                    identifier=identifier,
+                    rhs=bm_yara.body,
+                    indent=indent,
+                    width=_terminal_width(),
+                    preview=bm_yara.printable_preview,
+                    conditional=conditional,
+                )
+            for line in lines:
+                print(line)
             fields = [
                 (label, value)
                 for label, value in fields
@@ -843,6 +1097,8 @@ def format_payload(type_byte: int, payload: bytes) -> FormatResult:
                     title=section.title,
                     rows=list(section.rows),
                     bm_yara=section.bm_yara,
+                    printable_preview=section.printable_preview,
+                    yara_unsupported=section.yara_unsupported,
                 )
                 for section in rendered.sections
             ],

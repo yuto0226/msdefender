@@ -13,6 +13,8 @@ class DisplaySection:
     title: str
     rows: tuple[Field, ...] = ()
     bm_yara: "BmYaraRender | None" = None
+    printable_preview: str | None = None
+    yara_unsupported: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)

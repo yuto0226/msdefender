@@ -433,34 +433,45 @@ def render_byte_fragments(data: bytes) -> str:
 def render_bm_printable_preview(pattern: BmPattern) -> str | None:
     """Show printable runs from interpreted literals, without matcher claims."""
     pieces: list[str | None] = []
-
-    def mark_omitted() -> None:
-        if not pieces or pieces[-1] is not None:
-            pieces.append(None)
-
     for operation in interpret_bm_pattern(pattern).operations:
         if isinstance(operation, BmEnd):
             continue
         if not isinstance(operation, BmLiteral):
-            mark_omitted()
+            _append_omitted(pieces)
             continue
-        offset = 0
-        while offset < len(operation.value):
-            printable = 0x20 <= operation.value[offset] <= 0x7E
-            end = offset + 1
-            while (
-                end < len(operation.value)
-                and (0x20 <= operation.value[end] <= 0x7E) == printable
-            ):
-                end += 1
-            if printable and end - offset >= 3:
-                pieces.append(json.dumps(operation.value[offset:end].decode("ascii")))
-            else:
-                mark_omitted()
-            offset = end
+        pieces.extend(_printable_byte_pieces(operation.value))
     if pattern.issue is not None or pattern.remaining_raw:
-        mark_omitted()
+        _append_omitted(pieces)
+    return _render_printable_pieces(pieces)
 
+
+def render_printable_bytes_preview(data: bytes) -> str | None:
+    """Show printable runs from literal bytes, marking every omitted span."""
+    return _render_printable_pieces(_printable_byte_pieces(data))
+
+
+def _printable_byte_pieces(data: bytes) -> list[str | None]:
+    pieces: list[str | None] = []
+    offset = 0
+    while offset < len(data):
+        printable = 0x20 <= data[offset] <= 0x7E
+        end = offset + 1
+        while end < len(data) and (0x20 <= data[end] <= 0x7E) == printable:
+            end += 1
+        if printable and end - offset >= 3:
+            pieces.append(json.dumps(data[offset:end].decode("ascii")))
+        else:
+            _append_omitted(pieces)
+        offset = end
+    return pieces
+
+
+def _append_omitted(pieces: list[str | None]) -> None:
+    if not pieces or pieces[-1] is not None:
+        pieces.append(None)
+
+
+def _render_printable_pieces(pieces: list[str | None]) -> str | None:
     if not any(piece is not None for piece in pieces):
         return None
     result = "… " if pieces[0] is None else ""

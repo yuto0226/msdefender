@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-from ..bm import BmPattern, decode_bm_pattern, render_byte_fragments
+from ..bm import (
+    BmPattern,
+    decode_bm_pattern,
+    render_printable_bytes_preview,
+)
 from ..bm_yara import BmYaraRender, render_bm_yara
 from ..condition import (
     Atom,
@@ -495,7 +499,7 @@ def parse_hstr(payload: bytes, *, type_byte: int) -> HstrPayload:
 
 def _render_hstr_subsignature_display(
     subsig: HstrSubsignature, meaning: HstrSubsignatureMeaning
-) -> tuple[str, BmPattern | None, BmYaraRender | None]:
+) -> tuple[str, BmPattern | None, BmYaraRender | None, str | None, tuple[str, ...]]:
     """Present wire bytes consistently; modifiers require confirmed semantics."""
     if meaning.kind == "BM_PATTERN":
         pattern = decode_bm_pattern(subsig.data)
@@ -505,11 +509,13 @@ def _render_hstr_subsignature_display(
             + ", ".join(issue.code for issue in rendered.diagnostics)
             + ")"
         )
-        return display, pattern, rendered
+        return display, pattern, rendered, None, ()
+    if not subsig.data:
+        return "", None, None, None, ("unsupported.empty",)
     text = meaning.display_text
     known_matching = meaning.matching in ("ASCII_FOLD_AZ", "BYTE_EXACT")
     if not known_matching or text is None or any(ord(char) > 0x7F for char in text):
-        return render_byte_fragments(subsig.data), None, None
+        return _render_hex_subsignature(subsig, meaning)
     emit_wide = subsig.flags is not None and bool(subsig.flags.value & 0x0100)
     modifiers: list[str] = []
     if meaning.display_encoding == "ASCII":
@@ -518,15 +524,40 @@ def _render_hstr_subsignature_display(
     elif meaning.display_encoding == "UTF16LE":
         if emit_wide:
             # Widening UTF16LE wire bytes again is not the ascii+wide pair.
-            return render_byte_fragments(subsig.data), None, None
+            return _render_hex_subsignature(subsig, meaning)
         modifiers.append("wide")
     else:
-        return render_byte_fragments(subsig.data), None, None
+        return _render_hex_subsignature(subsig, meaning)
     if meaning.matching == "ASCII_FOLD_AZ":
         # YARA-style display correspondence; Defender folds only ASCII A-Z.
         modifiers.append("nocase")
     suffix = f" {' '.join(modifiers)}" if modifiers else ""
-    return json.dumps(text) + suffix, None, None
+    return (
+        json.dumps(text) + suffix,
+        None,
+        None,
+        render_printable_bytes_preview(subsig.data)
+        if meaning.kind == "BINARY"
+        else None,
+        (),
+    )
+
+
+def _render_hex_rhs(data: bytes) -> str:
+    return "{ " + data.hex(" ").upper() + " }" if data else "{ }"
+
+
+def _render_hex_subsignature(
+    subsig: HstrSubsignature, meaning: HstrSubsignatureMeaning
+) -> tuple[str, None, None, str | None, tuple[str, ...]]:
+    if not subsig.data:
+        return "", None, None, None, ("unsupported.empty",)
+    preview = (
+        render_printable_bytes_preview(subsig.data)
+        if meaning.kind == "BINARY"
+        else None
+    )
+    return _render_hex_rhs(subsig.data), None, None, preview, ()
 
 
 def render_hstr(parsed: HstrPayload) -> FormatResult:
@@ -581,7 +612,9 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
                 names.append(f"UNKNOWN_BITS(0x{meaning.unknown_flag_bits:04X})")
             flags_text = "|".join(names) or "NONE"
             flags_text += f"(0x{subsig.flags.value:04X})"
-        display, pattern, bm_yara = _render_hstr_subsignature_display(subsig, meaning)
+        display, pattern, bm_yara, printable_preview, yara_unsupported = (
+            _render_hstr_subsignature_display(subsig, meaning)
+        )
         rows: list[Field] = [
             ("identifier", scores.identifiers[index]),
             ("tag", f"0x{subsig.tag:04X} ({tag_note})"),
@@ -602,6 +635,8 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
                 title=f"subsig ({meaning.kind}, {len(subsig.data)} bytes)",
                 rows=tuple(rows),
                 bm_yara=bm_yara,
+                printable_preview=printable_preview,
+                yara_unsupported=yara_unsupported,
             )
         )
 
