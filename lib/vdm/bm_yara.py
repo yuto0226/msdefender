@@ -49,7 +49,8 @@ class BmMatchContext:
 class BmYaraRender:
     """EXACT concerns Boolean pattern acceptance on the same subject only.
 
-    It does not establish scanner domains, validators, or reporting policy.
+    It does not establish first-success offsets, match ends, capture behavior,
+    scanner domains, validators, or reporting policy.
     A conditional body is a candidate under requirements, not an equivalence
     claim for a known incompatible worker context.
     """
@@ -108,7 +109,8 @@ def render_bm_yara(
 
     Only interpreter-produced complete literal choices are lowered. Unsupported
     operations and malformed tails invalidate the whole candidate, never just
-    a suffix. Zero gaps vanish before checking YARA's boundary-jump grammar.
+    a suffix. Direct fixed skips and forward searches use the same worker
+    requirements as gaps. Zero jumps vanish before checking YARA's grammar.
     """
     requirements, context_issues = _context_requirements(context)
     issues = list(context_issues)
@@ -118,12 +120,12 @@ def render_bm_yara(
     if pattern.remaining_raw:
         issues.append(BmRenderIssue("remaining_raw", pattern.consumed))
 
-    parts: list[tuple[str, int, bool]] = []
+    parts: list[tuple[str, int, bool, int | None]] = []
     for operation in interpret_bm_pattern(pattern).operations:
         if isinstance(operation, BmLiteral):
             if operation.value:
                 parts.append(
-                    (operation.value.hex(" ").upper(), operation.offset, False)
+                    (operation.value.hex(" ").upper(), operation.offset, False, None)
                 )
         elif isinstance(operation, BmGap):
             if operation.maximum:
@@ -132,7 +134,19 @@ def render_bm_yara(
                     if operation.bounded
                     else f"[{operation.maximum}]"
                 )
-                parts.append((jump, operation.offset, True))
+                parts.append((jump, operation.offset, True, operation.raw[1]))
+        elif isinstance(operation, BmScan) and operation.kind in (
+            "fixed_skip",
+            "forward_search",
+        ):
+            if operation.operand:
+                # The forward search's final outer continuation tries p+N.
+                jump = (
+                    f"[0-{operation.operand}]"
+                    if operation.kind == "forward_search"
+                    else f"[{operation.operand}]"
+                )
+                parts.append((jump, operation.offset, True, operation.raw[1]))
         elif isinstance(operation, BmAlternatives):
             if not operation.choices or any(not choice for choice in operation.choices):
                 issues.append(
@@ -144,7 +158,7 @@ def render_bm_yara(
                 choices = " | ".join(
                     choice.hex(" ").upper() for choice in operation.choices
                 )
-                parts.append((f"( {choices} )", operation.offset, False))
+                parts.append((f"( {choices} )", operation.offset, False, None))
         elif isinstance(operation, BmEnd):
             continue
         else:
@@ -164,13 +178,13 @@ def render_bm_yara(
         issues.append(BmRenderIssue("empty_body", 0))
     else:
         if parts[0][2]:
-            issues.append(BmRenderIssue("leading_jump", parts[0][1]))
+            issues.append(BmRenderIssue("leading_jump", parts[0][1], parts[0][3]))
         if parts[-1][2]:
-            issues.append(BmRenderIssue("trailing_jump", parts[-1][1]))
+            issues.append(BmRenderIssue("trailing_jump", parts[-1][1], parts[-1][3]))
     if issues:
         return BmYaraRender(
             None, BmYaraFidelity.UNSUPPORTED, tuple(issues), requirements
         )
-    body = "{ " + " ".join(part for part, _, _ in parts) + " }"
+    body = "{ " + " ".join(part for part, _, _, _ in parts) + " }"
     fidelity = BmYaraFidelity.CONDITIONAL if requirements else BmYaraFidelity.EXACT
     return BmYaraRender(body, fidelity, requirements=requirements)
