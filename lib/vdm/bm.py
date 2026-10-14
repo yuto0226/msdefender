@@ -1,4 +1,4 @@
-"""Lossless BM stream framing and conservative, descriptive pattern rendering."""
+"""Lossless BM stream framing and conservative semantic interpretation."""
 
 import json
 from dataclasses import dataclass
@@ -428,81 +428,3 @@ def render_byte_fragments(data: bytes) -> str:
     if binary:
         parts.append(f"{{ {binary.hex(' ').upper()} }}")
     return " ".join(parts) if parts else "{ }"
-
-
-def _render_extension(operation: BmExtension) -> str:
-    token = operation.token
-    alias = f" raw=0x{token.raw_id:02X}" if token.raw_id != token.dispatch_id else ""
-    if operation.name == "FOLLOW_X86_RELATIVE_TARGET":
-        return "<FOLLOW_X86_RELATIVE_TARGET>"
-    if operation.name == "CAPTURE_MARKER":
-        return f"<CAPTURE_MARKER id={operation.value}; boundaries unresolved>"
-    if operation.name == "BACKREF":
-        return f"<BACKREF id={operation.value}{alias}>"
-    if operation.name.startswith("EXPORT_ADDRESS"):
-        return f"<{operation.name} id=0x{operation.value:08X}>"
-    return (
-        f"<{operation.name} bitmap={operation.bitmap} count={operation.value}; "
-        f"mapping/flags apply{alias}>"
-    )
-
-
-def _render_operation(operation: BmSemanticOperation) -> str:
-    if isinstance(operation, BmGap):
-        if not operation.bounded:
-            return f"[{operation.maximum}]"
-        return f"[{operation.minimum}-{operation.maximum}]"
-    if isinstance(operation, BmAlternatives):
-        choices = " | ".join(
-            render_byte_fragments(choice) if choice else '""'
-            for choice in operation.choices
-        )
-        return f"( {choices} )"
-    if isinstance(operation, BmScan):
-        label = "candidates" if operation.kind == "forward_search" else "budget"
-        if operation.kind == "fixed_skip":
-            return f"<fixed_skip {operation.operand}>"
-        return f"<{operation.kind} {label}={operation.operand}>"
-    if isinstance(operation, BmClass):
-        token = operation.token
-        alias = (
-            f" raw=0x{token.raw_id:02X}" if token.raw_id != token.dispatch_id else ""
-        )
-        spec = render_byte_fragments(operation.spec)
-        return f"<class_{token.dispatch_id:02X} count={operation.count} spec={spec}{alias}>"
-    if isinstance(operation, BmExtension):
-        return _render_extension(operation)
-    if isinstance(operation, BmOpaque):
-        token = operation.token
-        operands = f" {token.operands.hex(' ').upper()}" if token.operands else ""
-        return f"<OP_{token.raw_id:02X}{operands}>"
-    return ""
-
-
-def render_bm_pattern(pattern: BmPattern) -> str:
-    """Render YARA-like human atoms with explicit Defender extensions.
-
-    This mixed display is not a compilable YARA string or an equivalence claim.
-    END is implicit in the end of a complete pattern, never a subject literal.
-    """
-    parts: list[str] = []
-    literals: list[bytes] = []
-
-    def flush_literals() -> None:
-        if literals:
-            parts.append(render_byte_fragments(b"".join(literals)))
-            literals.clear()
-
-    for operation in interpret_bm_pattern(pattern).operations:
-        if isinstance(operation, BmLiteral):
-            literals.append(operation.value)
-        else:
-            flush_literals()
-            if not isinstance(operation, BmEnd):
-                parts.append(_render_operation(operation))
-    flush_literals()
-    if pattern.issue is not None:
-        parts.append(f"<DECODE_ERROR {pattern.issue.code}@+0x{pattern.issue.offset:X}>")
-    if pattern.remaining_raw:
-        parts.append(f"<UNDECODED_HEX {pattern.remaining_raw.hex(' ').upper()}>")
-    return " ".join(parts)

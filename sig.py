@@ -27,6 +27,7 @@ if sys.platform == "win32":
 
 from lib.debug import (
     ANSI_BCYAN,
+    ANSI_BLUE,
     ANSI_BOLD,
     ANSI_BWHITE,
     ANSI_BYELLOW,
@@ -43,7 +44,10 @@ from lib.debug import (
 )
 from lib.threat import parse_threat_id, parse_threat_name
 from lib.utils import iter_records_from_file, iter_records_with_context
+from lib.vdm import FamilySpec
 from lib.vdm import type_name as _type_name
+from lib.vdm.bm_yara import BmYaraFidelity, BmYaraRender
+from lib.vdm.types.hstr import HSTR_SPECS
 
 # Semantic annotation tables
 
@@ -102,37 +106,18 @@ _MAGIC_THREAT_ID: dict[int, str] = {
     0xFFFFFFFF: "avfriendly_loaded",
 }
 
-# PEHSTR family: type_byte → file-format family being scanned.
-# Confirmed from aggregatorex_receiver receiver table in DispatchRecords.
-_PEHSTR_FAMILY: dict[int, str] = {
-    0x61: "PE",
-    0x78: "PE (ext)",
-    0x85: "PE (ext2)",
-    0x8C: "ELF",
-    0x8D: "Mach-O",
-    0x8E: "DOS",
-    0x8F: "Macro/Office",
-    0x92: "ActiveScript",
+# Aggregator receiver families use a different expression-buffer wire format.
+_AGGREGATOR_FAMILY: dict[int, str] = {
     0x96: "aggregator",
     0xE7: "aggregator (ex)",
 }
 
-_HSTR_PUSH_FAMILY: frozenset[int] = frozenset(
-    {0x61, 0x78, 0x85, 0x8C, 0x8D, 0x8E, 0x8F, 0x92, 0xBE, 0xBF, 0xC5, 0xEF}
-)
-_AGGREGATOR_EXPR_FAMILY: frozenset[int] = frozenset({0x96, 0xE7})
+_HSTR_FAMILY_NAMES = {spec.type_byte: spec.name for spec in HSTR_SPECS}
+_HSTR_PUSH_FAMILY = frozenset(_HSTR_FAMILY_NAMES)
 
 # Aggregator flags bitmask — confirmed from aggregatorex_receiver / aggregator_receiver.
 _AGGREGATOR_FLAG_BITS: list[tuple[int, str]] = [
     (0x01, "fuzzy"),
-]
-
-# hstr_internal_push_ex / add_sstring_internal per-subsignature flags.
-# Direct IDA evidence supports the bits below.
-_HSTR_SUBSIG_FLAG_BITS: list[tuple[int, str]] = [
-    (0x0001, "preserve_case"),
-    (0x0002, "bm_pattern"),
-    (0x0100, "emit_wide_copy"),
 ]
 
 # SIGTREE: type_word → combination logic label.
@@ -220,6 +205,7 @@ Field = tuple[str, str]
 class DisplaySection:
     title: str
     rows: list[Field] = field(default_factory=list)
+    bm_yara: BmYaraRender | None = None
 
 
 @dataclass(slots=True)
@@ -298,8 +284,14 @@ def print_record(
     threat_name: str,
     result: FormatResult,
     show_hex: bool,
+    show_threat_heading: bool = True,
 ) -> None:
     """Print one record with header, parsed fields, and optional hexdump."""
+    if type_byte in _HSTR_PUSH_FAMILY:
+        _print_hstr_record(
+            seq, type_byte, payload, threat_name, result, show_hex, show_threat_heading
+        )
+        return
     name = _type_name(type_byte)
     tname = (
         f"  {ANSI_BOLD}{ANSI_BWHITE}{threat_name}{ANSI_RESET}" if threat_name else ""
@@ -337,6 +329,176 @@ def print_record(
         if fields:
             print()  # blank line before hexdump
         _print_hexdump(payload)
+
+
+def _print_hstr_record(
+    seq: int,
+    type_byte: int,
+    payload: bytes,
+    threat_name: str,
+    result: FormatResult,
+    show_hex: bool,
+    show_threat_heading: bool,
+) -> None:
+    has_subsignature_data = False
+    if threat_name and show_threat_heading:
+        print(f"{ANSI_GRAY}{'─' * SEP_W}{ANSI_RESET}")
+        print(
+            f"{ANSI_GREEN}[+]{ANSI_RESET} "
+            f"{ANSI_BOLD}{ANSI_BWHITE}{threat_name}{ANSI_RESET}"
+        )
+    elif not show_threat_heading:
+        print()
+    print(
+        f"{ANSI_BLUE}[*]{ANSI_RESET} "
+        f"{ANSI_BOLD}{ANSI_BWHITE}{_HSTR_FAMILY_NAMES[type_byte]}"
+        f"(0x{type_byte:02X}){ANSI_RESET}"
+        f"  {ANSI_GRAY}#{seq} / {len(payload)} B{ANSI_RESET}"
+    )
+    for section in result.sections:
+        is_detail = section.title.startswith("subsig ")
+        icon = "[>]" if is_detail else "[*]"
+        color = ANSI_GRAY if is_detail else ANSI_BLUE
+        print(
+            f"{INDENT}{color}{icon}{ANSI_RESET} "
+            f"{ANSI_BOLD}{ANSI_BWHITE}{section.title}{ANSI_RESET}"
+        )
+        rows = dict(section.rows)
+        _print_hstr_fields(
+            [(label, value) for label, value in section.rows if label != "raw"],
+            INDENT * 2,
+            bm_yara=section.bm_yara,
+        )
+        if is_detail and "raw" in rows:
+            has_subsignature_data = True
+            data = b"" if rows["raw"] == "(empty)" else bytes.fromhex(rows["raw"])
+            needs_preview = (
+                rows.get("matching") == "UNKNOWN"
+                or "warning" in rows
+                or "error" in rows
+                or (
+                    section.bm_yara is not None
+                    and section.bm_yara.fidelity == BmYaraFidelity.UNSUPPORTED
+                )
+            )
+            if show_hex:
+                _print_hexdump(data, indent=INDENT * 2)
+            elif needs_preview:
+                _print_preview(data, indent=INDENT * 2)
+    fields: list[Field] = []
+    metadata_dumps: list[tuple[str, bytes]] = []
+    for label, value in result.fields:
+        if (label == "name" and value != '""') or (
+            label == "tail_word0"
+            and value != "NOT_PRESENT"
+            and not value.startswith("0x0000")
+        ):
+            fields.append((label, value))
+        elif label == "trailing_raw" and not value.startswith("0 B"):
+            fields.append((label, value))
+            if show_hex and "[" in value:
+                trailing = value.split("[", 1)[1].removesuffix("]")
+                metadata_dumps.append((label, bytes.fromhex(trailing)))
+        elif label == "name_raw" and show_hex and value != "(empty)":
+            metadata_dumps.append((label, bytes.fromhex(value)))
+        elif label == "error":
+            fields.append((label, value))
+    if fields or metadata_dumps:
+        icon = "[-]" if any(label == "error" for label, _ in fields) else "[*]"
+        color = ANSI_RED if icon == "[-]" else ANSI_BLUE
+        print(
+            f"{INDENT}{color}{icon}{ANSI_RESET} "
+            f"{ANSI_BOLD}{ANSI_BWHITE}Record Metadata{ANSI_RESET}"
+        )
+        _print_hstr_fields(fields, INDENT * 2)
+        for label, data in metadata_dumps:
+            print(f"{INDENT * 2}{ANSI_GRAY}{label}{ANSI_RESET}")
+            _print_hexdump(data, indent=INDENT * 2)
+    if show_hex and not has_subsignature_data:
+        _print_hexdump(payload)
+    elif any(label == "error" for label, _ in fields):
+        _print_preview(payload)
+
+
+def _highlight_bm_strings(value: str) -> str:
+    """Color complete quoted segments without confusing escaped quotes."""
+    parts: list[str] = []
+    cursor = 0
+    while cursor < len(value):
+        start = value.find('"', cursor)
+        if start < 0:
+            parts.append(value[cursor:])
+            break
+        parts.append(value[cursor:start])
+        end = start + 1
+        while end < len(value):
+            if value[end] == "\\":
+                end += 2
+            elif value[end] == '"':
+                parts.append(f"{ANSI_YELLOW}{value[start : end + 1]}{ANSI_RESET}")
+                cursor = end + 1
+                break
+            else:
+                end += 1
+        else:
+            parts.append(value[start:])
+            break
+    return "".join(parts)
+
+
+def _print_hstr_fields(
+    fields: list[Field], indent: str, *, bm_yara: BmYaraRender | None = None
+) -> None:
+    if fields:
+        values = dict(fields)
+        metadata = ("tag", "flags", "matching")
+        if all(label in values for label in metadata):
+            icon = (
+                f"{ANSI_YELLOW}[!]{ANSI_RESET} "
+                if "UNKNOWN_BITS(" in values["flags"]
+                else ""
+            )
+            detail = ", ".join(f"{label}={values[label]}" for label in metadata)
+            print(f"{indent}{icon}{ANSI_GRAY}{detail}{ANSI_RESET}")
+            fields = [
+                (label, value) for label, value in fields if label not in metadata
+            ]
+        identifier = values.get("identifier")
+        display = values.get("display")
+        if identifier is not None and display is not None:
+            if bm_yara is None:
+                declaration = _highlight_bm_strings(f"{identifier} = {display}")
+            elif bm_yara.body is None:
+                codes = ", ".join(issue.code for issue in bm_yara.diagnostics)
+                declaration = f"yara: unsupported ({codes})"
+            else:
+                declaration = f"{identifier} = {bm_yara.body}"
+                if bm_yara.fidelity == BmYaraFidelity.CONDITIONAL:
+                    declaration += "  // conditional: " + "; ".join(
+                        bm_yara.requirements
+                    )
+            print(f"{indent}{declaration}")
+            fields = [
+                (label, value)
+                for label, value in fields
+                if label not in ("identifier", "display")
+            ]
+        if not fields:
+            return
+        width = max(len(label) for label, _ in fields)
+        for label, value in fields:
+            if label == "display":
+                value = _highlight_bm_strings(value)
+            icon = ""
+            if label == "error":
+                icon = f"{ANSI_RED}[!]{ANSI_RESET} "
+            elif (
+                label in ("warning", "tail_word0")
+                or (label == "flags" and "UNKNOWN_BITS(" in value)
+                or (label == "trailing_raw" and not value.startswith("0 B"))
+            ):
+                icon = f"{ANSI_YELLOW}[!]{ANSI_RESET} "
+            print(f"{indent}{icon}{ANSI_BWHITE}{label:<{width}}{ANSI_RESET} : {value}")
 
 
 # Per-type formatters
@@ -419,206 +581,6 @@ def _format_aggregator_flags(flags: int) -> str:
     if unsupported:
         return f"{flags:#04x} (unsupported_bits={unsupported:#04x})"
     return f"{flags:#04x} (fuzzy)"
-
-
-def _looks_ascii_blob(data: bytes) -> bool:
-    if not data:
-        return False
-    if any(b >= 0x80 for b in data):
-        return False
-    printable = sum(1 for b in data if b in (0x09, 0x0A, 0x0D) or 0x20 <= b <= 0x7E)
-    return printable / len(data) >= 0.85
-
-
-def _looks_utf16le_blob(data: bytes) -> bool:
-    if len(data) < 4 or len(data) % 2:
-        return False
-    pairs = len(data) // 2
-    odd_nulls = sum(1 for i in range(1, len(data), 2) if data[i] == 0)
-    even_printable = sum(1 for i in range(0, len(data), 2) if 0x20 <= data[i] <= 0x7E)
-    return odd_nulls / pairs >= 0.6 and even_printable / pairs >= 0.6
-
-
-def _decode_pehstr_subsig_text(data: bytes) -> tuple[str | None, str | None]:
-    if len(data) >= 2 and data[0] == len(data) - 1:
-        ascii_body = data[1:]
-        ascii_trimmed = ascii_body[:-1] if ascii_body.endswith(b"\x00") else ascii_body
-        if b"\x00" not in ascii_trimmed and _looks_ascii_blob(ascii_body):
-            return ascii_body.decode("latin-1", errors="replace").rstrip(
-                "\x00"
-            ), "ascii"
-    if _looks_utf16le_blob(data):
-        return data.decode("utf-16le", errors="replace").rstrip("\x00"), "wide"
-    ascii_trimmed = data[:-1] if data.endswith(b"\x00") else data
-    if b"\x00" not in ascii_trimmed and _looks_ascii_blob(data):
-        return data.decode("latin-1", errors="replace").rstrip("\x00"), "ascii"
-    return None, None
-
-
-def _escape_yara_text(text: str) -> str:
-    return (
-        text.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\r", "\\r")
-        .replace("\n", "\\n")
-    )
-
-
-def _format_hstr_yara_hex(data: bytes) -> str:
-    return data.hex(" ").upper()
-
-
-def _format_hstr_raw_preview(data: bytes, max_bytes: int = 24) -> str:
-    preview = _format_hstr_yara_hex(data[:max_bytes])
-    if len(data) > max_bytes:
-        preview += "…"
-    return preview
-
-
-def _format_hstr_bm_preview(data: bytes) -> str:
-    safe_ascii = set(
-        b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ./\\:_-"
-    )
-    parts: list[str] = []
-    for byte in data:
-        if byte in safe_ascii:
-            parts.append(chr(byte))
-        else:
-            parts.append(f"[BM:{byte:02X}]")
-    return " ".join(parts)
-
-
-def _format_hstr_pattern_value(
-    idx: int,
-    data: bytes,
-    text: str | None,
-    text_modifier: str | None,
-    flags_raw: int | None,
-) -> str:
-    if text is not None:
-        yara_modifier = _decode_hstr_string_modifier(text_modifier, flags_raw)
-        if yara_modifier is not None:
-            return f'$s{idx} = "{_escape_yara_text(text)}" {yara_modifier}'
-        return f'$s{idx} = "{_escape_yara_text(text)}"'
-    if flags_raw is not None and (flags_raw & 0x0002):
-        return _format_hstr_bm_preview(data)
-    return _format_hstr_raw_preview(data)
-
-
-def _format_hstr_subsig_flags(flags: int) -> str:
-    annot = _annotate_bits(flags, _HSTR_SUBSIG_FLAG_BITS)
-    if annot.startswith("  ("):
-        annot = " (" + annot[3:]
-    return f"{flags:#06x}{annot}"
-
-
-def _format_hstr_subsig_flags_for_title(flags: int) -> str:
-    known_mask = 0
-    for bit, _name in _HSTR_SUBSIG_FLAG_BITS:
-        known_mask |= bit
-    if flags & ~known_mask:
-        return f"{flags:#06x}"
-    return _format_hstr_subsig_flags(flags)
-
-
-def _read_hstr_varflags(data: bytes, off: int) -> tuple[int, int] | None:
-    if off >= len(data):
-        return None
-    flags = data[off]
-    off += 1
-    if flags & 0x80:
-        if off >= len(data):
-            return None
-        flags |= data[off] << 8
-        off += 1
-    if flags & ~0x03FF:
-        return None
-    return flags, off
-
-
-def _decode_hstr_string_modifier(
-    text_modifier: str | None, flags_raw: int | None
-) -> str | None:
-    if text_modifier == "wide":
-        return "wide"
-    if text_modifier == "ascii":
-        if flags_raw is not None and (flags_raw & 0x0100):
-            return "ascii wide"
-        return "ascii"
-    return None
-
-
-def _parse_hstr_signature_payload(
-    payload: bytes, type_byte: int
-) -> tuple[dict[str, object] | None, str | None]:
-    if len(payload) < 7:
-        return None, "payload too short"
-
-    header_word0 = int.from_bytes(payload[0:2], "little")
-    header_word1 = int.from_bytes(payload[2:4], "little")
-    subsig_count = int.from_bytes(payload[4:6], "little")
-    off = 6
-
-    name_end = payload.find(b"\x00", off)
-    if name_end == -1:
-        return None, "unterminated name"
-    if name_end - off > 0x40:
-        return None, "name too long"
-    name_bytes = payload[off:name_end]
-    off = name_end + 1
-
-    ext_mode = type_byte != 0x61
-    records: list[dict[str, object]] = []
-    for _ in range(subsig_count):
-        if off + 3 > len(payload):
-            return None, "truncated sub-signature header"
-        tag = int.from_bytes(payload[off : off + 2], "little")
-        ln = payload[off + 2]
-        off += 3
-
-        flags_raw: int | None = None
-        if ext_mode:
-            parsed_flags = _read_hstr_varflags(payload, off)
-            if parsed_flags is None:
-                return None, "invalid sub-signature flags"
-            flags_raw, off = parsed_flags
-
-        end = off + ln
-        if end > len(payload):
-            return None, "truncated sub-signature data"
-        data = payload[off:end]
-        off = end
-        records.append({"tag": tag, "len": ln, "flags_raw": flags_raw, "data": data})
-
-    tail_word0: int | None = None
-    tail_word1: int | None = None
-    trailing = b""
-    remaining = len(payload) - off
-    if remaining in (0, 2, 4) or remaining > 4:
-        if remaining >= 2:
-            tail_word0 = int.from_bytes(payload[off : off + 2], "little")
-            off += 2
-        if remaining >= 4:
-            tail_word1 = int.from_bytes(payload[off : off + 2], "little")
-            off += 2
-        if off < len(payload):
-            trailing = payload[off:]
-    elif remaining:
-        trailing = payload[off:]
-
-    return (
-        {
-            "header_word0": header_word0,
-            "header_word1": header_word1,
-            "subsig_count": subsig_count,
-            "name_bytes": name_bytes,
-            "records": records,
-            "tail_word0": tail_word0,
-            "tail_word1": tail_word1,
-            "trailing": trailing,
-        },
-        None,
-    )
 
 
 def _split_registry_hive(path: str) -> tuple[str | None, str | None]:
@@ -903,139 +865,63 @@ def fmt_versioncheck(p: bytes) -> list[Field]:
     ]
 
 
-def fmt_pehstr_ext(p: bytes, type_byte: int = 0) -> FormatResult:
-    """PEHSTR/HSTR family.
+def fmt_aggregator(p: bytes, type_byte: int) -> FormatResult | list[Field]:
+    """AAGGREGATOR/AAGGREGATOREX receiver expression-buffer layout."""
+    family = _AGGREGATOR_FAMILY[type_byte]
+    if len(p) < 4:
+        return []
 
-    0x96 / 0xE7 keep the aggregator receiver layout.
-    The rest use hstr_push_ext -> hstr_internal_push_ex.
-    """
-    family = _PEHSTR_FAMILY.get(type_byte, f"type={type_byte:#04x}")
-
-    if type_byte in _AGGREGATOR_EXPR_FAMILY:
-        if len(p) < 4:
-            return []
-
-        flags = p[0]
-        name_len = p[1]
-        sig_len = int.from_bytes(p[2:4], "little")
-        hdr_end = 4 + name_len + sig_len
-        if hdr_end > len(p):
-            return [
-                ("family", f"{ANSI_GREEN}{family}{ANSI_RESET}"),
-                ("flags", f"{flags:#04x}"),
-                ("name_len", str(name_len)),
-                ("sig_len", str(sig_len)),
-                ("error", "payload truncated"),
-            ]
-
-        name = p[4 : 4 + name_len]
-        sig_data = p[4 + name_len : hdr_end]
-        trailing = p[hdr_end:]
-        name_str = name.decode("utf-8", errors="replace") if name else "(empty)"
-
-        _HSTR_SHOW_LIMIT = 8
-        if sig_data and len(sig_data) % 4 == 0:
-            n = len(sig_data) // 4
-            entries = [
-                int.from_bytes(sig_data[i * 4 : (i + 1) * 4], "little")
-                for i in range(n)
-            ]
-            shown = [f"{v:#010x}" for v in entries[:_HSTR_SHOW_LIMIT]]
-            tail = f", … +{n - _HSTR_SHOW_LIMIT} more" if n > _HSTR_SHOW_LIMIT else ""
-            sig_data_str = (
-                f"[{', '.join(shown)}{tail}]"
-                f"  {ANSI_GRAY}({n} DWORDs, XOR-encoded){ANSI_RESET}"
-            )
-        elif sig_data:
-            sig_data_str = sig_data.hex(" ")
-        else:
-            sig_data_str = "(empty)"
-
-        fields: list[Field] = [
+    flags = p[0]
+    name_len = p[1]
+    sig_len = int.from_bytes(p[2:4], "little")
+    hdr_end = 4 + name_len + sig_len
+    if hdr_end > len(p):
+        return [
             ("family", f"{ANSI_GREEN}{family}{ANSI_RESET}"),
-            ("flags", _format_aggregator_flags(flags)),
+            ("flags", f"{flags:#04x}"),
             ("name_len", str(name_len)),
             ("sig_len", str(sig_len)),
-            ("name", name_str),
-            ("sig_data_raw", sig_data_str),
-            ("decode_status", "unavailable"),
+            ("error", "payload truncated"),
         ]
-        if flags & ~0x01:
-            fields.append(("error", "receiver rejects flags outside bit0"))
-        if trailing:
-            preview = trailing[:8].hex(" ")
-            ellipsis = "…" if len(trailing) > 8 else ""
-            fields.append(
-                ("trailing_bytes", f"{len(trailing)} B [{preview}{ellipsis}]")
-            )
-        return FormatResult(fields=fields)
 
-    parsed, error_text = _parse_hstr_signature_payload(p, type_byte)
-    if parsed is None:
-        return FormatResult(
-            fields=[
-                ("family", f"{ANSI_GREEN}{family}{ANSI_RESET}"),
-                ("error", error_text or "failed to parse hstr payload"),
-            ]
+    name = p[4 : 4 + name_len]
+    sig_data = p[4 + name_len : hdr_end]
+    trailing = p[hdr_end:]
+    name_str = name.decode("utf-8", errors="replace") if name else "(empty)"
+
+    show_limit = 8
+    if sig_data and len(sig_data) % 4 == 0:
+        n = len(sig_data) // 4
+        entries = [
+            int.from_bytes(sig_data[i * 4 : (i + 1) * 4], "little") for i in range(n)
+        ]
+        shown = [f"{v:#010x}" for v in entries[:show_limit]]
+        tail = f", … +{n - show_limit} more" if n > show_limit else ""
+        sig_data_str = (
+            f"[{', '.join(shown)}{tail}]"
+            f"  {ANSI_GRAY}({n} DWORDs, XOR-encoded){ANSI_RESET}"
         )
-
-    name_bytes = parsed["name_bytes"]
-    assert isinstance(name_bytes, bytes)
-    records = parsed["records"]
-    assert isinstance(records, list)
-    trailing = parsed["trailing"]
-    assert isinstance(trailing, bytes)
-    tail_word0 = parsed["tail_word0"]
-    tail_word1 = parsed["tail_word1"]
+    elif sig_data:
+        sig_data_str = sig_data.hex(" ")
+    else:
+        sig_data_str = "(empty)"
 
     fields: list[Field] = [
         ("family", f"{ANSI_GREEN}{family}{ANSI_RESET}"),
-        ("header_word0", f"{parsed['header_word0']:#06x}"),
-        ("header_word1", f"{parsed['header_word1']:#06x}"),
-        ("subsig_count", str(parsed["subsig_count"])),
-        (
-            "name",
-            name_bytes.decode("latin-1", errors="replace") if name_bytes else "(empty)",
-        ),
+        ("flags", _format_aggregator_flags(flags)),
+        ("name_len", str(name_len)),
+        ("sig_len", str(sig_len)),
+        ("name", name_str),
+        ("sig_data_raw", sig_data_str),
+        ("decode_status", "unavailable"),
     ]
-    sections: list[DisplaySection] = []
-
-    for idx, rec in enumerate(records, 1):
-        tag = rec["tag"]
-        ln = rec["len"]
-        flags_raw = rec["flags_raw"]
-        data = rec["data"]
-        assert isinstance(tag, int)
-        assert isinstance(ln, int)
-        assert isinstance(data, bytes)
-        assert flags_raw is None or isinstance(flags_raw, int)
-
-        title = f"> SubSig #{idx}: tag={tag:#06x}, len={ln}"
-        if flags_raw is not None:
-            title += f", flags={_format_hstr_subsig_flags_for_title(flags_raw)}"
-
-        text, text_modifier = _decode_pehstr_subsig_text(data)
-        rows: list[Field] = []
-        rows.append(
-            (
-                "Pattern",
-                _format_hstr_pattern_value(idx, data, text, text_modifier, flags_raw),
-            )
-        )
-        if any(not (0x20 <= byte <= 0x7E) for byte in data):
-            rows.append(("Yara Hex", _format_hstr_yara_hex(data)))
-        sections.append(DisplaySection(title=title, rows=rows))
-
-    if tail_word0 is not None:
-        fields.append(("tail_word0", f"{tail_word0:#06x}"))
-    if tail_word1 is not None:
-        fields.append(("tail_word1", f"{tail_word1:#06x}"))
+    if flags & ~0x01:
+        fields.append(("error", "receiver rejects flags outside bit0"))
     if trailing:
         preview = trailing[:8].hex(" ")
         ellipsis = "…" if len(trailing) > 8 else ""
         fields.append(("trailing_bytes", f"{len(trailing)} B [{preview}{ellipsis}]"))
-
-    return FormatResult(fields=fields, sections=sections)
+    return FormatResult(fields=fields)
 
 
 def fmt_static(p: bytes) -> list[Field]:
@@ -1278,29 +1164,40 @@ FORMATTERS: dict[int, object] = {
     0x69: fmt_latent_threat,
     0xAF: fmt_common_code,
     0x7A: fmt_versioncheck,
-    0x61: fmt_pehstr_ext,  # PEHSTR
-    0x78: fmt_pehstr_ext,  # PEHSTR_EXT
-    0x85: fmt_pehstr_ext,  # PEHSTR_EXT2
-    0x8C: fmt_pehstr_ext,  # ELFHSTR_EXT
-    0x8D: fmt_pehstr_ext,  # MACHOHSTR_EXT
-    0x8E: fmt_pehstr_ext,  # DOSHSTR_EXT
-    0x8F: fmt_pehstr_ext,  # MACROHSTR_EXT
-    0x92: fmt_pehstr_ext,  # ASCRIPTHSTR_EXT
-    0x96: fmt_pehstr_ext,  # AAGGREGATOR
-    0xE7: fmt_pehstr_ext,  # AAGGREGATOREX
+    0x96: fmt_aggregator,  # AAGGREGATOR
+    0xE7: fmt_aggregator,  # AAGGREGATOREX
     0x67: fmt_static,
     0x40: fmt_sigtree,  # SIGTREE
     0x41: fmt_sigtree,  # SIGTREE_EXT
 }
 
 # Formatters that accept (payload, type_byte) instead of (payload).
-_TYPE_AWARE_FORMATTERS: frozenset = frozenset({fmt_fpath_like, fmt_pehstr_ext})
+_TYPE_AWARE_FORMATTERS: frozenset = frozenset({fmt_fpath_like, fmt_aggregator})
+
+# Migrated families execute their module-owned parser and style-free renderer.
+FORMATTERS.update({spec.type_byte: spec for spec in HSTR_SPECS})
 
 
 def format_payload(type_byte: int, payload: bytes) -> FormatResult:
     fn = FORMATTERS.get(type_byte)
     if fn is None:
         return FormatResult()
+    if isinstance(fn, FamilySpec):
+        try:
+            rendered = fn.renderer(fn.parser(payload))
+        except ValueError as exc:
+            return FormatResult(fields=[("error", str(exc))])
+        return FormatResult(
+            fields=list(rendered.fields),
+            sections=[
+                DisplaySection(
+                    title=section.title,
+                    rows=list(section.rows),
+                    bm_yara=section.bm_yara,
+                )
+                for section in rendered.sections
+            ],
+        )
     raw_result: list[Field] | FormatResult
     if fn in _TYPE_AWARE_FORMATTERS:
         raw_result = fn(payload, type_byte)  # type: ignore[call-arg]
@@ -1416,8 +1313,11 @@ def run_records(
     seq_total = 0
     current_threat = ""
     prev_threat = ""
+    last_hstr_threat: str | None = None
 
     for type_byte, payload, threat_name, _sig_idx in iter_records_with_context(path):
+        if type_byte in framing:
+            last_hstr_threat = None
         if type_byte == 0x5C:
             current_threat = threat_name
 
@@ -1431,7 +1331,12 @@ def run_records(
 
         # Skip framing records; print separator on threat transition instead
         if skip_framing and type_byte in framing:
-            if type_byte == 0x5C and threat_name and threat_name != prev_threat:
+            if (
+                type_byte == 0x5C
+                and threat_name
+                and threat_name != prev_threat
+                and filter_type not in _HSTR_PUSH_FAMILY
+            ):
                 name_part = f"── {threat_name} "
                 line = name_part + "─" * max(0, SEP_W - len(name_part))
                 print(f"\n{ANSI_GRAY}{line}{ANSI_RESET}")
@@ -1447,7 +1352,10 @@ def run_records(
             threat_name=threat_name,
             result=result,
             show_hex=show_hex,
+            show_threat_heading=threat_name != last_hstr_threat,
         )
+        if type_byte in _HSTR_PUSH_FAMILY:
+            last_hstr_threat = threat_name
 
         shown += 1
         if limit > 0 and shown >= limit:

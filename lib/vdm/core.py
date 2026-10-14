@@ -1,6 +1,9 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from .bm_yara import BmYaraRender
 
 Field = tuple[str, str]
 
@@ -9,6 +12,7 @@ Field = tuple[str, str]
 class DisplaySection:
     title: str
     rows: tuple[Field, ...] = ()
+    bm_yara: "BmYaraRender | None" = None
 
 
 @dataclass(slots=True)
