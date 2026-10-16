@@ -1,3 +1,9 @@
+from .aggregator import (
+    AGGREGATOR_SPECS,
+    AggregatorPayload,
+    parse_aggregator,
+    render_aggregator,
+)
 from .bm_info import SPEC, BMInfo, parse_bm_info, render_bm_info
 from .fpath import FPATH_SPECS, FPATH_TYPES, FpathPayload, parse_fpath, render_fpath
 from .friendlyfile import (
@@ -47,6 +53,7 @@ from .threat import (
 )
 
 __all__ = [
+    "AGGREGATOR_SPECS",
     "FPATH_SPECS",
     "FPATH_TYPES",
     "HSTR_SPECS",
@@ -59,6 +66,7 @@ __all__ = [
     "SPEC",
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
+    "AggregatorPayload",
     "BMInfo",
     "FpathPayload",
     "FriendlyFileSha256",
@@ -75,6 +83,7 @@ __all__ = [
     "StaticPayload",
     "ThreatBegin",
     "ThreatEnd",
+    "parse_aggregator",
     "parse_bm_info",
     "parse_fpath",
     "parse_friendlyfile_sha256",
@@ -86,6 +95,7 @@ __all__ = [
     "parse_static",
     "parse_threat_begin",
     "parse_threat_end",
+    "render_aggregator",
     "render_bm_info",
     "render_fpath",
     "render_friendlyfile_sha256",

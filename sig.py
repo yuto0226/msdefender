@@ -52,6 +52,8 @@ from lib.vdm.types.threat import parse_threat_begin, threat_category_name
 # Semantic annotation tables
 
 _STRUCTURED_LOG_TYPES = {
+    0x96: "AAGGREGATOR",
+    0xE7: "AAGGREGATOREX",
     0x63: "REGKEY",
     0x80: "KCRCE",
     0x5F: "FILEPATH",
@@ -60,19 +62,8 @@ _STRUCTURED_LOG_TYPES = {
     0x75: "ASEP_FOLDERNAME",
 }
 
-# Aggregator receiver families use a different expression-buffer wire format.
-_AGGREGATOR_FAMILY: dict[int, str] = {
-    0x96: "aggregator",
-    0xE7: "aggregator (ex)",
-}
-
 _HSTR_FAMILY_NAMES = {spec.type_byte: spec.name for spec in HSTR_SPECS}
 _HSTR_PUSH_FAMILY = frozenset(_HSTR_FAMILY_NAMES)
-
-# Aggregator flags bitmask — confirmed from aggregatorex_receiver / aggregator_receiver.
-_AGGREGATOR_FLAG_BITS: list[tuple[int, str]] = [
-    (0x01, "fuzzy"),
-]
 
 # Display helpers
 # A formatter returns a list of (label, value) pairs.
@@ -760,15 +751,6 @@ def _format_labeled_hex(value: int, width: int, labels: dict[int, str]) -> str:
     return f"{raw} ({label})"
 
 
-def _format_aggregator_flags(flags: int) -> str:
-    if flags == 0:
-        return "0x00"
-    unsupported = flags & ~0x01
-    if unsupported:
-        return f"{flags:#04x} (unsupported_bits={unsupported:#04x})"
-    return f"{flags:#04x} (fuzzy)"
-
-
 def fmt_trusted_publisher(p: bytes) -> list[Field]:
     """TRUSTED_PUBLISHER (0x70) — binary or UTF-16LE key payload."""
     if len(p) < 2:
@@ -871,77 +853,16 @@ def fmt_versioncheck(p: bytes) -> list[Field]:
     ]
 
 
-def fmt_aggregator(p: bytes, type_byte: int) -> FormatResult | list[Field]:
-    """AAGGREGATOR/AAGGREGATOREX receiver expression-buffer layout."""
-    family = _AGGREGATOR_FAMILY[type_byte]
-    if len(p) < 4:
-        return []
-
-    flags = p[0]
-    name_len = p[1]
-    sig_len = int.from_bytes(p[2:4], "little")
-    hdr_end = 4 + name_len + sig_len
-    if hdr_end > len(p):
-        return [
-            ("family", f"{ANSI_GREEN}{family}{ANSI_RESET}"),
-            ("flags", f"{flags:#04x}"),
-            ("name_len", str(name_len)),
-            ("sig_len", str(sig_len)),
-            ("error", "payload truncated"),
-        ]
-
-    name = p[4 : 4 + name_len]
-    sig_data = p[4 + name_len : hdr_end]
-    trailing = p[hdr_end:]
-    name_str = name.decode("utf-8", errors="replace") if name else "(empty)"
-
-    show_limit = 8
-    if sig_data and len(sig_data) % 4 == 0:
-        n = len(sig_data) // 4
-        entries = [
-            int.from_bytes(sig_data[i * 4 : (i + 1) * 4], "little") for i in range(n)
-        ]
-        shown = [f"{v:#010x}" for v in entries[:show_limit]]
-        tail = f", … +{n - show_limit} more" if n > show_limit else ""
-        sig_data_str = (
-            f"[{', '.join(shown)}{tail}]"
-            f"  {ANSI_GRAY}({n} DWORDs, XOR-encoded){ANSI_RESET}"
-        )
-    elif sig_data:
-        sig_data_str = sig_data.hex(" ")
-    else:
-        sig_data_str = "(empty)"
-
-    fields: list[Field] = [
-        ("family", f"{ANSI_GREEN}{family}{ANSI_RESET}"),
-        ("flags", _format_aggregator_flags(flags)),
-        ("name_len", str(name_len)),
-        ("sig_len", str(sig_len)),
-        ("name", name_str),
-        ("sig_data_raw", sig_data_str),
-        ("decode_status", "unavailable"),
-    ]
-    if flags & ~0x01:
-        fields.append(("error", "receiver rejects flags outside bit0"))
-    if trailing:
-        preview = trailing[:8].hex(" ")
-        ellipsis = "…" if len(trailing) > 8 else ""
-        fields.append(("trailing_bytes", f"{len(trailing)} B [{preview}{ellipsis}]"))
-    return FormatResult(fields=fields)
-
-
 # Formatter dispatch table
 FORMATTERS: dict[int, object] = {
     0x70: fmt_trusted_publisher,
     0x69: fmt_latent_threat,
     0xAF: fmt_common_code,
     0x7A: fmt_versioncheck,
-    0x96: fmt_aggregator,  # AAGGREGATOR
-    0xE7: fmt_aggregator,  # AAGGREGATOREX
 }
 
 # Formatters that accept (payload, type_byte) instead of (payload).
-_TYPE_AWARE_FORMATTERS: frozenset = frozenset({fmt_aggregator})
+_TYPE_AWARE_FORMATTERS: frozenset = frozenset()
 
 
 def format_payload(type_byte: int, payload: bytes) -> FormatResult:

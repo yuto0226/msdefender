@@ -3,6 +3,7 @@ from types import MappingProxyType
 from typing import Any
 
 from .core import FamilySpec
+from .types.aggregator import AGGREGATOR_SPECS
 from .types.bm_info import SPEC as BM_INFO_SPEC
 from .types.fpath import FPATH_SPECS
 from .types.friendlyfile import SPEC as FRIENDLYFILE_SHA256_SPEC
@@ -19,6 +20,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
         spec.type_byte: spec
         for spec in (
             REGKEY_SPEC,
+            *AGGREGATOR_SPECS,
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
             BM_INFO_SPEC,

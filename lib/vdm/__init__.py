@@ -11,6 +11,7 @@ from .decode import decode_payload
 from .recid import RecIdTail, parse_recid_tail
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 from .types import (
+    AGGREGATOR_SPECS,
     FPATH_SPECS,
     FPATH_TYPES,
     HSTR_SPECS,
@@ -18,6 +19,7 @@ from .types import (
     REGKEY_SPEC,
     THREAT_CATEGORIES,
     THREAT_SPECS,
+    AggregatorPayload,
     BMInfo,
     FpathPayload,
     FriendlyFileSha256,
@@ -34,6 +36,7 @@ from .types import (
     StaticPayload,
     ThreatBegin,
     ThreatEnd,
+    parse_aggregator,
     parse_bm_info,
     parse_fpath,
     parse_friendlyfile_sha256,
@@ -45,6 +48,7 @@ from .types import (
     parse_static,
     parse_threat_begin,
     parse_threat_end,
+    render_aggregator,
     render_bm_info,
     render_fpath,
     render_friendlyfile_sha256,
@@ -60,6 +64,7 @@ from .types import (
 )
 
 __all__ = [
+    "AGGREGATOR_SPECS",
     "DEFAULT_REGISTRY",
     "FPATH_SPECS",
     "FPATH_TYPES",
@@ -68,6 +73,7 @@ __all__ = [
     "REGKEY_SPEC",
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
+    "AggregatorPayload",
     "BMInfo",
     "DisplaySection",
     "FamilySpec",
@@ -94,6 +100,7 @@ __all__ = [
     "build_registry",
     "decode_payload",
     "get_spec",
+    "parse_aggregator",
     "parse_bm_info",
     "parse_fpath",
     "parse_friendlyfile_sha256",
@@ -106,6 +113,7 @@ __all__ = [
     "parse_static",
     "parse_threat_begin",
     "parse_threat_end",
+    "render_aggregator",
     "render_bm_info",
     "render_fpath",
     "render_friendlyfile_sha256",
