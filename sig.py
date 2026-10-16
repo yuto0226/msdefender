@@ -43,7 +43,7 @@ from lib.debug import (
     info,
 )
 from lib.utils import iter_records_from_file, iter_records_with_context
-from lib.vdm import DEFAULT_REGISTRY, decode_payload
+from lib.vdm import decode_payload
 from lib.vdm import type_name as _type_name
 from lib.vdm.bm_yara import BmYaraFidelity, BmYaraRender
 from lib.vdm.types.hstr import HSTR_SPECS
@@ -70,8 +70,7 @@ _HSTR_FAMILY_NAMES = {spec.type_byte: spec.name for spec in HSTR_SPECS}
 _HSTR_PUSH_FAMILY = frozenset(_HSTR_FAMILY_NAMES)
 
 # Display helpers
-# A formatter returns a list of (label, value) pairs.
-# Return [] to fall through to raw hexdump.
+# Terminal fields use (label, value) pairs.
 Field = tuple[str, str]
 
 
@@ -731,47 +730,25 @@ def _print_hstr_fields(
             print(f"{indent}{icon}{ANSI_BWHITE}{label:<{width}}{ANSI_RESET} : {value}")
 
 
-# Per-type formatters
-
-
-# Formatter dispatch table
-FORMATTERS: dict[int, object] = {}
-
-# Formatters that accept (payload, type_byte) instead of (payload).
-_TYPE_AWARE_FORMATTERS: frozenset = frozenset()
-
-
 def format_payload(type_byte: int, payload: bytes) -> FormatResult:
-    if type_byte in DEFAULT_REGISTRY:
-        rendered = decode_payload(type_byte, payload)
-        return FormatResult(
-            fields=[
-                ("error" if label == "Error" else label, value)
-                for label, value in rendered.fields
-            ],
-            sections=[
-                DisplaySection(
-                    title=section.title,
-                    rows=list(section.rows),
-                    bm_yara=section.bm_yara,
-                    printable_preview=section.printable_preview,
-                    yara_unsupported=section.yara_unsupported,
-                )
-                for section in rendered.sections
-            ],
-        )
-
-    fn = FORMATTERS.get(type_byte)
-    if fn is None:
-        return FormatResult()
-    raw_result: list[Field] | FormatResult
-    if fn in _TYPE_AWARE_FORMATTERS:
-        raw_result = fn(payload, type_byte)  # type: ignore[call-arg]
-    else:
-        raw_result = fn(payload)  # type: ignore
-    if isinstance(raw_result, FormatResult):
-        return raw_result
-    return FormatResult(fields=raw_result)
+    """Adapt the registry renderer result to the terminal display containers."""
+    rendered = decode_payload(type_byte, payload)
+    return FormatResult(
+        fields=[
+            ("error" if label == "Error" else label, value)
+            for label, value in rendered.fields
+        ],
+        sections=[
+            DisplaySection(
+                title=section.title,
+                rows=list(section.rows),
+                bm_yara=section.bm_yara,
+                printable_preview=section.printable_preview,
+                yara_unsupported=section.yara_unsupported,
+            )
+            for section in rendered.sections
+        ],
+    )
 
 
 # File banner
