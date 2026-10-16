@@ -7,8 +7,8 @@ from .core import (
     Parser,
     Renderer,
 )
-from .decode import decode_payload
 from .recid import RecIdTail, parse_recid_tail
+from .record import DecodedRecord, decode_record
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 from .types import (
     AGGREGATOR_SPECS,
@@ -96,6 +96,7 @@ __all__ = [
     "AggregatorPayload",
     "BMInfo",
     "CommonCodePayload",
+    "DecodedRecord",
     "DisplaySection",
     "FamilySpec",
     "Field",
@@ -122,7 +123,7 @@ __all__ = [
     "TrustedPublisher",
     "VersionCheckPayload",
     "build_registry",
-    "decode_payload",
+    "decode_record",
     "get_spec",
     "parse_aggregator",
     "parse_bm_info",
