@@ -59,6 +59,8 @@ from .trusted_publisher import (
     parse_trusted_publisher,
     render_trusted_publisher,
 )
+from .versioncheck import SPEC as VERSIONCHECK_SPEC
+from .versioncheck import VersionCheckPayload, parse_versioncheck, render_versioncheck
 
 __all__ = [
     "AGGREGATOR_SPECS",
@@ -76,6 +78,7 @@ __all__ = [
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
     "TRUSTED_PUBLISHER_SPEC",
+    "VERSIONCHECK_SPEC",
     "AggregatorPayload",
     "BMInfo",
     "FpathPayload",
@@ -95,6 +98,7 @@ __all__ = [
     "ThreatBegin",
     "ThreatEnd",
     "TrustedPublisher",
+    "VersionCheckPayload",
     "parse_aggregator",
     "parse_bm_info",
     "parse_fpath",
@@ -109,6 +113,7 @@ __all__ = [
     "parse_threat_begin",
     "parse_threat_end",
     "parse_trusted_publisher",
+    "parse_versioncheck",
     "render_aggregator",
     "render_bm_info",
     "render_fpath",
@@ -123,5 +128,6 @@ __all__ = [
     "render_threat_begin",
     "render_threat_end",
     "render_trusted_publisher",
+    "render_versioncheck",
     "threat_category_name",
 ]

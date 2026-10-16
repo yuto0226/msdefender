@@ -52,6 +52,7 @@ from lib.vdm.types.threat import parse_threat_begin, threat_category_name
 # Semantic annotation tables
 
 _STRUCTURED_LOG_TYPES = {
+    0x7A: "VERSIONCHECK",
     0x69: "LATENT_THREAT",
     0x70: "TRUSTED_PUBLISHER",
     0x96: "AAGGREGATOR",
@@ -745,22 +746,9 @@ def fmt_common_code(p: bytes) -> list[Field]:
     ]
 
 
-def fmt_versioncheck(p: bytes) -> list[Field]:
-    """VERSIONCHECK (0x7A) — 8B."""
-    if len(p) < 8:
-        return []
-    op = int.from_bytes(p[0:4], "little")
-    ver = int.from_bytes(p[4:8], "little")
-    return [
-        ("operator", f"{op:#010x}"),
-        ("version", f"{ver:#010x}"),
-    ]
-
-
 # Formatter dispatch table
 FORMATTERS: dict[int, object] = {
     0xAF: fmt_common_code,
-    0x7A: fmt_versioncheck,
 }
 
 # Formatters that accept (payload, type_byte) instead of (payload).

@@ -16,6 +16,7 @@ from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
 from .types.trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
+from .types.versioncheck import SPEC as VERSIONCHECK_SPEC
 
 DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
     {
@@ -25,6 +26,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             *AGGREGATOR_SPECS,
             TRUSTED_PUBLISHER_SPEC,
             LATENT_THREAT_SPEC,
+            VERSIONCHECK_SPEC,
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
             BM_INFO_SPEC,
