@@ -52,6 +52,7 @@ from lib.vdm.types.threat import parse_threat_begin, threat_category_name
 # Semantic annotation tables
 
 _STRUCTURED_LOG_TYPES = {
+    0x70: "TRUSTED_PUBLISHER",
     0x96: "AAGGREGATOR",
     0xE7: "AAGGREGATOREX",
     0x63: "REGKEY",
@@ -728,92 +729,6 @@ def _print_hstr_fields(
 
 
 # Per-type formatters
-# Each function receives the raw payload bytes and returns a list of Fields.
-# Return [] to trigger hexdump fallback in print_record().
-_TRUSTED_PUBLISHER_PREFIXES = ("HASH:", "BADHASH:", "BY:", "TO:", "TEAMID:")
-
-# Publisher labels are confirmed from the string-prefix table in the signature
-# docs.
-_TRUSTED_PUBLISHER_KEY_TYPES: dict[int, str] = {
-    0x01: "HASH",
-    0x02: "BY",
-    0x03: "TO",
-    0x04: "BADHASH",
-    0x05: "TEAMID",
-}
-
-
-def _format_labeled_hex(value: int, width: int, labels: dict[int, str]) -> str:
-    raw = f"{value:#0{width}x}"
-    label = labels.get(value)
-    if label is None:
-        return raw
-    return f"{raw} ({label})"
-
-
-def fmt_trusted_publisher(p: bytes) -> list[Field]:
-    """TRUSTED_PUBLISHER (0x70) — binary or UTF-16LE key payload."""
-    if len(p) < 2:
-        return [("error", "truncated header")]
-
-    key_len = int.from_bytes(p[0:2], "little")
-    if key_len > len(p) - 2:
-        return [("key_len", str(key_len)), ("error", "truncated key_data")]
-
-    key_data = p[2 : 2 + key_len]
-    pcode = p[2 + key_len :]
-    fields: list[Field] = [("key_len", str(key_len))]
-
-    if not key_data:
-        fields.extend([("mode", "binary"), ("error", "empty key_data")])
-        return fields
-
-    if key_data[0] >= 0x20:
-        try:
-            key_text = key_data.decode("utf-16le")
-        except UnicodeDecodeError:
-            fields.extend(
-                [
-                    ("mode", "string"),
-                    ("error", "invalid UTF-16LE key_data"),
-                    ("key_data", key_data.hex(" ")),
-                ]
-            )
-            if pcode:
-                fields.append(("pcode_len", f"{len(pcode)} B"))
-            return fields
-
-        prefix = next(
-            (
-                label[:-1]
-                for label in _TRUSTED_PUBLISHER_PREFIXES
-                if key_text.startswith(label)
-            ),
-            "UNKNOWN",
-        )
-        fields.extend(
-            [
-                ("mode", "string"),
-                ("prefix", prefix),
-                ("key_text", key_text),
-            ]
-        )
-    else:
-        key_type = key_data[0]
-        fields.extend(
-            [
-                ("mode", "binary"),
-                (
-                    "key_type",
-                    _format_labeled_hex(key_type, 4, _TRUSTED_PUBLISHER_KEY_TYPES),
-                ),
-                ("key_data", key_data[1:].hex(" ") if len(key_data) > 1 else "(empty)"),
-            ]
-        )
-
-    if pcode:
-        fields.append(("pcode_len", f"{len(pcode)} B"))
-    return fields
 
 
 def fmt_latent_threat(p: bytes) -> list[Field]:
@@ -855,7 +770,6 @@ def fmt_versioncheck(p: bytes) -> list[Field]:
 
 # Formatter dispatch table
 FORMATTERS: dict[int, object] = {
-    0x70: fmt_trusted_publisher,
     0x69: fmt_latent_threat,
     0xAF: fmt_common_code,
     0x7A: fmt_versioncheck,

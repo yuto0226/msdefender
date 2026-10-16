@@ -14,6 +14,7 @@ from .types.regkey import SPEC as REGKEY_SPEC
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
+from .types.trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
 
 DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
     {
@@ -21,6 +22,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
         for spec in (
             REGKEY_SPEC,
             *AGGREGATOR_SPECS,
+            TRUSTED_PUBLISHER_SPEC,
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
             BM_INFO_SPEC,

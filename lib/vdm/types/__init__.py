@@ -51,6 +51,12 @@ from .threat import (
     render_threat_end,
     threat_category_name,
 )
+from .trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
+from .trusted_publisher import (
+    TrustedPublisher,
+    parse_trusted_publisher,
+    render_trusted_publisher,
+)
 
 __all__ = [
     "AGGREGATOR_SPECS",
@@ -66,6 +72,7 @@ __all__ = [
     "SPEC",
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
+    "TRUSTED_PUBLISHER_SPEC",
     "AggregatorPayload",
     "BMInfo",
     "FpathPayload",
@@ -83,6 +90,7 @@ __all__ = [
     "StaticPayload",
     "ThreatBegin",
     "ThreatEnd",
+    "TrustedPublisher",
     "parse_aggregator",
     "parse_bm_info",
     "parse_fpath",
@@ -95,6 +103,7 @@ __all__ = [
     "parse_static",
     "parse_threat_begin",
     "parse_threat_end",
+    "parse_trusted_publisher",
     "render_aggregator",
     "render_bm_info",
     "render_fpath",
@@ -107,5 +116,6 @@ __all__ = [
     "render_static",
     "render_threat_begin",
     "render_threat_end",
+    "render_trusted_publisher",
     "threat_category_name",
 ]
