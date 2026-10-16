@@ -9,6 +9,7 @@ from .types.friendlyfile import SPEC as FRIENDLYFILE_SHA256_SPEC
 from .types.hstr import HSTR_SPECS
 from .types.kcrce import SPEC as KCRCE_SPEC
 from .types.nid import NID_SPECS
+from .types.regkey import SPEC as REGKEY_SPEC
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
@@ -17,6 +18,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
     {
         spec.type_byte: spec
         for spec in (
+            REGKEY_SPEC,
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
             BM_INFO_SPEC,

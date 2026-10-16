@@ -15,6 +15,8 @@ from .hstr import (
 )
 from .kcrce import KcrcePayload, parse_kcrce, render_kcrce
 from .nid import NID_SPECS, NidPayload, parse_nid, render_nid
+from .regkey import SPEC as REGKEY_SPEC
+from .regkey import RegKeyPayload, parse_regkey, render_regkey
 from .sigtree import (
     SIGTREE_BM_SPEC,
     SIGTREE_EXT_SPEC,
@@ -50,6 +52,7 @@ __all__ = [
     "HSTR_SPECS",
     "MAGIC_THREAT_IDS",
     "NID_SPECS",
+    "REGKEY_SPEC",
     "SIGTREE_BM_SPEC",
     "SIGTREE_EXT_SPEC",
     "SIGTREE_SPEC",
@@ -64,6 +67,7 @@ __all__ = [
     "HstrSubsignature",
     "KcrcePayload",
     "NidPayload",
+    "RegKeyPayload",
     "SigtreeEntry",
     "SigtreeParam",
     "SigtreePayload",
@@ -77,6 +81,7 @@ __all__ = [
     "parse_hstr",
     "parse_kcrce",
     "parse_nid",
+    "parse_regkey",
     "parse_sigtree",
     "parse_static",
     "parse_threat_begin",
@@ -87,6 +92,7 @@ __all__ = [
     "render_hstr",
     "render_kcrce",
     "render_nid",
+    "render_regkey",
     "render_sigtree",
     "render_static",
     "render_threat_begin",

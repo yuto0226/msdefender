@@ -52,6 +52,7 @@ from lib.vdm.types.threat import parse_threat_begin, threat_category_name
 # Semantic annotation tables
 
 _STRUCTURED_LOG_TYPES = {
+    0x63: "REGKEY",
     0x80: "KCRCE",
     0x5F: "FILEPATH",
     0x60: "FOLDERNAME",
@@ -738,31 +739,10 @@ def _print_hstr_fields(
 # Per-type formatters
 # Each function receives the raw payload bytes and returns a list of Fields.
 # Return [] to trigger hexdump fallback in print_record().
-_REG_HIVES = (
-    "HKCR",
-    "HKCU",
-    "HKLM",
-    "HKU",
-    "HKCC",
-    "HKEY_CLASSES_ROOT",
-    "HKEY_CURRENT_USER",
-    "HKEY_LOCAL_MACHINE",
-    "HKEY_USERS",
-    "HKEY_CURRENT_CONFIG",
-)
-
 _TRUSTED_PUBLISHER_PREFIXES = ("HASH:", "BADHASH:", "BY:", "TO:", "TEAMID:")
 
 # Publisher labels are confirmed from the string-prefix table in the signature
-# docs. REGKEY labels are inferred from observed
-# payload shapes and receiver behavior, not official enum names.
-_REGKEY_TYPE_LABELS: dict[int, str] = {
-    0x0001: "hive",
-    0x0002: "subkey",
-    0x0003: "root-path",
-    0x0004: "value",
-}
-
+# docs.
 _TRUSTED_PUBLISHER_KEY_TYPES: dict[int, str] = {
     0x01: "HASH",
     0x02: "BY",
@@ -770,10 +750,6 @@ _TRUSTED_PUBLISHER_KEY_TYPES: dict[int, str] = {
     0x04: "BADHASH",
     0x05: "TEAMID",
 }
-
-
-def _decode_single_byte_text(data: bytes) -> str:
-    return data.decode("latin-1", errors="replace")
 
 
 def _format_labeled_hex(value: int, width: int, labels: dict[int, str]) -> str:
@@ -791,77 +767,6 @@ def _format_aggregator_flags(flags: int) -> str:
     if unsupported:
         return f"{flags:#04x} (unsupported_bits={unsupported:#04x})"
     return f"{flags:#04x} (fuzzy)"
-
-
-def _split_registry_hive(path: str) -> tuple[str | None, str | None]:
-    upper_path = path.upper()
-    for hive in _REG_HIVES:
-        if upper_path == hive.upper():
-            return hive, ""
-        prefix = hive + "\\"
-        if upper_path.startswith(prefix.upper()):
-            return hive, path[len(prefix) :]
-    return None, None
-
-
-def fmt_regkey(p: bytes) -> list[Field]:
-    """REGKEY (0x63) — registry IOC path/value record."""
-    if len(p) < 4:
-        return [("error", "truncated header")]
-
-    key_type = int.from_bytes(p[0:2], "little")
-    key_path_len = int.from_bytes(p[2:4], "little")
-    path_end = 4 + key_path_len
-    if path_end > len(p):
-        return [
-            ("key_type", _format_labeled_hex(key_type, 6, _REGKEY_TYPE_LABELS)),
-            ("key_path_len", str(key_path_len)),
-            ("error", "truncated key_path"),
-        ]
-
-    key_path_bytes = p[4:path_end]
-    key_path = _decode_single_byte_text(key_path_bytes)
-    if path_end + 2 > len(p):
-        return [
-            ("key_type", _format_labeled_hex(key_type, 6, _REGKEY_TYPE_LABELS)),
-            ("key_path_len", str(key_path_len)),
-            ("key_path", key_path if key_path else "(empty)"),
-            ("error", "truncated value_len"),
-        ]
-
-    value_len = int.from_bytes(p[path_end : path_end + 2], "little")
-    value_off = path_end + 2
-    value_end = value_off + value_len
-    if value_end > len(p):
-        return [
-            ("key_type", _format_labeled_hex(key_type, 6, _REGKEY_TYPE_LABELS)),
-            ("key_path_len", str(key_path_len)),
-            ("key_path", key_path if key_path else "(empty)"),
-            ("value_len", str(value_len)),
-            ("error", "truncated value"),
-        ]
-
-    value_bytes = p[value_off:value_end]
-    value = _decode_single_byte_text(value_bytes)
-    pcode = p[value_end:]
-    hive, subkey = _split_registry_hive(key_path)
-
-    fields: list[Field] = [
-        ("key_type", _format_labeled_hex(key_type, 6, _REGKEY_TYPE_LABELS)),
-        ("key_path_len", str(key_path_len)),
-        ("key_path", key_path if key_path else "(empty)"),
-    ]
-    if hive is not None:
-        fields.append(("hive", hive))
-        fields.append(("subkey", subkey if subkey else "(empty)"))
-    fields.append(("value_len", str(value_len)))
-    if value_len:
-        fields.append(("value", value if value else "(empty)"))
-    if pcode:
-        fields.append(("pcode_len", f"{len(pcode)} B"))
-    if not (1 <= key_type <= 4):
-        fields.append(("error", f"unexpected key_type {key_type:#06x}"))
-    return fields
 
 
 def fmt_trusted_publisher(p: bytes) -> list[Field]:
@@ -1027,7 +932,6 @@ def fmt_aggregator(p: bytes, type_byte: int) -> FormatResult | list[Field]:
 
 # Formatter dispatch table
 FORMATTERS: dict[int, object] = {
-    0x63: fmt_regkey,
     0x70: fmt_trusted_publisher,
     0x69: fmt_latent_threat,
     0xAF: fmt_common_code,
