@@ -47,6 +47,9 @@ _STRUCTURED_LOG_TYPES = {
     0x60: "FOLDERNAME",
     0x71: "ASEP_FILEPATH",
     0x75: "ASEP_FOLDERNAME",
+    0x55: "NID",
+    0x7E: "SNID",
+    0xCE: "NID64",
 }
 _HSTR_FAMILY_NAMES = {spec.type_byte: spec.name for spec in HSTR_SPECS}
 _HSTR_SPECS_BY_TYPE = {spec.type_byte: spec for spec in HSTR_SPECS}

@@ -24,7 +24,7 @@ from .hstr import (
 from .kcrce import KcrcePayload, parse_kcrce, render_kcrce
 from .latent_threat import SPEC as LATENT_THREAT_SPEC
 from .latent_threat import LatentThreat, parse_latent_threat, render_latent_threat
-from .nid import NID_SPECS, NidPayload, parse_nid, render_nid
+from .nid import NID64_TYPE, NID_SPECS, NidPayload, parse_nid, render_nid
 from .pestatic import SPEC as PESTATIC_SPEC
 from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
 from .regkey import SPEC as REGKEY_SPEC
@@ -80,6 +80,7 @@ __all__ = [
     "HSTR_SPECS",
     "LATENT_THREAT_SPEC",
     "MAGIC_THREAT_IDS",
+    "NID64_TYPE",
     "NID_SPECS",
     "PESTATIC_SPEC",
     "REGKEY_SPEC",
