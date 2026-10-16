@@ -5,6 +5,8 @@ from .aggregator import (
     render_aggregator,
 )
 from .bm_info import SPEC, BMInfo, parse_bm_info, render_bm_info
+from .common_code import SPEC as COMMON_CODE_SPEC
+from .common_code import CommonCodePayload, parse_common_code, render_common_code
 from .fpath import FPATH_SPECS, FPATH_TYPES, FpathPayload, parse_fpath, render_fpath
 from .friendlyfile import (
     FriendlyFileSha256,
@@ -64,6 +66,7 @@ from .versioncheck import VersionCheckPayload, parse_versioncheck, render_versio
 
 __all__ = [
     "AGGREGATOR_SPECS",
+    "COMMON_CODE_SPEC",
     "FPATH_SPECS",
     "FPATH_TYPES",
     "HSTR_SPECS",
@@ -81,6 +84,7 @@ __all__ = [
     "VERSIONCHECK_SPEC",
     "AggregatorPayload",
     "BMInfo",
+    "CommonCodePayload",
     "FpathPayload",
     "FriendlyFileSha256",
     "HstrFlags",
@@ -101,6 +105,7 @@ __all__ = [
     "VersionCheckPayload",
     "parse_aggregator",
     "parse_bm_info",
+    "parse_common_code",
     "parse_fpath",
     "parse_friendlyfile_sha256",
     "parse_hstr",
@@ -116,6 +121,7 @@ __all__ = [
     "parse_versioncheck",
     "render_aggregator",
     "render_bm_info",
+    "render_common_code",
     "render_fpath",
     "render_friendlyfile_sha256",
     "render_hstr",

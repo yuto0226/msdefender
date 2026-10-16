@@ -52,6 +52,7 @@ from lib.vdm.types.threat import parse_threat_begin, threat_category_name
 # Semantic annotation tables
 
 _STRUCTURED_LOG_TYPES = {
+    0xAF: "COMMON_CODE",
     0x7A: "VERSIONCHECK",
     0x69: "LATENT_THREAT",
     0x70: "TRUSTED_PUBLISHER",
@@ -733,23 +734,8 @@ def _print_hstr_fields(
 # Per-type formatters
 
 
-def fmt_common_code(p: bytes) -> list[Field]:
-    """COMMON_CODE (0xAF) — §2.8."""
-    if len(p) < 4:
-        return []
-    type_flags = int.from_bytes(p[0:2], "little")
-    code_len = int.from_bytes(p[2:4], "little")
-    return [
-        ("type_flags", f"{type_flags:#06x}"),
-        ("code_len", str(code_len)),
-        ("code", p[4 : 4 + code_len].hex(" ")),
-    ]
-
-
 # Formatter dispatch table
-FORMATTERS: dict[int, object] = {
-    0xAF: fmt_common_code,
-}
+FORMATTERS: dict[int, object] = {}
 
 # Formatters that accept (payload, type_byte) instead of (payload).
 _TYPE_AWARE_FORMATTERS: frozenset = frozenset()

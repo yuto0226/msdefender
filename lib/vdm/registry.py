@@ -5,6 +5,7 @@ from typing import Any
 from .core import FamilySpec
 from .types.aggregator import AGGREGATOR_SPECS
 from .types.bm_info import SPEC as BM_INFO_SPEC
+from .types.common_code import SPEC as COMMON_CODE_SPEC
 from .types.fpath import FPATH_SPECS
 from .types.friendlyfile import SPEC as FRIENDLYFILE_SHA256_SPEC
 from .types.hstr import HSTR_SPECS
@@ -27,6 +28,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             TRUSTED_PUBLISHER_SPEC,
             LATENT_THREAT_SPEC,
             VERSIONCHECK_SPEC,
+            COMMON_CODE_SPEC,
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
             BM_INFO_SPEC,

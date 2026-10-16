@@ -12,6 +12,7 @@ from .recid import RecIdTail, parse_recid_tail
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 from .types import (
     AGGREGATOR_SPECS,
+    COMMON_CODE_SPEC,
     FPATH_SPECS,
     FPATH_TYPES,
     HSTR_SPECS,
@@ -24,6 +25,7 @@ from .types import (
     VERSIONCHECK_SPEC,
     AggregatorPayload,
     BMInfo,
+    CommonCodePayload,
     FpathPayload,
     FriendlyFileSha256,
     HstrFlags,
@@ -44,6 +46,7 @@ from .types import (
     VersionCheckPayload,
     parse_aggregator,
     parse_bm_info,
+    parse_common_code,
     parse_fpath,
     parse_friendlyfile_sha256,
     parse_hstr,
@@ -59,6 +62,7 @@ from .types import (
     parse_versioncheck,
     render_aggregator,
     render_bm_info,
+    render_common_code,
     render_fpath,
     render_friendlyfile_sha256,
     render_hstr,
@@ -77,6 +81,7 @@ from .types import (
 
 __all__ = [
     "AGGREGATOR_SPECS",
+    "COMMON_CODE_SPEC",
     "DEFAULT_REGISTRY",
     "FPATH_SPECS",
     "FPATH_TYPES",
@@ -90,6 +95,7 @@ __all__ = [
     "VERSIONCHECK_SPEC",
     "AggregatorPayload",
     "BMInfo",
+    "CommonCodePayload",
     "DisplaySection",
     "FamilySpec",
     "Field",
@@ -120,6 +126,7 @@ __all__ = [
     "get_spec",
     "parse_aggregator",
     "parse_bm_info",
+    "parse_common_code",
     "parse_fpath",
     "parse_friendlyfile_sha256",
     "parse_hstr",
@@ -136,6 +143,7 @@ __all__ = [
     "parse_versioncheck",
     "render_aggregator",
     "render_bm_info",
+    "render_common_code",
     "render_fpath",
     "render_friendlyfile_sha256",
     "render_hstr",
