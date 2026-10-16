@@ -11,6 +11,7 @@ from .types.friendlyfile import SPEC as FRIENDLYFILE_SHA256_SPEC
 from .types.hstr import HSTR_SPECS
 from .types.kcrce import SPEC as KCRCE_SPEC
 from .types.latent_threat import SPEC as LATENT_THREAT_SPEC
+from .types.lua_standalone import SPEC as LUASTANDALONE_SPEC
 from .types.nid import NID_SPECS
 from .types.pestatic import SPEC as PESTATIC_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
@@ -31,6 +32,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             *AGGREGATOR_SPECS,
             TRUSTED_PUBLISHER_SPEC,
             LATENT_THREAT_SPEC,
+            LUASTANDALONE_SPEC,
             VERSIONCHECK_SPEC,
             COMMON_CODE_SPEC,
             VREG_SPEC,

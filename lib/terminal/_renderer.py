@@ -23,6 +23,7 @@ from lib.vdm import type_name
 from lib.vdm.bm_yara import BmYaraFidelity
 from lib.vdm.core import DisplaySection, Field, FormatResult
 from lib.vdm.types.hstr import HSTR_SPECS, HstrPayload
+from lib.vdm.types.lua_standalone import SPEC as LUASTANDALONE_SPEC
 
 from ._hstr import render_fields as render_hstr_fields
 
@@ -137,6 +138,9 @@ def _preview(payload: bytes, indent: str = INDENT) -> list[str]:
 def _generic(
     record: DecodedRecord, result: FormatResult, context: RenderContext
 ) -> list[str]:
+    family_name = (
+        record.spec.name if record.spec is not None else type_name(record.type_byte)
+    )
     threat = (
         f"  {ANSI_BOLD}{ANSI_BWHITE}{context.threat_name}{ANSI_RESET}"
         if context.threat_name
@@ -146,7 +150,7 @@ def _generic(
         f"{ANSI_GRAY}{'─' * SEP_W}{ANSI_RESET}",
         (
             f"  {ANSI_BOLD}{ANSI_BYELLOW}#{context.sequence}{ANSI_RESET}"
-            f"  {ANSI_BOLD}{ANSI_BCYAN}{type_name(record.type_byte)}{ANSI_RESET}"
+            f"  {ANSI_BOLD}{ANSI_BCYAN}{family_name}{ANSI_RESET}"
             f"  {ANSI_GRAY}({record.type_byte:#04x}){ANSI_RESET}"
             f"  {ANSI_GRAY}{len(record.raw)} B{ANSI_RESET}{threat}"
         ),
@@ -351,6 +355,8 @@ def render_record(record: DecodedRecord, context: RenderContext) -> str:
         lines = _generic(record, result, context)
     elif record.type_byte == 0x67:
         lines = _structured(record, result, context, "STATIC")
+    elif record.spec is LUASTANDALONE_SPEC:
+        lines = _structured(record, result, context, record.spec.name)
     elif record.type_byte in _STRUCTURED_LOG_TYPES:
         lines = _structured(
             record,

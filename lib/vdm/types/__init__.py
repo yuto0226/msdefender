@@ -24,6 +24,16 @@ from .hstr import (
 from .kcrce import KcrcePayload, parse_kcrce, render_kcrce
 from .latent_threat import SPEC as LATENT_THREAT_SPEC
 from .latent_threat import LatentThreat, parse_latent_threat, render_latent_threat
+from .lua_standalone import (
+    LUA_SCRIPT_CATEGORIES,
+    LUASTANDALONE_TYPE,
+    LuaMetadataField,
+    LuaScriptCategory,
+    LuaStandalonePayload,
+    parse_lua_standalone,
+    render_lua_standalone,
+)
+from .lua_standalone import SPEC as LUASTANDALONE_SPEC
 from .nid import NID64_TYPE, NID_SPECS, NidPayload, parse_nid, render_nid
 from .pestatic import SPEC as PESTATIC_SPEC
 from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
@@ -81,6 +91,9 @@ __all__ = [
     "FPATH_TYPES",
     "HSTR_SPECS",
     "LATENT_THREAT_SPEC",
+    "LUASTANDALONE_SPEC",
+    "LUASTANDALONE_TYPE",
+    "LUA_SCRIPT_CATEGORIES",
     "MAGIC_THREAT_IDS",
     "NID64_TYPE",
     "NID_SPECS",
@@ -107,6 +120,9 @@ __all__ = [
     "HstrSubsignature",
     "KcrcePayload",
     "LatentThreat",
+    "LuaMetadataField",
+    "LuaScriptCategory",
+    "LuaStandalonePayload",
     "NidPayload",
     "PeStaticPayload",
     "RegKeyPayload",
@@ -129,6 +145,7 @@ __all__ = [
     "parse_hstr",
     "parse_kcrce",
     "parse_latent_threat",
+    "parse_lua_standalone",
     "parse_nid",
     "parse_pestatic",
     "parse_regkey",
@@ -148,6 +165,7 @@ __all__ = [
     "render_hstr",
     "render_kcrce",
     "render_latent_threat",
+    "render_lua_standalone",
     "render_nid",
     "render_pestatic",
     "render_regkey",
