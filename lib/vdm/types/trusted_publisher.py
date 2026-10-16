@@ -7,20 +7,11 @@ from typing import Final, Literal
 
 from ..core import DisplaySection, FamilySpec, FormatResult
 from ..recid import RecIdTail, parse_recid_tail
+from ._certificate_key import parse_certificate_key
 
 TRUSTED_PUBLISHER_TYPE: Final = 0x70
 
 _KEY_TYPES = MappingProxyType({1: "HASH", 2: "BY", 3: "TO", 4: "BADHASH", 5: "TEAMID"})
-_PREFIXES = tuple(
-    (label + ":", key_type)
-    for key_type, label in (
-        (1, "HASH"),
-        (4, "BADHASH"),
-        (2, "BY"),
-        (3, "TO"),
-        (5, "TEAMID"),
-    )
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,40 +58,7 @@ def parse_trusted_publisher(payload: bytes) -> TrustedPublisher:
 
     key_data = payload[2:key_end]
     recid_tail_raw = payload[key_end:]
-    mode = "binary" if key_data[0] < 0x20 else "string"
-    key_type = key_data[0] if mode == "binary" else 3
-    prefix = None
-    prefix_raw = b""
-    key_material_raw = key_data[1:] if mode == "binary" else key_data
-    text_raw = b""
-    terminator_raw = b""
-    string_trailing_raw = b""
-    key_text = None
-    decode_error = None
-
-    if mode == "string":
-        # The engine compares only ASCII prefixes, case-insensitively. Compare
-        # their raw UTF-16LE bytes so malformed later text remains lossless.
-        for label, candidate_type in _PREFIXES:
-            encoded = label.encode("utf-16le")
-            if key_data[: len(encoded)].upper() == encoded:
-                prefix = label[:-1]
-                prefix_raw = key_data[: len(encoded)]
-                key_material_raw = key_data[len(encoded) :]
-                key_type = candidate_type
-                break
-
-        text_raw = key_data
-        for offset in range(0, len(key_data) - 1, 2):
-            if key_data[offset : offset + 2] == b"\0\0":
-                text_raw = key_data[:offset]
-                terminator_raw = key_data[offset : offset + 2]
-                string_trailing_raw = key_data[offset + 2 :]
-                break
-        try:
-            key_text = text_raw.decode("utf-16le")
-        except UnicodeDecodeError as exc:
-            decode_error = str(exc)
+    key = parse_certificate_key(key_data)
 
     # The signature hash covers payload[:key_end], excluding this RecID tail;
     # Load also ORs (key_end << 40) and 0x7000000000 into its CRC result. Key
@@ -109,16 +67,16 @@ def parse_trusted_publisher(payload: bytes) -> TrustedPublisher:
         raw=payload,
         key_len=key_len,
         key_data=key_data,
-        mode=mode,
-        key_type=key_type,
-        prefix=prefix,
-        prefix_raw=prefix_raw,
-        key_material_raw=key_material_raw,
-        key_text=key_text,
-        text_raw=text_raw,
-        terminator_raw=terminator_raw,
-        string_trailing_raw=string_trailing_raw,
-        decode_error=decode_error,
+        mode=key.mode,
+        key_type=key.key_type,
+        prefix=key.prefix,
+        prefix_raw=key.prefix_raw,
+        key_material_raw=key.material_raw,
+        key_text=key.text,
+        text_raw=key.text_raw,
+        terminator_raw=key.terminator_raw,
+        string_trailing_raw=key.trailing_raw,
+        decode_error=key.decode_error,
         recid_tail_raw=recid_tail_raw,
         recid_tail=parse_recid_tail(recid_tail_raw),
     )

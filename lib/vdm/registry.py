@@ -14,6 +14,7 @@ from .types.latent_threat import SPEC as LATENT_THREAT_SPEC
 from .types.nid import NID_SPECS
 from .types.pestatic import SPEC as PESTATIC_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
+from .types.revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
@@ -25,6 +26,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
         spec.type_byte: spec
         for spec in (
             REGKEY_SPEC,
+            REVOKED_CERTIFICATE_SPEC,
             *AGGREGATOR_SPECS,
             TRUSTED_PUBLISHER_SPEC,
             LATENT_THREAT_SPEC,

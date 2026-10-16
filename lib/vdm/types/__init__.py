@@ -29,6 +29,12 @@ from .pestatic import SPEC as PESTATIC_SPEC
 from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
 from .regkey import SPEC as REGKEY_SPEC
 from .regkey import RegKeyPayload, parse_regkey, render_regkey
+from .revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
+from .revoked_certificate import (
+    RevokedCertificate,
+    parse_revoked_certificate,
+    render_revoked_certificate,
+)
 from .sigtree import (
     SIGTREE_BM_SPEC,
     SIGTREE_EXT_SPEC,
@@ -77,6 +83,7 @@ __all__ = [
     "NID_SPECS",
     "PESTATIC_SPEC",
     "REGKEY_SPEC",
+    "REVOKED_CERTIFICATE_SPEC",
     "SIGTREE_BM_SPEC",
     "SIGTREE_EXT_SPEC",
     "SIGTREE_SPEC",
@@ -98,6 +105,7 @@ __all__ = [
     "NidPayload",
     "PeStaticPayload",
     "RegKeyPayload",
+    "RevokedCertificate",
     "SigtreeEntry",
     "SigtreeParam",
     "SigtreePayload",
@@ -118,6 +126,7 @@ __all__ = [
     "parse_nid",
     "parse_pestatic",
     "parse_regkey",
+    "parse_revoked_certificate",
     "parse_sigtree",
     "parse_static",
     "parse_threat_begin",
@@ -135,6 +144,7 @@ __all__ = [
     "render_nid",
     "render_pestatic",
     "render_regkey",
+    "render_revoked_certificate",
     "render_sigtree",
     "render_static",
     "render_threat_begin",
