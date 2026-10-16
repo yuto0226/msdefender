@@ -25,6 +25,8 @@ from .kcrce import KcrcePayload, parse_kcrce, render_kcrce
 from .latent_threat import SPEC as LATENT_THREAT_SPEC
 from .latent_threat import LatentThreat, parse_latent_threat, render_latent_threat
 from .nid import NID_SPECS, NidPayload, parse_nid, render_nid
+from .pestatic import SPEC as PESTATIC_SPEC
+from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
 from .regkey import SPEC as REGKEY_SPEC
 from .regkey import RegKeyPayload, parse_regkey, render_regkey
 from .sigtree import (
@@ -73,6 +75,7 @@ __all__ = [
     "LATENT_THREAT_SPEC",
     "MAGIC_THREAT_IDS",
     "NID_SPECS",
+    "PESTATIC_SPEC",
     "REGKEY_SPEC",
     "SIGTREE_BM_SPEC",
     "SIGTREE_EXT_SPEC",
@@ -93,6 +96,7 @@ __all__ = [
     "KcrcePayload",
     "LatentThreat",
     "NidPayload",
+    "PeStaticPayload",
     "RegKeyPayload",
     "SigtreeEntry",
     "SigtreeParam",
@@ -112,6 +116,7 @@ __all__ = [
     "parse_kcrce",
     "parse_latent_threat",
     "parse_nid",
+    "parse_pestatic",
     "parse_regkey",
     "parse_sigtree",
     "parse_static",
@@ -128,6 +133,7 @@ __all__ = [
     "render_kcrce",
     "render_latent_threat",
     "render_nid",
+    "render_pestatic",
     "render_regkey",
     "render_sigtree",
     "render_static",

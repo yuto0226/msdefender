@@ -12,6 +12,7 @@ from .types.hstr import HSTR_SPECS
 from .types.kcrce import SPEC as KCRCE_SPEC
 from .types.latent_threat import SPEC as LATENT_THREAT_SPEC
 from .types.nid import NID_SPECS
+from .types.pestatic import SPEC as PESTATIC_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.static import SPEC as STATIC_SPEC
@@ -36,6 +37,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             SIGTREE_BM_SPEC,
             STATIC_SPEC,
             KCRCE_SPEC,
+            PESTATIC_SPEC,
             *FPATH_SPECS,
             *THREAT_SPECS,
             *HSTR_SPECS,
