@@ -52,6 +52,7 @@ from lib.vdm.types.threat import parse_threat_begin, threat_category_name
 # Semantic annotation tables
 
 _STRUCTURED_LOG_TYPES = {
+    0x69: "LATENT_THREAT",
     0x70: "TRUSTED_PUBLISHER",
     0x96: "AAGGREGATOR",
     0xE7: "AAGGREGATOREX",
@@ -731,18 +732,6 @@ def _print_hstr_fields(
 # Per-type formatters
 
 
-def fmt_latent_threat(p: bytes) -> list[Field]:
-    """LATENT_THREAT (0x69) — §2.7.  Exactly 8B."""
-    if len(p) < 8:
-        return []
-    latent_id = int.from_bytes(p[0:4], "little")
-    flags = int.from_bytes(p[4:8], "little")
-    return [
-        ("latent_id", f"{latent_id:#010x}"),
-        ("flags", f"{flags:#010x}"),
-    ]
-
-
 def fmt_common_code(p: bytes) -> list[Field]:
     """COMMON_CODE (0xAF) — §2.8."""
     if len(p) < 4:
@@ -770,7 +759,6 @@ def fmt_versioncheck(p: bytes) -> list[Field]:
 
 # Formatter dispatch table
 FORMATTERS: dict[int, object] = {
-    0x69: fmt_latent_threat,
     0xAF: fmt_common_code,
     0x7A: fmt_versioncheck,
 }

@@ -20,6 +20,8 @@ from .hstr import (
     render_hstr,
 )
 from .kcrce import KcrcePayload, parse_kcrce, render_kcrce
+from .latent_threat import SPEC as LATENT_THREAT_SPEC
+from .latent_threat import LatentThreat, parse_latent_threat, render_latent_threat
 from .nid import NID_SPECS, NidPayload, parse_nid, render_nid
 from .regkey import SPEC as REGKEY_SPEC
 from .regkey import RegKeyPayload, parse_regkey, render_regkey
@@ -63,6 +65,7 @@ __all__ = [
     "FPATH_SPECS",
     "FPATH_TYPES",
     "HSTR_SPECS",
+    "LATENT_THREAT_SPEC",
     "MAGIC_THREAT_IDS",
     "NID_SPECS",
     "REGKEY_SPEC",
@@ -81,6 +84,7 @@ __all__ = [
     "HstrPayload",
     "HstrSubsignature",
     "KcrcePayload",
+    "LatentThreat",
     "NidPayload",
     "RegKeyPayload",
     "SigtreeEntry",
@@ -97,6 +101,7 @@ __all__ = [
     "parse_friendlyfile_sha256",
     "parse_hstr",
     "parse_kcrce",
+    "parse_latent_threat",
     "parse_nid",
     "parse_regkey",
     "parse_sigtree",
@@ -110,6 +115,7 @@ __all__ = [
     "render_friendlyfile_sha256",
     "render_hstr",
     "render_kcrce",
+    "render_latent_threat",
     "render_nid",
     "render_regkey",
     "render_sigtree",
