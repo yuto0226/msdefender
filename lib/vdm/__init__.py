@@ -11,11 +11,14 @@ from .decode import decode_payload
 from .recid import RecIdTail, parse_recid_tail
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
 from .types import (
+    FPATH_SPECS,
+    FPATH_TYPES,
     HSTR_SPECS,
     NID_SPECS,
     THREAT_CATEGORIES,
     THREAT_SPECS,
     BMInfo,
+    FpathPayload,
     FriendlyFileSha256,
     HstrFlags,
     HstrPayload,
@@ -30,6 +33,7 @@ from .types import (
     ThreatBegin,
     ThreatEnd,
     parse_bm_info,
+    parse_fpath,
     parse_friendlyfile_sha256,
     parse_hstr,
     parse_kcrce,
@@ -39,6 +43,7 @@ from .types import (
     parse_threat_begin,
     parse_threat_end,
     render_bm_info,
+    render_fpath,
     render_friendlyfile_sha256,
     render_hstr,
     render_kcrce,
@@ -52,6 +57,8 @@ from .types import (
 
 __all__ = [
     "DEFAULT_REGISTRY",
+    "FPATH_SPECS",
+    "FPATH_TYPES",
     "HSTR_SPECS",
     "NID_SPECS",
     "THREAT_CATEGORIES",
@@ -61,6 +68,7 @@ __all__ = [
     "FamilySpec",
     "Field",
     "FormatResult",
+    "FpathPayload",
     "FriendlyFileSha256",
     "HstrFlags",
     "HstrPayload",
@@ -81,6 +89,7 @@ __all__ = [
     "decode_payload",
     "get_spec",
     "parse_bm_info",
+    "parse_fpath",
     "parse_friendlyfile_sha256",
     "parse_hstr",
     "parse_kcrce",
@@ -91,6 +100,7 @@ __all__ = [
     "parse_threat_begin",
     "parse_threat_end",
     "render_bm_info",
+    "render_fpath",
     "render_friendlyfile_sha256",
     "render_hstr",
     "render_kcrce",

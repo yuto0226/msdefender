@@ -1,4 +1,5 @@
 from .bm_info import SPEC, BMInfo, parse_bm_info, render_bm_info
+from .fpath import FPATH_SPECS, FPATH_TYPES, FpathPayload, parse_fpath, render_fpath
 from .friendlyfile import (
     FriendlyFileSha256,
     parse_friendlyfile_sha256,
@@ -44,6 +45,8 @@ from .threat import (
 )
 
 __all__ = [
+    "FPATH_SPECS",
+    "FPATH_TYPES",
     "HSTR_SPECS",
     "MAGIC_THREAT_IDS",
     "NID_SPECS",
@@ -54,6 +57,7 @@ __all__ = [
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
     "BMInfo",
+    "FpathPayload",
     "FriendlyFileSha256",
     "HstrFlags",
     "HstrPayload",
@@ -68,6 +72,7 @@ __all__ = [
     "ThreatBegin",
     "ThreatEnd",
     "parse_bm_info",
+    "parse_fpath",
     "parse_friendlyfile_sha256",
     "parse_hstr",
     "parse_kcrce",
@@ -77,6 +82,7 @@ __all__ = [
     "parse_threat_begin",
     "parse_threat_end",
     "render_bm_info",
+    "render_fpath",
     "render_friendlyfile_sha256",
     "render_hstr",
     "render_kcrce",

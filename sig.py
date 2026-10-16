@@ -51,6 +51,14 @@ from lib.vdm.types.threat import parse_threat_begin, threat_category_name
 
 # Semantic annotation tables
 
+_STRUCTURED_LOG_TYPES = {
+    0x80: "KCRCE",
+    0x5F: "FILEPATH",
+    0x60: "FOLDERNAME",
+    0x71: "ASEP_FILEPATH",
+    0x75: "ASEP_FOLDERNAME",
+}
+
 # Aggregator receiver families use a different expression-buffer wire format.
 _AGGREGATOR_FAMILY: dict[int, str] = {
     0x96: "aggregator",
@@ -164,11 +172,11 @@ def print_record(
             seq, payload, threat_name, result, show_hex, show_threat_heading
         )
         return
-    if type_byte == 0x80:
+    if type_byte in _STRUCTURED_LOG_TYPES:
         _print_structured_record(
             seq,
-            0x80,
-            "KCRCE",
+            type_byte,
+            _STRUCTURED_LOG_TYPES[type_byte],
             payload,
             threat_name,
             result,
@@ -730,13 +738,6 @@ def _print_hstr_fields(
 # Per-type formatters
 # Each function receives the raw payload bytes and returns a list of Fields.
 # Return [] to trigger hexdump fallback in print_record().
-_FPATH_KIND: dict[int, str] = {
-    0x5F: "filepath",
-    0x60: "foldername",
-    0x71: "asep_filepath",
-    0x75: "asep_foldername",
-}
-
 _REG_HIVES = (
     "HKCR",
     "HKCU",
@@ -755,12 +756,6 @@ _TRUSTED_PUBLISHER_PREFIXES = ("HASH:", "BADHASH:", "BY:", "TO:", "TEAMID:")
 # Publisher labels are confirmed from the string-prefix table in the signature
 # docs. REGKEY labels are inferred from observed
 # payload shapes and receiver behavior, not official enum names.
-_CSIDL_LABELS: dict[int, str] = {
-    0x001A: "CSIDL_APPDATA",
-    0x0024: "CSIDL_WINDOWS",
-    0x0025: "CSIDL_SYSTEM",
-}
-
 _REGKEY_TYPE_LABELS: dict[int, str] = {
     0x0001: "hive",
     0x0002: "subkey",
@@ -775,17 +770,6 @@ _TRUSTED_PUBLISHER_KEY_TYPES: dict[int, str] = {
     0x04: "BADHASH",
     0x05: "TEAMID",
 }
-
-
-def _split_path_and_tail(data: bytes) -> tuple[bytes, bytes]:
-    end = len(data)
-    tail_off = len(data)
-    for marker in (b"|", b"\x00"):
-        pos = data.find(marker)
-        if pos != -1 and pos < end:
-            end = pos
-            tail_off = pos + len(marker)
-    return data[:end], data[tail_off:]
 
 
 def _decode_single_byte_text(data: bytes) -> str:
@@ -818,29 +802,6 @@ def _split_registry_hive(path: str) -> tuple[str | None, str | None]:
         if upper_path.startswith(prefix.upper()):
             return hive, path[len(prefix) :]
     return None, None
-
-
-def fmt_fpath_like(p: bytes, type_byte: int = 0) -> list[Field]:
-    """FILEPATH/FOLDERNAME/ASEP path family."""
-    if len(p) < 2:
-        return [
-            ("kind", _FPATH_KIND.get(type_byte, f"type={type_byte:#04x}")),
-            ("error", "truncated payload"),
-        ]
-
-    csidl_flags = int.from_bytes(p[0:2], "little")
-    path_bytes, pcode = _split_path_and_tail(p[2:])
-    path = _decode_single_byte_text(path_bytes)
-
-    fields: list[Field] = [
-        ("kind", _FPATH_KIND.get(type_byte, f"type={type_byte:#04x}")),
-        ("csidl_flags", _format_labeled_hex(csidl_flags, 6, _CSIDL_LABELS)),
-        ("path_bytes_len", str(len(path_bytes))),
-        ("path", path if path else "(empty)"),
-    ]
-    if pcode:
-        fields.append(("pcode_len", f"{len(pcode)} B"))
-    return fields
 
 
 def fmt_regkey(p: bytes) -> list[Field]:
@@ -1066,12 +1027,8 @@ def fmt_aggregator(p: bytes, type_byte: int) -> FormatResult | list[Field]:
 
 # Formatter dispatch table
 FORMATTERS: dict[int, object] = {
-    0x5F: fmt_fpath_like,  # FILEPATH
-    0x60: fmt_fpath_like,  # FOLDERNAME
     0x63: fmt_regkey,
     0x70: fmt_trusted_publisher,
-    0x71: fmt_fpath_like,  # ASEP_FILEPATH
-    0x75: fmt_fpath_like,  # ASEP_FOLDERNAME
     0x69: fmt_latent_threat,
     0xAF: fmt_common_code,
     0x7A: fmt_versioncheck,
@@ -1080,7 +1037,7 @@ FORMATTERS: dict[int, object] = {
 }
 
 # Formatters that accept (payload, type_byte) instead of (payload).
-_TYPE_AWARE_FORMATTERS: frozenset = frozenset({fmt_fpath_like, fmt_aggregator})
+_TYPE_AWARE_FORMATTERS: frozenset = frozenset({fmt_aggregator})
 
 
 def format_payload(type_byte: int, payload: bytes) -> FormatResult:
