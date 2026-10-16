@@ -7,6 +7,11 @@ from .core import (
     Parser,
     Renderer,
 )
+from .luaq import (
+    LuaQChunk,
+    LuaQParseError,
+    parse_luaq,
+)
 from .recid import RecIdTail, parse_recid_tail
 from .record import DecodedRecord, decode_record
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
@@ -139,6 +144,8 @@ __all__ = [
     "KcrcePayload",
     "LatentThreat",
     "LuaMetadataField",
+    "LuaQChunk",
+    "LuaQParseError",
     "LuaScriptCategory",
     "LuaStandalonePayload",
     "NidPayload",
@@ -170,6 +177,7 @@ __all__ = [
     "parse_kcrce",
     "parse_latent_threat",
     "parse_lua_standalone",
+    "parse_luaq",
     "parse_nid",
     "parse_pestatic",
     "parse_recid_tail",

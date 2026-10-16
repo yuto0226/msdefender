@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Final, Literal
 
 from ..core import DisplaySection, FamilySpec, FormatResult
+from ..luaq import LuaQChunk, LuaQPrototype, parse_luaq
 from ..pattern_codec import PATTERN_DECODING_TABLE_KEEP_NULL
 
 LUASTANDALONE_TYPE: Final = 0xBD
@@ -100,6 +101,7 @@ class LuaStandalonePayload:
     script: bytes
     script_form: ScriptForm | None
     lua_header: bytes | None
+    lua_chunk: LuaQChunk | None
     trailing_raw: bytes
     receiver_ignored: bool
     ignored_body_raw: bytes
@@ -263,6 +265,7 @@ def parse_lua_standalone(payload: bytes) -> LuaStandalonePayload:
             script=b"",
             script_form=None,
             lua_header=None,
+            lua_chunk=None,
             trailing_raw=b"",
             receiver_ignored=True,
             ignored_body_raw=payload[HEADER_SIZE:],
@@ -313,6 +316,7 @@ def parse_lua_standalone(payload: bytes) -> LuaStandalonePayload:
         lua_header = None
     else:
         raise ValueError(f"invalid LUASTANDALONE script magic: 0x{magic:08X}")
+    lua_chunk = None if category_info.policy & 0x10 else parse_luaq(script)
 
     # AddScript performs these holder-level validations only after Process.
     if flags is not None and flags > 0xFF:
@@ -348,6 +352,7 @@ def parse_lua_standalone(payload: bytes) -> LuaStandalonePayload:
         script=script,
         script_form=script_form,
         lua_header=lua_header,
+        lua_chunk=lua_chunk,
         trailing_raw=payload[script_end:],
         receiver_ignored=False,
         ignored_body_raw=b"",
@@ -384,6 +389,20 @@ def _text_preview(data: bytes, limit: int = METADATA_PREVIEW_BYTES) -> str:
             )
         prefix = prefix[:-1]
     return f"(UTF-8; {len(data)} B total)"
+
+
+def _lua_tree_counts(root: LuaQPrototype) -> tuple[int, int, int]:
+    prototype_count = 0
+    instruction_count = 0
+    constant_count = 0
+    pending = [root]
+    while pending:
+        prototype = pending.pop()
+        prototype_count += 1
+        instruction_count += len(prototype.instructions)
+        constant_count += len(prototype.constants)
+        pending.extend(prototype.children)
+    return prototype_count, instruction_count, constant_count
 
 
 def render_lua_standalone(parsed: LuaStandalonePayload) -> FormatResult:
@@ -477,6 +496,19 @@ def render_lua_standalone(parsed: LuaStandalonePayload) -> FormatResult:
     ]
     if parsed.lua_header is not None:
         script_rows.append(("lua_header", parsed.lua_header.hex(" ")))
+    if parsed.lua_chunk is not None:
+        prototype_count, instruction_count, constant_count = _lua_tree_counts(
+            parsed.lua_chunk.prototype
+        )
+        script_rows.extend(
+            (
+                ("prototypes", str(prototype_count)),
+                ("instructions", str(instruction_count)),
+                ("constants", str(constant_count)),
+            )
+        )
+    elif parsed.category_policy is not None and parsed.category_policy & 0x10:
+        script_rows.append(("processing", "deferred; full script preserved"))
     sections.append(DisplaySection("Script", rows=tuple(script_rows)))
     return FormatResult(sections=tuple(sections))
 
