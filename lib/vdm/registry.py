@@ -20,6 +20,7 @@ from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
 from .types.trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
 from .types.versioncheck import SPEC as VERSIONCHECK_SPEC
+from .types.vreg import SPEC as VREG_SPEC
 
 DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
     {
@@ -32,6 +33,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             LATENT_THREAT_SPEC,
             VERSIONCHECK_SPEC,
             COMMON_CODE_SPEC,
+            VREG_SPEC,
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
             BM_INFO_SPEC,

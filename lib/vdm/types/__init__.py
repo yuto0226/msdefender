@@ -71,6 +71,8 @@ from .trusted_publisher import (
 )
 from .versioncheck import SPEC as VERSIONCHECK_SPEC
 from .versioncheck import VersionCheckPayload, parse_versioncheck, render_versioncheck
+from .vreg import SPEC as VREG_SPEC
+from .vreg import VREG_TYPE, VregPayload, parse_vreg, render_vreg
 
 __all__ = [
     "AGGREGATOR_SPECS",
@@ -93,6 +95,8 @@ __all__ = [
     "THREAT_SPECS",
     "TRUSTED_PUBLISHER_SPEC",
     "VERSIONCHECK_SPEC",
+    "VREG_SPEC",
+    "VREG_TYPE",
     "AggregatorPayload",
     "BMInfo",
     "CommonCodePayload",
@@ -116,6 +120,7 @@ __all__ = [
     "ThreatEnd",
     "TrustedPublisher",
     "VersionCheckPayload",
+    "VregPayload",
     "parse_aggregator",
     "parse_bm_info",
     "parse_common_code",
@@ -134,6 +139,7 @@ __all__ = [
     "parse_threat_end",
     "parse_trusted_publisher",
     "parse_versioncheck",
+    "parse_vreg",
     "render_aggregator",
     "render_bm_info",
     "render_common_code",
@@ -152,5 +158,6 @@ __all__ = [
     "render_threat_end",
     "render_trusted_publisher",
     "render_versioncheck",
+    "render_vreg",
     "threat_category_name",
 ]
