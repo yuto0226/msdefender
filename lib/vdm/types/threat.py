@@ -65,6 +65,14 @@ THREAT_END_TYPE: Final = 0x5D
 
 
 @dataclass(frozen=True, slots=True)
+class ThreatMetadata:
+    meta_a: int
+    meta_b: int
+    sub_category: int
+    format_version: int
+
+
+@dataclass(frozen=True, slots=True)
 class ThreatBegin:
     raw: bytes
     threat_id: int
@@ -73,16 +81,25 @@ class ThreatBegin:
     category: int
     name_len: int
     name_raw: bytes
+    post_name_zero: int
+    dependencies: tuple[int, ...]
+    ext_entries: tuple[int, ...]
+    metadata: ThreatMetadata | None
     marker_raw: bytes
     display_name_raw: bytes
     name: str
     trailing_raw: bytes
 
+    @property
+    def effective_metadata(self) -> ThreatMetadata:
+        """Return engine defaults when the wire metadata tail is absent."""
+        return self.metadata or ThreatMetadata(1, 3, 0, 0)
+
 
 @dataclass(frozen=True, slots=True)
 class ThreatEnd:
     raw: bytes
-    checksum: int
+    threat_id: int
     trailing_raw: bytes
 
 
@@ -91,7 +108,7 @@ def threat_category_name(category: int) -> str | None:
 
 
 def parse_threat_begin(payload: bytes) -> ThreatBegin:
-    """Parse the fixed THREAT_BEGIN header and length-delimited name object."""
+    """Parse the THREAT_BEGIN header, name, arrays, and optional metadata."""
     if len(payload) < 0x0C:
         raise ValueError("truncated THREAT_BEGIN header")
 
@@ -108,6 +125,52 @@ def parse_threat_begin(payload: bytes) -> ThreatBegin:
         )
 
     name_raw = payload[0x0C:name_end]
+    cursor = name_end
+
+    if len(payload) - cursor < 2:
+        raise ValueError("truncated THREAT_BEGIN post_name_zero")
+    post_name_zero = int.from_bytes(payload[cursor : cursor + 2], "little")
+    cursor += 2
+
+    dependency_size = dep_count * 4
+    if len(payload) - cursor < dependency_size:
+        raise ValueError(
+            f"truncated THREAT_BEGIN dependency_ids: need {dependency_size} bytes, "
+            f"have {len(payload) - cursor}"
+        )
+    dependencies = tuple(
+        int.from_bytes(payload[offset : offset + 4], "little")
+        for offset in range(cursor, cursor + dependency_size, 4)
+    )
+    cursor += dependency_size
+
+    ext_size = ext_count * 2
+    if len(payload) - cursor < ext_size:
+        raise ValueError(
+            f"truncated THREAT_BEGIN ext_entries: need {ext_size} bytes, "
+            f"have {len(payload) - cursor}"
+        )
+    ext_entries = tuple(
+        int.from_bytes(payload[offset : offset + 2], "little")
+        for offset in range(cursor, cursor + ext_size, 2)
+    )
+    cursor += ext_size
+
+    remaining = len(payload) - cursor
+    if 0 < remaining < 6:
+        raise ValueError(
+            f"truncated THREAT_BEGIN metadata tail: need 6 bytes, have {remaining}"
+        )
+    metadata = None
+    if remaining >= 6:
+        metadata = ThreatMetadata(
+            meta_a=payload[cursor],
+            meta_b=payload[cursor + 1],
+            sub_category=int.from_bytes(payload[cursor + 2 : cursor + 4], "little"),
+            format_version=int.from_bytes(payload[cursor + 4 : cursor + 6], "little"),
+        )
+        cursor += 6
+
     marker_len = 0
     while marker_len < len(name_raw) and name_raw[marker_len] >= 0x80:
         marker_len += 1
@@ -128,19 +191,23 @@ def parse_threat_begin(payload: bytes) -> ThreatBegin:
         category=category,
         name_len=name_len,
         name_raw=name_raw,
+        post_name_zero=post_name_zero,
+        dependencies=dependencies,
+        ext_entries=ext_entries,
+        metadata=metadata,
         marker_raw=marker_raw,
         display_name_raw=display_name_raw,
         name=name,
-        trailing_raw=payload[name_end:],
+        trailing_raw=payload[cursor:],
     )
 
 
 def parse_threat_end(payload: bytes) -> ThreatEnd:
     if len(payload) < 4:
-        raise ValueError("truncated THREAT_END checksum")
+        raise ValueError("truncated THREAT_END threat ID")
     return ThreatEnd(
         raw=payload,
-        checksum=int.from_bytes(payload[:4], "little"),
+        threat_id=int.from_bytes(payload[:4], "little"),
         trailing_raw=payload[4:],
     )
 
@@ -155,10 +222,43 @@ def render_threat_begin(threat: ThreatBegin) -> FormatResult:
         ("threat_id", threat_id_display),
         ("category", category_display),
         ("dep_count", str(threat.dep_count)),
+        (
+            "dependency_ids",
+            f"[{', '.join(format(item, '#010x') for item in threat.dependencies)}]",
+        ),
         ("ext_count", str(threat.ext_count)),
+        (
+            "ext_entries",
+            f"[{', '.join(format(item, '#06x') for item in threat.ext_entries)}]",
+        ),
+        ("post_name_zero", f"{threat.post_name_zero:#06x}"),
         ("name_len", str(threat.name_len)),
         ("name", threat.name),
     ]
+    if threat.metadata is not None:
+        metadata = threat.metadata
+        fields.append(
+            (
+                "wire_metadata",
+                (
+                    f"meta_a={metadata.meta_a}, meta_b={metadata.meta_b}, "
+                    f"sub_category={metadata.sub_category:#06x}, "
+                    f"format_version={metadata.format_version:#06x}"
+                ),
+            )
+        )
+    else:
+        metadata = threat.effective_metadata
+        fields.append(
+            (
+                "effective_metadata (wire tail absent)",
+                (
+                    f"meta_a={metadata.meta_a}, meta_b={metadata.meta_b}, "
+                    f"sub_category={metadata.sub_category:#06x}, "
+                    f"format_version={metadata.format_version:#06x}"
+                ),
+            )
+        )
     if threat.marker_raw:
         fields.append(("name_marker_raw", threat.marker_raw.hex(" ")))
     if threat.trailing_raw:
@@ -167,7 +267,7 @@ def render_threat_begin(threat: ThreatBegin) -> FormatResult:
 
 
 def render_threat_end(threat: ThreatEnd) -> FormatResult:
-    fields = [("checksum", f"{threat.checksum:#010x}")]
+    fields = [("threat_id", f"{threat.threat_id:#010x}")]
     if threat.trailing_raw:
         fields.append(("trailing_raw", threat.trailing_raw.hex(" ")))
     return FormatResult(fields=tuple(fields))
