@@ -7,6 +7,7 @@ from .core import (
     Parser,
     Renderer,
 )
+from .lua51 import Lua51Export, Lua51ExportWarning, export_lua51
 from .luaq import (
     LuaQChunk,
     LuaQParseError,
@@ -143,6 +144,8 @@ __all__ = [
     "HstrSubsignature",
     "KcrcePayload",
     "LatentThreat",
+    "Lua51Export",
+    "Lua51ExportWarning",
     "LuaMetadataField",
     "LuaQChunk",
     "LuaQParseError",
@@ -167,6 +170,7 @@ __all__ = [
     "VregPayload",
     "build_registry",
     "decode_record",
+    "export_lua51",
     "get_spec",
     "parse_aggregator",
     "parse_bm_info",
