@@ -34,6 +34,13 @@ from .lua_standalone import (
     render_lua_standalone,
 )
 from .lua_standalone import SPEC as LUASTANDALONE_SPEC
+from .macro_source import (
+    MACRO_SOURCE_TYPE,
+    MacroSourcePayload,
+    parse_macro_source,
+    render_macro_source,
+)
+from .macro_source import SPEC as MACRO_SOURCE_SPEC
 from .nid import NID64_TYPE, NID_SPECS, NidPayload, parse_nid, render_nid
 from .pestatic import SPEC as PESTATIC_SPEC
 from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
@@ -95,6 +102,8 @@ __all__ = [
     "LUASTANDALONE_SPEC",
     "LUASTANDALONE_TYPE",
     "LUA_SCRIPT_CATEGORIES",
+    "MACRO_SOURCE_SPEC",
+    "MACRO_SOURCE_TYPE",
     "MAGIC_THREAT_IDS",
     "NID64_TYPE",
     "NID_SPECS",
@@ -124,6 +133,7 @@ __all__ = [
     "LuaMetadataField",
     "LuaScriptCategory",
     "LuaStandalonePayload",
+    "MacroSourcePayload",
     "NidPayload",
     "PeStaticPayload",
     "RegKeyPayload",
@@ -148,6 +158,7 @@ __all__ = [
     "parse_kcrce",
     "parse_latent_threat",
     "parse_lua_standalone",
+    "parse_macro_source",
     "parse_nid",
     "parse_pestatic",
     "parse_regkey",
@@ -168,6 +179,7 @@ __all__ = [
     "render_kcrce",
     "render_latent_threat",
     "render_lua_standalone",
+    "render_macro_source",
     "render_nid",
     "render_pestatic",
     "render_regkey",
