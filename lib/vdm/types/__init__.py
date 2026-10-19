@@ -87,6 +87,14 @@ from .trusted_publisher import (
     parse_trusted_publisher,
     render_trusted_publisher,
 )
+from .vdll_meta import (
+    FAMILY_SPECS as VDLL_META_SPECS,
+)
+from .vdll_meta import (
+    VdllMetaPayload,
+    parse_vdll_meta,
+    render_vdll_meta,
+)
 from .versioncheck import SPEC as VERSIONCHECK_SPEC
 from .versioncheck import VersionCheckPayload, parse_versioncheck, render_versioncheck
 from .vreg import SPEC as VREG_SPEC
@@ -117,6 +125,7 @@ __all__ = [
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
     "TRUSTED_PUBLISHER_SPEC",
+    "VDLL_META_SPECS",
     "VERSIONCHECK_SPEC",
     "VREG_SPEC",
     "VREG_TYPE",
@@ -147,6 +156,7 @@ __all__ = [
     "ThreatEnd",
     "ThreatMetadata",
     "TrustedPublisher",
+    "VdllMetaPayload",
     "VersionCheckPayload",
     "VregPayload",
     "parse_aggregator",
@@ -168,6 +178,7 @@ __all__ = [
     "parse_threat_begin",
     "parse_threat_end",
     "parse_trusted_publisher",
+    "parse_vdll_meta",
     "parse_versioncheck",
     "parse_vreg",
     "render_aggregator",
@@ -189,6 +200,7 @@ __all__ = [
     "render_threat_begin",
     "render_threat_end",
     "render_trusted_publisher",
+    "render_vdll_meta",
     "render_versioncheck",
     "render_vreg",
     "threat_category_name",
