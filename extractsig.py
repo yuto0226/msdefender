@@ -25,6 +25,7 @@ from lib.debug import (
     ok,
     warn,
 )
+from lib.vdm import decode_record, export_record_artifacts
 from lib.vdm.catalog import type_name
 from lib.vdm.stream import (
     OrphanRecordEvent,
@@ -88,7 +89,10 @@ def _record_manifest(record: WireRecord, index: int) -> dict[str, object]:
 
 
 def _manifest(
-    block: ThreatBlock, reason: str | None, source_name: str
+    block: ThreatBlock,
+    reason: str | None,
+    source_name: str,
+    exports: list[dict[str, object]],
 ) -> dict[str, object]:
     begin = block.begin
     category_name = threat_category_name(begin.category)
@@ -166,6 +170,7 @@ def _manifest(
             _record_manifest(record, index)
             for index, record in enumerate(block.records, start=1)
         ],
+        "exports": exports,
     }
 
 
@@ -186,10 +191,66 @@ def _write_block(
 ) -> None:
     threat_dir = _threat_dir(out_dir, block)
     (threat_dir / "raw.sig").write_bytes(block.to_bytes())
+    exports: list[dict[str, object]] = []
+    for index, wire_record in enumerate(block.records, start=1):
+        decoded = decode_record(wire_record.type_byte, wire_record.payload)
+        result = export_record_artifacts(decoded)
+        if result is None:
+            continue
+        entry: dict[str, object] = {
+            "record_index": index,
+            "type": wire_record.type_byte,
+            "type_hex": f"0x{wire_record.type_byte:02X}",
+            "type_name": fmt_type(wire_record.type_byte),
+            "status": result.status,
+            "artifacts": [],
+        }
+        if result.status == "ready":
+            artifacts: list[dict[str, object]] = []
+            type_part = sanitize_name(fmt_type(wire_record.type_byte))
+            artifact_dir = (
+                threat_dir
+                / "artifacts"
+                / (f"{index:06d}_{wire_record.type_byte:02X}_{type_part}")
+            )
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            for artifact in result.artifacts:
+                # Artifact names are validated by the model; exclusive creation
+                # also prevents accidental overwrite within a record directory.
+                destination = artifact_dir / artifact.name
+                with destination.open("xb") as output:
+                    output.write(artifact.data)
+                artifacts.append(
+                    {
+                        "kind": artifact.kind,
+                        "path": destination.relative_to(threat_dir).as_posix(),
+                        "size": len(artifact.data),
+                    }
+                )
+            entry["status"] = "exported"
+            entry["artifacts"] = artifacts
+        elif result.status == "unsupported":
+            entry["reason"] = result.reason
+        else:
+            entry["error"] = result.error
+        if result.warnings:
+            entry["warnings"] = [
+                {
+                    "code": warning.code,
+                    "message": warning.message,
+                    "details": dict(warning.details),
+                }
+                for warning in result.warnings
+            ]
+        exports.append(entry)
     manifest_path = threat_dir / "manifest.json"
     temp_path = threat_dir / ".manifest.json.tmp"
     payload = (
-        json.dumps(_manifest(block, reason, source_name), ensure_ascii=False, indent=2)
+        json.dumps(
+            _manifest(block, reason, source_name, exports),
+            ensure_ascii=False,
+            indent=2,
+        )
         + "\n"
     )
     temp_path.write_text(payload, encoding="utf-8", newline="\n")
