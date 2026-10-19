@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
+import os
 import re
 import sys
 from collections import Counter
@@ -29,8 +31,10 @@ from lib.vdm.stream import (
     ThreatBlock,
     ThreatBlockEvent,
     UnmatchedEndEvent,
+    WireRecord,
     iter_threat_events,
 )
+from lib.vdm.types.threat import threat_category_name
 
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -43,11 +47,126 @@ def fmt_type(type_byte: int) -> str:
 
 
 _UNSAFE_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+_MAX_NAME_PART = 120
 
 
 def sanitize_name(name: str) -> str:
     sanitized = re.sub(r"_+", "_", _UNSAFE_CHARS.sub("_", name)).strip("_")
-    return sanitized or "unnamed"
+    sanitized = sanitized.rstrip(". ") or "unnamed"
+    return sanitized[:_MAX_NAME_PART].rstrip(". ") or "unnamed"
+
+
+def _category_dir(category: int) -> str:
+    name = threat_category_name(category) or "Unknown"
+    return f"0x{category:04X}_{sanitize_name(name)}"
+
+
+def _threat_dir(out_dir: Path, block: ThreatBlock) -> Path:
+    category_dir = out_dir / _category_dir(block.begin.category)
+    category_dir.mkdir(parents=True, exist_ok=True)
+    base = f"{block.begin.threat_id:08X}_{sanitize_name(block.begin.name)}"
+    candidate = category_dir / base
+    suffix = 2
+    while candidate.exists():
+        candidate = category_dir / f"{base}__{suffix}"
+        suffix += 1
+    candidate.mkdir()
+    return candidate
+
+
+def _record_manifest(record: WireRecord, index: int) -> dict[str, object]:
+    return {
+        "index": index,
+        "type": record.type_byte,
+        "type_hex": f"0x{record.type_byte:02X}",
+        "type_name": fmt_type(record.type_byte),
+        "offset": record.offset,
+        "header_size": record.header_size,
+        "payload_size": record.size,
+        "wire_size": len(record.raw),
+    }
+
+
+def _manifest(
+    block: ThreatBlock, reason: str | None, source_name: str
+) -> dict[str, object]:
+    begin = block.begin
+    category_name = threat_category_name(begin.category)
+    wire_metadata = begin.metadata
+    effective = begin.effective_metadata
+    end_record = block.end_record
+    termination_reason = reason or "normal"
+    return {
+        "schema_version": 1,
+        "source": source_name,
+        "threat": {
+            "threat_id": begin.threat_id,
+            "threat_id_hex": f"0x{begin.threat_id:08X}",
+            "name": begin.name,
+            "category": {
+                "value": begin.category,
+                "hex": f"0x{begin.category:04X}",
+                "name": category_name or "Unknown",
+            },
+            "dependencies": [
+                {"threat_id": item, "hex": f"0x{item:08X}"}
+                for item in begin.dependencies
+            ],
+            "ext_entries": list(begin.ext_entries),
+            "post_name_zero": begin.post_name_zero,
+        },
+        "metadata": {
+            "wire_present": wire_metadata is not None,
+            "wire": (
+                {
+                    "meta_a": wire_metadata.meta_a,
+                    "meta_b": wire_metadata.meta_b,
+                    "sub_category": wire_metadata.sub_category,
+                    "format_version": wire_metadata.format_version,
+                }
+                if wire_metadata is not None
+                else None
+            ),
+            "effective": {
+                "meta_a": effective.meta_a,
+                "meta_b": effective.meta_b,
+                "sub_category": effective.sub_category,
+                "format_version": effective.format_version,
+            },
+        },
+        "framing": {
+            "begin": {
+                "offset": block.begin_record.offset,
+                "header_size": block.begin_record.header_size,
+                "payload_size": block.begin_record.size,
+                "wire_size": len(block.begin_record.raw),
+            },
+            "end_present": end_record is not None,
+            "end": (
+                {
+                    "threat_id": block.end.threat_id,
+                    "threat_id_hex": f"0x{block.end.threat_id:08X}",
+                    "offset": end_record.offset,
+                    "header_size": end_record.header_size,
+                    "payload_size": end_record.size,
+                    "wire_size": len(end_record.raw),
+                }
+                if block.end is not None and end_record is not None
+                else None
+            ),
+            "id_matches": block.id_matches,
+            "complete": (
+                termination_reason == "normal"
+                and end_record is not None
+                and block.id_matches is True
+            ),
+            "termination_reason": termination_reason,
+        },
+        "records": [
+            _record_manifest(record, index)
+            for index, record in enumerate(block.records, start=1)
+        ],
+    }
 
 
 def _human_size(n: float) -> str:
@@ -62,12 +181,19 @@ def _block_type_counts(block: ThreatBlock) -> Counter[int]:
     return Counter(record.type_byte for record in block.records)
 
 
-def _write_block(out_dir: Path, block: ThreatBlock, names: Counter[str]) -> None:
-    safe = sanitize_name(block.begin.name)
-    names[safe] += 1
-    index = names[safe]
-    filename = f"{safe}.sig" if index == 1 else f"{safe}__{index}.sig"
-    (out_dir / filename).write_bytes(block.to_bytes())
+def _write_block(
+    out_dir: Path, block: ThreatBlock, reason: str | None, source_name: str
+) -> None:
+    threat_dir = _threat_dir(out_dir, block)
+    (threat_dir / "raw.sig").write_bytes(block.to_bytes())
+    manifest_path = threat_dir / "manifest.json"
+    temp_path = threat_dir / ".manifest.json.tmp"
+    payload = (
+        json.dumps(_manifest(block, reason, source_name), ensure_ascii=False, indent=2)
+        + "\n"
+    )
+    temp_path.write_text(payload, encoding="utf-8", newline="\n")
+    os.replace(temp_path, manifest_path)
 
 
 def _report_event(
@@ -101,7 +227,8 @@ def main() -> None:
         description=(
             "Extract signatures from a Microsoft Defender .sig file.\n"
             "Without --output, analyse and print a summary to stdout.\n"
-            "With --output, write one .sig file per threat and optionally per orphan."
+            "With --output, write one directory per threat containing raw.sig and "
+            "manifest.json; optionally write orphan .sig files."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -121,13 +248,12 @@ def main() -> None:
         threat_count = orphan_count = total_records = written_orphans = 0
         orphan_counts: Counter[int] = Counter()
         shown: list[tuple[str, int, Counter[int]]] = []
-        name_seen: Counter[str] = Counter()
         orphan_seq: Counter[int] = Counter()
 
         for event in iter_threat_events(path):
             _report_event(event)
             match event:
-                case ThreatBlockEvent(block=block):
+                case ThreatBlockEvent(block=block, reason=reason):
                     threat_count += 1
                     total_records += (
                         len(block.records) + 1 + (block.end_record is not None)
@@ -136,7 +262,7 @@ def main() -> None:
                     if len(shown) < max(0, args.max_threats):
                         shown.append((block.begin.name, len(block.records), counts))
                     if out_dir is not None:
-                        _write_block(out_dir, block, name_seen)
+                        _write_block(out_dir, block, reason, path.name)
                 case OrphanRecordEvent(record=record):
                     orphan_count += 1
                     total_records += 1
@@ -188,7 +314,7 @@ def main() -> None:
     print()
     if out_dir is not None:
         ok(
-            "wrote %d threat file(s) + %d orphan file(s) -> %s",
+            "wrote %d threat directories + %d orphan file(s) -> %s",
             threat_count,
             written_orphans,
             out_dir,
