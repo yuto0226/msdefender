@@ -7,7 +7,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    Artifact,
+    ArtifactExport,
+    ArtifactWarning,
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+)
+from ..lua51 import export_lua51
 from ..luaq import LuaQChunk, LuaQPrototype, parse_luaq
 from ..pattern_codec import PATTERN_DECODING_TABLE_KEEP_NULL
 
@@ -405,6 +413,44 @@ def _lua_tree_counts(root: LuaQPrototype) -> tuple[int, int, int]:
     return prototype_count, instruction_count, constant_count
 
 
+def export_lua_standalone(parsed: LuaStandalonePayload) -> ArtifactExport:
+    if parsed.receiver_ignored:
+        return ArtifactExport("unsupported", reason="engine ignores this category body")
+    if parsed.script_form == "encoded":
+        return ArtifactExport(
+            "unsupported", reason="encoded LuaQ decoding is not implemented"
+        )
+    if parsed.lua_chunk is None:
+        if parsed.category_policy is not None and parsed.category_policy & 0x10:
+            return ArtifactExport(
+                "unsupported", reason="category policy defers Lua processing"
+            )
+        return ArtifactExport("unsupported", reason="record has no parsed LuaQ chunk")
+    result = export_lua51(parsed.lua_chunk)
+    warnings = tuple(
+        ArtifactWarning(
+            code=warning.code,
+            message=warning.message,
+            details=tuple(
+                (key, value)
+                for key, value in (
+                    ("prototype_path", warning.prototype_path),
+                    ("field", warning.field),
+                    ("original", warning.original),
+                    ("replacement", warning.replacement),
+                )
+                if value is not None
+            ),
+        )
+        for warning in result.warnings
+    )
+    return ArtifactExport(
+        "ready",
+        artifacts=(Artifact("script.luac", "lua51_chunk", result.data),),
+        warnings=warnings,
+    )
+
+
 def render_lua_standalone(parsed: LuaStandalonePayload) -> FormatResult:
     category = (
         f"{parsed.category_name} (0x{parsed.category:02X})"
@@ -518,4 +564,5 @@ SPEC = FamilySpec(
     "LUASTANDALONE",
     parse_lua_standalone,
     render_lua_standalone,
+    exporter=export_lua_standalone,
 )

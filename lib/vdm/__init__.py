@@ -1,5 +1,9 @@
+from .artifact import ArtifactResult, export_record_artifacts
 from .catalog import type_name
 from .core import (
+    Artifact,
+    ArtifactExport,
+    ArtifactWarning,
     DisplaySection,
     FamilySpec,
     Field,
@@ -142,6 +146,10 @@ __all__ = [
     "VREG_SPEC",
     "VREG_TYPE",
     "AggregatorPayload",
+    "Artifact",
+    "ArtifactExport",
+    "ArtifactResult",
+    "ArtifactWarning",
     "BMInfo",
     "BlockReason",
     "CommonCodePayload",
@@ -191,6 +199,7 @@ __all__ = [
     "build_registry",
     "decode_record",
     "export_lua51",
+    "export_record_artifacts",
     "get_spec",
     "iter_threat_events",
     "iter_wire_records",
