@@ -28,29 +28,15 @@ _KEY_WIDTHS = MappingProxyType(
     }
 )
 
-_SELECTOR_NAMES = MappingProxyType(
-    {
-        0x3A: "NID_LOWFI_SIG",
-        0x50: "NID_FPCHECK_EXCLUDED_SIGNATURE",
-        0x57: "NID_FILTER_TRUSTED_LOWFI",
-        0x5C: "NID_NONCACHED_LOWFI",
-        0x5E: "NID_EXTENDED_REPORT",
-        0x67: "NID_INCLUDE_DNS_CACHE_INFO",
-        0x6A: "NID_LOWFI_CACHE_PER_TRIGGER",
-        0x6E: "NID_FILEQUERY_ONLY",
-        0x7B: "NID_SMS_THREAT",
-    }
-)
-
 
 @dataclass(frozen=True, slots=True)
 class NidPayload:
     raw: bytes
     type_byte: int
     key_raw: bytes
-    selector: int
+    metadata_raw: int
     recid_input_raw: bytes
-    identity_kind: Literal["none", "object", "unnamed", "direct"]
+    identity_kind: Literal["none", "object", "unnamed", "raw"]
     object_raw: bytes | None
     ignored_trailing_raw: bytes
 
@@ -58,8 +44,6 @@ class NidPayload:
     def identity_text(self) -> str | None:
         """Return a display-only text view without asserting a wire encoding."""
         data = self.object_raw
-        if data is None and self.identity_kind == "direct":
-            data = self.recid_input_raw
         if data is None:
             return None
         if data.endswith(b"\0"):
@@ -74,7 +58,7 @@ class NidPayload:
 
 
 def parse_nid(payload: bytes, *, type_byte: int) -> NidPayload:
-    """Parse the family key, exact-match selector, and optional label."""
+    """Parse the fixed key prefix and preserve the following metadata byte."""
     try:
         key_width = _KEY_WIDTHS[type_byte]
     except KeyError as exc:
@@ -91,9 +75,9 @@ def parse_nid(payload: bytes, *, type_byte: int) -> NidPayload:
     object_raw: bytes | None = None
     ignored_trailing_raw = b""
     if not recid_input_raw:
-        identity_kind: Literal["none", "object", "unnamed", "direct"] = "none"
+        identity_kind: Literal["none", "object", "unnamed", "raw"] = "none"
     elif type_byte == NID64_TYPE:
-        identity_kind = "direct"
+        identity_kind = "raw"
     elif recid_input_raw[0] == 0:
         identity_kind = "unnamed"
         ignored_trailing_raw = recid_input_raw[1:]
@@ -110,7 +94,7 @@ def parse_nid(payload: bytes, *, type_byte: int) -> NidPayload:
         raw=payload,
         type_byte=type_byte,
         key_raw=payload[:key_width],
-        selector=payload[key_width],
+        metadata_raw=payload[key_width],
         recid_input_raw=recid_input_raw,
         identity_kind=identity_kind,
         object_raw=object_raw,
@@ -125,20 +109,15 @@ def render_nid(parsed: NidPayload) -> FormatResult:
     else:
         key = parsed.key_raw.hex()
 
-    selector_name = _SELECTOR_NAMES.get(parsed.selector, "name unresolved")
-
     fields = [
         ("key", key),
         ("key_raw", parsed.key_raw.hex(" ")),
-        ("selector", f"0x{parsed.selector:02x} ({selector_name})"),
+        ("metadata_raw", f"0x{parsed.metadata_raw:02x}"),
     ]
-    if parsed.type_byte == SNID_TYPE:
-        fields.extend(
-            (
-                ("key_match", "exact 20-byte key; first DWORD indexed"),
-                ("selector_match", "exact byte"),
-            )
-        )
+    if parsed.type_byte == NID_TYPE:
+        fields.append(("key_match", "exact 4-byte key; exact metadata byte"))
+    elif parsed.type_byte == SNID_TYPE:
+        fields.append(("key_match", "exact 20-byte key; exact metadata byte"))
     fields.append(("record_identity", parsed.identity_kind))
     identity_text = parsed.identity_text
     if identity_text is not None:
@@ -148,15 +127,11 @@ def render_nid(parsed: NidPayload) -> FormatResult:
                 ("recid_input_raw", parsed.recid_input_raw.hex(" ")),
             )
         )
-        if parsed.type_byte == SNID_TYPE:
+        if parsed.type_byte in (NID_TYPE, SNID_TYPE):
             fields.append(
                 (
                     "identity_role",
-                    (
-                        "record name; !# prefix routes to attribute aggregation"
-                        if identity_text.startswith("!#")
-                        else "record name"
-                    ),
+                    "interned RecID name; runtime checks IsAttribute()",
                 )
             )
     elif parsed.recid_input_raw:
