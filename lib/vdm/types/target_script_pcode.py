@@ -1,7 +1,8 @@
 """Lossless structural parser for TARGET_SCRIPT_PCODE (0x90) payloads.
 
-This module describes the wire structure only. Pattern tokens are retained as
-integers and are not presented as decompiled bytecode.
+Pattern tokens are retained as integers and are not presented as decompiled
+bytecode.  The signature-table control fields use names confirmed from the
+native ``TargSig`` consumer; unresolved Match-vector fields remain raw.
 """
 
 import json
@@ -62,9 +63,11 @@ class TargetScriptMatch:
 
 @dataclass(frozen=True, slots=True)
 class TargetScriptSignatureEntry:
-    id_value: int
-    id_raw: bytes
-    opaque_raw: bytes
+    nid_value: int
+    nid_value_raw: bytes
+    outcome_control: int
+    context_filter: int
+    target_type: int
     match_count: int
     matches: tuple[TargetScriptMatch, ...]
     offset: int
@@ -167,9 +170,11 @@ def parse_target_script_pcode(payload: bytes) -> TargetScriptPcodePayload:
             entries: list[TargetScriptSignatureEntry] = []
             for entry_index in range(entry_count):
                 entry_start = cursor.offset
-                id_value, id_raw = cursor.u32(f"signature entry {entry_index} id")
-                opaque_raw = cursor.read(
-                    3, f"signature entry {entry_index} opaque fields"
+                nid_value, nid_value_raw = cursor.u32(
+                    f"signature entry {entry_index} NID value"
+                )
+                controls_raw = cursor.read(
+                    3, f"signature entry {entry_index} control fields"
                 )
                 match_count, _ = cursor.u32(
                     f"signature entry {entry_index} match count"
@@ -210,9 +215,11 @@ def parse_target_script_pcode(payload: bytes) -> TargetScriptPcodePayload:
 
                 entries.append(
                     TargetScriptSignatureEntry(
-                        id_value=id_value,
-                        id_raw=id_raw,
-                        opaque_raw=opaque_raw,
+                        nid_value=nid_value,
+                        nid_value_raw=nid_value_raw,
+                        outcome_control=controls_raw[0],
+                        context_filter=controls_raw[1],
+                        target_type=controls_raw[2],
                         match_count=match_count,
                         matches=tuple(matches),
                         offset=entry_start,
@@ -298,7 +305,10 @@ def render_target_script_pcode(
             "signature_match_count",
             str(sum(entry.match_count for entry in parsed.signature_table.entries)),
         ),
-        ("interpretation", "wire structure only; not decompiled bytecode"),
+        (
+            "interpretation",
+            "compiled-token candidates and targeted NID checks; not bytecode",
+        ),
     ]
 
     for section_index, section in enumerate(
@@ -342,8 +352,10 @@ def render_target_script_pcode(
             (
                 f"signature_entry_{entry_index}",
                 (
-                    f"id=0x{entry.id_value:08X}, "
-                    f"opaque={entry.opaque_raw.hex()}, "
+                    f"nid_value=0x{entry.nid_value:08X}, "
+                    f"outcome={entry.outcome_control}, "
+                    f"context_filter=0x{entry.context_filter:02X}, "
+                    f"target_type=0x{entry.target_type:02X}, "
                     f"match_count={entry.match_count}, "
                     f"offset=0x{entry.offset:X}..0x{entry.end_offset:X}"
                 ),
@@ -367,7 +379,9 @@ def _manifest(parsed: TargetScriptPcodePayload) -> dict[str, object]:
     return {
         "format": "TARGET_SCRIPT_PCODE",
         "type_byte": TARGET_SCRIPT_PCODE_TYPE,
-        "interpretation": "wire structure only; not decompiled bytecode",
+        "interpretation": (
+            "compiled-token candidates and targeted NID checks; not bytecode"
+        ),
         "payload_length": len(parsed.raw),
         "payload_raw_hex": parsed.raw.hex(),
         "pattern_sections": [
@@ -402,9 +416,11 @@ def _manifest(parsed: TargetScriptPcodePayload) -> dict[str, object]:
             "raw_hex": parsed.signature_table.raw.hex(),
             "entries": [
                 {
-                    "id_value": entry.id_value,
-                    "id_raw_hex": entry.id_raw.hex(),
-                    "opaque_raw_hex": entry.opaque_raw.hex(),
+                    "nid_value": entry.nid_value,
+                    "nid_value_raw_hex": entry.nid_value_raw.hex(),
+                    "outcome_control": entry.outcome_control,
+                    "context_filter": entry.context_filter,
+                    "target_type": entry.target_type,
                     "match_count": entry.match_count,
                     "offset": entry.offset,
                     "end_offset": entry.end_offset,
