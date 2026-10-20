@@ -124,15 +124,17 @@ def render_cleanscript(parsed: CleanScriptPayload) -> FormatResult:
 
 
 def export_cleanscript_semantics(parsed: CleanScriptPayload) -> RuleSemantics:
-    """Export receiver and consumer facts while keeping unconfirmed fields raw."""
+    """Export confirmed receiver/runtime-selection facts, keeping other fields raw."""
     accepted = parsed.receiver_result == "added_candidate"
     status = "confirmed_subset" if accepted else "ignored"
     issues = (
         (
             SemanticIssue(
                 "cleanscript_field_semantics_unknown",
-                "The cleanup interpreter consumes the row and tail, but most "
-                "wire fields still lack confirmed business meanings.",
+                "The runtime consumer confirms the discriminator, routine arity, "
+                "mode mask, and conditional identifier comparisons. Other wire "
+                "fields remain offset-based because their runtime roles are not "
+                "confirmed.",
             ),
         )
         if accepted
@@ -147,7 +149,7 @@ def export_cleanscript_semantics(parsed: CleanScriptPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status=status,
-        representation="cleanscript.receiver_candidate_and_consumer.v1",
+        representation="cleanscript.receiver_candidate_and_consumer.v2",
         data=JSONObject(
             (
                 ("type", "CLEANSCRIPT"),
@@ -206,16 +208,137 @@ def export_cleanscript_semantics(parsed: CleanScriptPayload) -> RuleSemantics:
                     ),
                 ),
                 (
+                    "runtime_selection",
+                    JSONObject(
+                        (
+                            (
+                                "discriminator_role",
+                                "caller_mode_mask_bit_index_and_callback_slot",
+                            ),
+                            (
+                                "callback_by_discriminator",
+                                JSONObject(
+                                    (
+                                        (
+                                            "0",
+                                            JSONObject(
+                                                (
+                                                    ("callback", "pInterpretRoutine"),
+                                                    ("variant_count", 0),
+                                                )
+                                            ),
+                                        ),
+                                        ("1", None),
+                                        ("2", None),
+                                        (
+                                            "3",
+                                            JSONObject(
+                                                (
+                                                    (
+                                                        "callback",
+                                                        "pInterpretOnEachDetection",
+                                                    ),
+                                                    ("variant_count", 1),
+                                                    ("variant_type", 512),
+                                                )
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "routine_variant_count",
+                                JSONObject(
+                                    (
+                                        ("wire_offset", 16),
+                                        ("comparison", "equals_callback_variant_count"),
+                                    )
+                                ),
+                            ),
+                            (
+                                "mode_mask",
+                                JSONObject(
+                                    (
+                                        ("wire_offset", 19),
+                                        ("handle_offset", 49),
+                                        ("predicate", "bitwise_and_nonzero"),
+                                    )
+                                ),
+                            ),
+                            (
+                                "conditional_comparison",
+                                JSONObject(
+                                    (
+                                        (
+                                            "primary",
+                                            JSONObject(
+                                                (
+                                                    ("when_handle_offset", 24),
+                                                    ("when", "nonzero"),
+                                                    ("left_wire_offset", 4),
+                                                    (
+                                                        "left_normalization",
+                                                        "sentinel_to_0xFFFFFFFF",
+                                                    ),
+                                                    ("operator", "equals"),
+                                                    ("right_handle_offset", 24),
+                                                )
+                                            ),
+                                        ),
+                                        (
+                                            "fallback",
+                                            JSONObject(
+                                                (
+                                                    ("when_handle_offset", 28),
+                                                    (
+                                                        "when",
+                                                        "primary_is_zero_and_fallback_nonzero",
+                                                    ),
+                                                    ("left", "receiver_arg4"),
+                                                    ("operator", "equals"),
+                                                    ("right_handle_offset", 28),
+                                                )
+                                            ),
+                                        ),
+                                        (
+                                            "both_zero",
+                                            "skip_identifier_comparison",
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "callback_absent_behavior",
+                                "no callback invocation; candidate scan continues",
+                            ),
+                            (
+                                "row_sort_keys",
+                                (
+                                    "callback-table priority, row DWORD +0x08, "
+                                    "then row DWORD +0x10"
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                (
                     "field_semantics",
-                    "observed_only; names are wire offsets, not business meanings",
+                    (
+                        "confirmed runtime roles are listed above; all remaining "
+                        "fields retain offset/raw names"
+                    ),
                 ),
             )
         ),
         evidence=(
-            "mpengine 1.443.903.0 sysclean_init_module registers type 0x49",
-            "mpengine 1.443.903.0 sysclean_push candidate validation and row storage",
-            "mpengine 1.443.903.0 sysclean runtime dispatch",
-            "mpengine 1.443.903.0 pInterpretRoutine and pInterpretBody",
+            "mpengine 1.443.903.0 sysclean_init_module @ 0x1805FB970",
+            "mpengine 1.443.903.0 sysclean_push @ 0x180562F00",
+            "mpengine 1.443.903.0 sysclean @ 0x180555DBC",
+            (
+                "mpengine 1.443.903.0 pInterpretRoutine @ 0x180AAE790 and "
+                "pInterpretOnEachDetection @ 0x180AAE710"
+            ),
+            "mpengine 1.443.903.0 runtime callback table at 0x180E47A60",
         ),
         profile="mpengine-1.443.903.0",
         issues=issues,
