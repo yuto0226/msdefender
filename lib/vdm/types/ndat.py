@@ -99,7 +99,11 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
 
 def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     """Export confirmed NDAT framing and callback dispatch without guessing use."""
-    callback_target = "LogSkipNdatCallback" if parsed.callback_index == 5 else None
+    callback_targets = {
+        5: "LogSkipNdatCallback",
+        22: "CAsrNotAllowedNdatCallback",
+    }
+    callback_target = callback_targets.get(parsed.callback_index)
     issues = [
         SemanticIssue(
             "ndat_callback_business_semantics_unknown",
@@ -174,6 +178,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             "mpengine 1.443.903.0 ReceiveNewTemplate NDAT descriptors",
             "mpengine 1.443.903.0 NdatPostCallback dispatches by callback index",
             "mpengine 1.443.903.0 LogSkip::Initialize registers index 5",
+            "mpengine 1.443.903.0 logskip_init_module registers index 22",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
