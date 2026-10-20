@@ -1,6 +1,13 @@
 from dataclasses import dataclass
 
-from ..core import FamilySpec, FormatResult
+from ..core import (
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 ITEM_PREVIEW_LIMIT = 16
 TRAILING_PREVIEW_LIMIT = 32
@@ -18,6 +25,7 @@ class VdllMetaPayload:
     items: tuple[int, ...]
     optional_value: int | None
     trailing: bytes
+    raw: bytes
 
     @property
     def item_count(self) -> int:
@@ -61,6 +69,7 @@ def parse_vdll_meta(payload: bytes) -> VdllMetaPayload:
         items=items,
         optional_value=optional_value,
         trailing=payload[cursor:],
+        raw=payload,
     )
 
 
@@ -93,9 +102,137 @@ def render_vdll_meta(parsed: VdllMetaPayload) -> FormatResult:
     )
 
 
+def export_vdll_meta(
+    parsed: VdllMetaPayload,
+    *,
+    type_byte: int,
+    variant: str,
+) -> RuleSemantics:
+    """Export observed VDLL metadata fields without inventing rule semantics."""
+    data = JSONObject(
+        (
+            ("record_type", f"0x{type_byte:02X}"),
+            ("variant", variant),
+            (
+                "wire_metadata",
+                JSONObject(
+                    (
+                        ("field0", parsed.field0),
+                        ("hash_key", parsed.hash_key),
+                        ("control", parsed.control),
+                        ("count_flags", parsed.count_flags),
+                        ("item_count", parsed.item_count),
+                        ("field10", parsed.field10),
+                        ("items", JSONArray(tuple(parsed.items))),
+                        ("optional_value", parsed.optional_value),
+                        ("trailing_hex", parsed.trailing.hex()),
+                    )
+                ),
+            ),
+            (
+                "receiver_storage",
+                JSONObject(
+                    (
+                        ("table_scope", "type-specific VDLL metadata table"),
+                        ("bucket_key", "hash_key modulo bucket_count"),
+                        ("internal_entry", "receiver-converted; not a wire struct"),
+                    )
+                ),
+            ),
+            (
+                "vdll_code_linkage",
+                "No VDLL_CODE record linkage is established by this payload.",
+            ),
+            (
+                "runtime_loader",
+                (
+                    "Metadata registration/storage does not establish code loading "
+                    "or execution."
+                ),
+            ),
+            ("raw_hex", parsed.raw.hex()),
+            ("detection_expression", None),
+        )
+    )
+    if parsed.trailing:
+        return RuleSemantics(
+            status="unsupported",
+            representation="vdll_metadata_record.v1",
+            data=data,
+            evidence=(
+                (
+                    "vdll_metadata_receiver reads the fixed header, count-derived "
+                    "u16 items, and optional dword."
+                ),
+                (
+                    "Remaining bytes are ignored by the receiver and have unknown "
+                    "semantics."
+                ),
+            ),
+            profile="mpengine-1.443.903.0",
+            issues=(
+                SemanticIssue(
+                    code="unknown_trailing_bytes",
+                    message=(
+                        "Semantic export is incomplete because payload tail "
+                        "bytes are unknown."
+                    ),
+                    details=(("length", len(parsed.trailing)),),
+                ),
+            ),
+        )
+    return RuleSemantics(
+        status="observed_only",
+        representation="vdll_metadata_record.v1",
+        data=data,
+        evidence=(
+            (
+                "vdll_metadata_receiver inserts parsed fields into a type-specific "
+                "metadata table using hash_key modulo bucket_count."
+            ),
+            (
+                "The receiver does not establish that this record is a detection "
+                "expression."
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+    )
+
+
+def _semantic_exporter(type_byte: int, variant: str):
+    def export(parsed: VdllMetaPayload) -> RuleSemantics:
+        return export_vdll_meta(parsed, type_byte=type_byte, variant=variant)
+
+    return export
+
+
 FAMILY_SPECS = (
-    FamilySpec(0xB5, "VDLL_META", parse_vdll_meta, render_vdll_meta),
-    FamilySpec(0xE1, "VDLL_META_X64", parse_vdll_meta, render_vdll_meta),
-    FamilySpec(0xE2, "VDLL_META_ARM", parse_vdll_meta, render_vdll_meta),
-    FamilySpec(0xE3, "VDLL_META_MSIL", parse_vdll_meta, render_vdll_meta),
+    FamilySpec(
+        0xB5,
+        "VDLL_META",
+        parse_vdll_meta,
+        render_vdll_meta,
+        semantic_exporter=_semantic_exporter(0xB5, "unspecified architecture"),
+    ),
+    FamilySpec(
+        0xE1,
+        "VDLL_META_X64",
+        parse_vdll_meta,
+        render_vdll_meta,
+        semantic_exporter=_semantic_exporter(0xE1, "x64"),
+    ),
+    FamilySpec(
+        0xE2,
+        "VDLL_META_ARM",
+        parse_vdll_meta,
+        render_vdll_meta,
+        semantic_exporter=_semantic_exporter(0xE2, "ARM"),
+    ),
+    FamilySpec(
+        0xE3,
+        "VDLL_META_MSIL",
+        parse_vdll_meta,
+        render_vdll_meta,
+        semantic_exporter=_semantic_exporter(0xE3, "MSIL / managed"),
+    ),
 )
