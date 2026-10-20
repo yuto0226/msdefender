@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 PATTMATCH_TYPE: Final = 0x51
 _CODE_PREFIX_SIZE: Final = 8
@@ -107,4 +115,148 @@ def render_pattmatch(parsed: PattMatchPayload) -> FormatResult:
     return FormatResult(sections=(DisplaySection("PATTMATCH", rows=rows),))
 
 
-SPEC = FamilySpec(PATTMATCH_TYPE, "PATTMATCH", parse_pattmatch, render_pattmatch)
+def _decode_length_stream(raw: bytes) -> tuple[tuple[int, ...], int, str | None]:
+    """Decode the confirmed Q-template nibble length codec, failing closed."""
+    cursor = 0
+    phase = 0
+    decoded: list[int] = []
+
+    def read_nibble() -> int | None:
+        nonlocal cursor, phase
+        if cursor >= len(raw):
+            return None
+        value = (raw[cursor] >> 4) & 0x0F if phase else raw[cursor] & 0x0F
+        if phase:
+            cursor += 1
+            phase = 0
+        else:
+            phase = 1
+        return value
+
+    while True:
+        opcode = read_nibble()
+        if opcode is None:
+            return tuple(decoded), cursor * 2 + phase, "length_stream_exhausted"
+        if opcode == 0:
+            return tuple(decoded), cursor * 2 + phase, None
+        if opcode <= 7:
+            decoded.append(opcode)
+            continue
+        if opcode <= 0x0B:
+            operand = read_nibble()
+            if operand is None:
+                return tuple(decoded), cursor * 2 + phase, "truncated_length_operand"
+            decoded.append(16 * (opcode & 3) + operand)
+            continue
+        if opcode <= 0x0D:
+            high = read_nibble()
+            low = read_nibble()
+            if high is None or low is None:
+                return tuple(decoded), cursor * 2 + phase, "truncated_length_operand"
+            decoded.append(256 * (opcode & 1) + 16 * high + low)
+            continue
+        return tuple(decoded), cursor * 2 + phase, "unsupported_nibble_opcode"
+
+
+def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
+    """Export confirmed PATTMATCH prefilter and candidate CRC semantics."""
+    lengths, decoded_nibble_count, decode_error = _decode_length_stream(
+        parsed.nibble_stream_raw
+    )
+    issues: list[SemanticIssue] = [
+        SemanticIssue(
+            "final_verdict_unknown",
+            "A PATTMATCH CRC match is not by itself a final threat verdict.",
+        )
+    ]
+    unsupported = False
+    if parsed.metadata_high16:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "unknown_metadata_high16",
+                "The metadata high word is preserved but has no confirmed meaning.",
+                (("raw_value", parsed.metadata_high16),),
+            )
+        )
+    if decode_error is not None:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                decode_error,
+                "The nibble stream cannot be interpreted as a confirmed "
+                "Q-template length sequence.",
+                (("nibble_stream_raw_hex", parsed.nibble_stream_raw.hex()),),
+            )
+        )
+
+    data = JSONObject(
+        (
+            ("raw_hex", parsed.raw.hex()),
+            ("expected_crc", parsed.expected_crc),
+            ("metadata_raw", parsed.metadata_raw),
+            ("requested_callback_size", parsed.requested_callback_size),
+            ("metadata_high16_raw", parsed.metadata_high16),
+            ("metadata_high16_raw_hex", parsed.raw[6:8].hex()),
+            ("name_raw_hex", parsed.name_raw.hex()),
+            (
+                "prefilter",
+                JSONObject(
+                    (
+                        ("kind", "first_8_instruction_bytes"),
+                        ("key_raw_hex", parsed.opcode_key.hex()),
+                    )
+                ),
+            ),
+            ("nibble_stream_raw_hex", parsed.nibble_stream_raw.hex()),
+            ("decoded_nibble_count", decoded_nibble_count),
+            ("instruction_lengths", JSONArray(lengths)),
+            (
+                "crc_check",
+                JSONObject(
+                    (
+                        ("algorithm", "CRC_0"),
+                        ("initial_value", 0xFFFFFFFF),
+                        ("expected_crc", parsed.expected_crc),
+                        (
+                            "scope",
+                            "candidate_bytes_segmented_by_instruction_lengths",
+                        ),
+                        ("inter_segment_skip_bytes", 4),
+                    )
+                ),
+            ),
+            ("final_verdict", "unknown"),
+        )
+    )
+    return RuleSemantics(
+        status="unsupported" if unsupported else "confirmed_subset",
+        representation="pattmatch.instruction_crc.ir.v1",
+        data=data,
+        evidence=(
+            (
+                "PattProcessor::add_pattern stores name, metadata, 8-byte key, "
+                "and Q code body"
+            ),
+            (
+                "PattProcessor::get_prematch compares first bytes of 8 decoded "
+                "instructions"
+            ),
+            (
+                "decodelen and get_nibble define the little-nibble-first "
+                "instruction length codec"
+            ),
+            "PattProcessor::full_match accumulates candidate bytes with CRC_0",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+SPEC = FamilySpec(
+    PATTMATCH_TYPE,
+    "PATTMATCH",
+    parse_pattmatch,
+    render_pattmatch,
+    semantic_exporter=export_pattmatch_semantics,
+)
