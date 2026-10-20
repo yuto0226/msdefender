@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final
+from typing import Final, Literal
 
 from ..core import DisplaySection, FamilySpec, FormatResult
 
@@ -16,6 +16,8 @@ FPATH_TYPES: Final = MappingProxyType(
         0x75: "ASEP_FOLDERNAME",
     }
 )
+FILEPATH_TYPES: Final = frozenset({0x5F, 0x71})
+FOLDERNAME_TYPES: Final = frozenset({0x60, 0x75})
 HEADER_SIZE: Final = 2
 
 
@@ -25,9 +27,11 @@ class FpathPayload:
 
     raw: bytes
     type_byte: int
-    csidl_flags: int
+    csidl_value: int
+    path_kind: Literal["filepath", "foldername"]
     path_region_raw: bytes
     path_bytes: bytes
+    runtime_path_bytes: bytes
     nul_terminated: bool
     nul_offset: int | None
     pipe_offset: int | None
@@ -40,7 +44,7 @@ class FpathPayload:
 
 
 def parse_fpath(payload: bytes, *, type_byte: int) -> FpathPayload:
-    """Parse the shared two-byte header and bounded path/tail region."""
+    """Parse the type-specific path or folder record envelope losslessly."""
     try:
         FPATH_TYPES[type_byte]
     except KeyError as exc:
@@ -52,7 +56,8 @@ def parse_fpath(payload: bytes, *, type_byte: int) -> FpathPayload:
             f"{HEADER_SIZE}-byte header, have {len(payload) - HEADER_SIZE}"
         )
 
-    csidl_flags = int.from_bytes(payload[:HEADER_SIZE], "little")
+    csidl_value = int.from_bytes(payload[:HEADER_SIZE], "little")
+    path_kind = "filepath" if type_byte in FILEPATH_TYPES else "foldername"
     path_and_tail = payload[HEADER_SIZE:]
     nul_offset = path_and_tail.find(b"\0")
     nul_terminated = nul_offset >= 0
@@ -64,15 +69,24 @@ def parse_fpath(payload: bytes, *, type_byte: int) -> FpathPayload:
         path_region_raw = path_and_tail
         tail_raw = b""
 
-    pipe_offset = path_region_raw.find(b"|")
+    pipe_offset = path_region_raw.find(b"|") if path_kind == "filepath" else -1
     path_bytes = path_region_raw if pipe_offset < 0 else path_region_raw[:pipe_offset]
+    runtime_path_bytes = path_bytes
+    if (
+        path_kind == "foldername"
+        and runtime_path_bytes
+        and not runtime_path_bytes.endswith(b"\\")
+    ):
+        runtime_path_bytes += b"\\"
 
     return FpathPayload(
         raw=payload,
         type_byte=type_byte,
-        csidl_flags=csidl_flags,
+        csidl_value=csidl_value,
+        path_kind=path_kind,
         path_region_raw=path_region_raw,
         path_bytes=path_bytes,
+        runtime_path_bytes=runtime_path_bytes,
         nul_terminated=nul_terminated,
         nul_offset=None if not nul_terminated else nul_offset,
         pipe_offset=None if pipe_offset < 0 else pipe_offset,
@@ -84,7 +98,7 @@ def render_fpath(parsed: FpathPayload) -> FormatResult:
     """Render known path fields and opaque tail lengths as logger sections."""
     name = FPATH_TYPES[parsed.type_byte]
     path_rows = (
-        ("csidl_flags", f"0x{parsed.csidl_flags:04X} (semantics unresolved)"),
+        ("csidl_value", f"0x{parsed.csidl_value:04X}"),
         ("path_len", f"{len(parsed.path_bytes)} B"),
         (
             "path",
@@ -97,6 +111,18 @@ def render_fpath(parsed: FpathPayload) -> FormatResult:
             "NUL" if parsed.nul_terminated else "absent (payload boundary)",
         ),
     )
+
+    if parsed.path_kind == "foldername":
+        path_rows += (
+            (
+                "runtime_path",
+                json.dumps(
+                    parsed.runtime_path_bytes.decode("latin-1"),
+                    ensure_ascii=True,
+                ),
+            ),
+            ("normalization", "append '\\' when absent"),
+        )
 
     if parsed.pipe_offset is not None:
         path_rows += (
