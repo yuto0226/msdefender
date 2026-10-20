@@ -5,10 +5,13 @@ from types import MappingProxyType
 from typing import Literal
 
 from ..bm import (
+    BmOpaque,
     BmPattern,
     decode_bm_pattern,
+    interpret_bm_pattern,
     render_printable_bytes_preview,
 )
+from ..bm_semantic import serialize_bm_pattern
 from ..bm_yara import BmYaraRender, render_bm_yara
 from ..condition import (
     Atom,
@@ -24,7 +27,16 @@ from ..condition import (
     rendered_length,
     select_equivalent,
 )
-from ..core import DisplaySection, FamilySpec, Field, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    Field,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -677,6 +689,210 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
     )
 
 
+def _raw_field(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            (
+                "raw_span",
+                JSONObject((("offset", offset), ("length", len(raw)))),
+            ),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
+    """Export a lossless HSTR view without claiming a final engine verdict."""
+    unsupported = False
+    issues: list[SemanticIssue] = [
+        SemanticIssue(
+            "outer_verdict_unknown",
+            "HSTR scoring, validators, and policy are not exported as a final verdict.",
+        )
+    ]
+    if parsed.receiver_ignored:
+        issues.append(
+            SemanticIssue(
+                "receiver_ignored",
+                "The receiver skips this record because a flag exceeds 0x03FF.",
+            )
+        )
+
+    cursor = 6 + len(parsed.name_raw) + 1
+    framing: list[JSONObject] = [
+        _raw_field("header_word0", parsed.raw[0:2], 0),
+        _raw_field("header_word1", parsed.raw[2:4], 2),
+        _raw_field("subsignature_count", parsed.raw[4:6], 4),
+        _raw_field("name", parsed.name_raw, 6),
+        _raw_field(
+            "name_terminator",
+            parsed.raw[6 + len(parsed.name_raw) : cursor],
+            6 + len(parsed.name_raw),
+        ),
+    ]
+    subsignatures: list[JSONObject] = []
+    for index, subsig in enumerate(parsed.subsignatures):
+        start = cursor
+        flags_length = len(subsig.flags.raw) if subsig.flags is not None else 0
+        flags_offset = start + 3
+        data_offset = flags_offset + flags_length
+        meaning = classify_hstr_subsignature(subsig)
+        pattern_data = None
+
+        if meaning.unknown_flag_bits:
+            unsupported = True
+            issues.append(
+                SemanticIssue(
+                    "unknown_subsignature_flags",
+                    "Unknown HSTR flag bits are retained without assigned semantics.",
+                    (
+                        ("subsignature_index", index),
+                        ("bits", meaning.unknown_flag_bits),
+                    ),
+                )
+            )
+        if not subsig.data:
+            unsupported = True
+            issues.append(
+                SemanticIssue(
+                    "empty_subsignature_data",
+                    "The empty matcher payload is retained without match semantics.",
+                    (("subsignature_index", index),),
+                )
+            )
+
+        # Only the explicit extended-family BM flag selects the BM decoder.
+        # PEHSTR (0x61) has no flag field and is never shape-guessed as BM.
+        if subsig.flags is not None and subsig.flags.value & 0x0002:
+            pattern = decode_bm_pattern(subsig.data)
+            pattern_data, pattern_issues = serialize_bm_pattern(pattern)
+            unsupported |= bool(pattern_issues)
+            for issue in pattern_issues:
+                issues.append(
+                    SemanticIssue(
+                        issue.code,
+                        issue.message,
+                        (("subsignature_index", index), *issue.details),
+                    )
+                )
+            if any(
+                isinstance(operation, BmOpaque)
+                for operation in interpret_bm_pattern(pattern).operations
+            ):
+                unsupported = True
+                issues.append(
+                    SemanticIssue(
+                        "unsupported_bm_operation",
+                        "At least one BM operation has no confirmed semantics.",
+                        (("subsignature_index", index),),
+                    )
+                )
+
+        flags_data = (
+            None
+            if subsig.flags is None
+            else JSONObject(
+                (
+                    ("value", subsig.flags.value),
+                    (
+                        "raw_span",
+                        JSONObject(
+                            (("offset", flags_offset), ("length", flags_length))
+                        ),
+                    ),
+                    ("raw_hex", subsig.flags.raw.hex()),
+                    ("known_names", JSONArray(meaning.flag_names)),
+                    ("unknown_bits", meaning.unknown_flag_bits),
+                )
+            )
+        )
+        subsignatures.append(
+            JSONObject(
+                (
+                    ("index", index),
+                    (
+                        "raw_span",
+                        JSONObject((("offset", start), ("length", len(subsig.raw)))),
+                    ),
+                    ("raw_hex", subsig.raw.hex()),
+                    ("tag", subsig.tag),
+                    ("tag_raw_hex", parsed.raw[start : start + 2].hex()),
+                    ("data_length", len(subsig.data)),
+                    ("flags", flags_data),
+                    (
+                        "data_raw_span",
+                        JSONObject(
+                            (("offset", data_offset), ("length", len(subsig.data)))
+                        ),
+                    ),
+                    ("data_raw_hex", subsig.data.hex()),
+                    ("kind", meaning.kind),
+                    ("matching", meaning.matching),
+                    ("data_shape", meaning.display_encoding),
+                    ("bm_pattern", pattern_data),
+                )
+            )
+        )
+        framing.append(_raw_field(f"subsignature[{index}]", subsig.raw, start))
+        cursor += len(subsig.raw)
+
+    if parsed.tail_word0 is not None:
+        framing.append(
+            _raw_field("tail_word0", parsed.raw[cursor : cursor + 2], cursor)
+        )
+        cursor += 2
+    if parsed.tail_word1 is not None:
+        framing.append(
+            _raw_field("tail_word1", parsed.raw[cursor : cursor + 2], cursor)
+        )
+        cursor += 2
+    framing.append(_raw_field("trailing", parsed.trailing_raw, cursor))
+    if parsed.trailing_raw:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "trailing_bytes_uninterpreted",
+                "Bytes after the confirmed HSTR fields are retained without semantics.",
+                (("length", len(parsed.trailing_raw)),),
+            )
+        )
+
+    data = JSONObject(
+        (
+            ("raw_hex", parsed.raw.hex()),
+            ("framing", JSONArray(tuple(framing))),
+            ("type_byte", parsed.type_byte),
+            ("family", _FAMILY_NAMES[parsed.type_byte]),
+            ("header_word0", parsed.header_word0),
+            ("header_word1", parsed.header_word1),
+            ("name_raw_hex", parsed.name_raw.hex()),
+            ("subsignature_count", len(parsed.subsignatures)),
+            ("subsignatures", JSONArray(tuple(subsignatures))),
+            ("tail_word0", parsed.tail_word0),
+            ("tail_word1", parsed.tail_word1),
+            ("trailing_raw_hex", parsed.trailing_raw.hex()),
+            ("receiver_ignored", parsed.receiver_ignored),
+        )
+    )
+    return RuleSemantics(
+        status=(
+            "ignored"
+            if parsed.receiver_ignored
+            else "unsupported"
+            if unsupported
+            else "observed_only"
+        ),
+        representation="hstr.subsignatures.ir.v1",
+        data=data,
+        evidence=(
+            "HSTR wire framing and matcher classification for mpengine 1.443.903.0",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 def _parser_for(type_byte: int) -> Callable[[bytes], HstrPayload]:
     def parser(payload: bytes) -> HstrPayload:
         return parse_hstr(payload, type_byte=type_byte)
@@ -685,6 +901,12 @@ def _parser_for(type_byte: int) -> Callable[[bytes], HstrPayload]:
 
 
 HSTR_SPECS = tuple(
-    FamilySpec(type_byte, name, _parser_for(type_byte), render_hstr)
+    FamilySpec(
+        type_byte,
+        name,
+        _parser_for(type_byte),
+        render_hstr,
+        semantic_exporter=export_hstr_semantics,
+    )
     for type_byte, name in _FAMILY_NAMES.items()
 )
