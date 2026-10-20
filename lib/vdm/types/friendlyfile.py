@@ -1,7 +1,14 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import FamilySpec, FormatResult
+from ..core import (
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 from ..recid import RecIdTail, parse_recid_tail
 
 FRIENDLYFILE_SHA256_TYPE: Final = 0xA0
@@ -54,9 +61,166 @@ def render_friendlyfile_sha256(parsed: FriendlyFileSha256) -> FormatResult:
     return FormatResult(fields=tuple(fields))
 
 
+def _raw_span(offset: int, length: int) -> JSONObject:
+    return JSONObject((("offset", offset), ("length", length)))
+
+
+def _recid_tail_semantics(tail: RecIdTail | None) -> JSONObject | None:
+    if tail is None:
+        return None
+
+    object_offset = SHA256_SIZE + 1
+    return JSONObject(
+        (
+            ("raw_span", _raw_span(SHA256_SIZE, len(tail.raw))),
+            ("raw_hex", tail.raw.hex()),
+            (
+                "declared_length",
+                JSONObject(
+                    (
+                        ("value", tail.length_limit),
+                        ("raw_span", _raw_span(SHA256_SIZE, 1)),
+                        ("raw_hex", tail.raw[:1].hex()),
+                    )
+                ),
+            ),
+            (
+                "object",
+                JSONObject(
+                    (
+                        ("raw_span", _raw_span(object_offset, len(tail.object_raw))),
+                        ("raw_hex", tail.object_raw.hex()),
+                        ("registered", tail.has_object),
+                        ("producer_meaning", None),
+                    )
+                ),
+            ),
+            (
+                "trailing",
+                JSONObject(
+                    (
+                        (
+                            "raw_span",
+                            _raw_span(
+                                object_offset + len(tail.object_raw),
+                                len(tail.trailing_raw),
+                            ),
+                        ),
+                        ("raw_hex", tail.trailing_raw.hex()),
+                        ("meaning", None),
+                    )
+                ),
+            ),
+            ("lookup_usage", "not_read"),
+        )
+    )
+
+
+def export_friendlyfile_sha256_semantics(
+    parsed: FriendlyFileSha256,
+) -> RuleSemantics:
+    """Export the confirmed friendly-file lookup key without claiming a verdict."""
+    tail = parsed.recid_tail
+    issues: list[SemanticIssue] = []
+    unsupported = False
+
+    issues.append(
+        SemanticIssue(
+            "outer_verdict_not_modeled",
+            "The exact digest lookup does not by itself define the final scan verdict.",
+        )
+    )
+
+    if tail is not None and tail.length_limit > len(tail.raw) - 1:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "recid_object_truncated",
+                "The RecID object is shorter than its declared length.",
+                (
+                    ("declared_length", tail.length_limit),
+                    ("available_length", len(tail.raw) - 1),
+                ),
+            )
+        )
+    if tail is not None and tail.has_object:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "recid_object_meaning_unknown",
+                "The optional RecID object bytes have no confirmed producer-side meaning.",
+                (("length", len(tail.object_raw)),),
+            )
+        )
+    if tail is not None and tail.trailing_raw:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "recid_trailing_bytes_uninterpreted",
+                "Bytes after the bounded RecID object are retained without semantics.",
+                (("length", len(tail.trailing_raw)),),
+            )
+        )
+
+    tail_length = 0 if tail is None else len(tail.raw)
+    data = JSONObject(
+        (
+            ("type", "friendly_file_sha256_lookup_entry"),
+            ("raw_hex", parsed.raw.hex()),
+            (
+                "framing",
+                JSONArray(
+                    (
+                        JSONObject(
+                            (
+                                ("kind", "sha256"),
+                                ("raw_span", _raw_span(0, SHA256_SIZE)),
+                                ("raw_hex", parsed.sha256.hex()),
+                            )
+                        ),
+                        JSONObject(
+                            (
+                                ("kind", "recid_tail"),
+                                ("raw_span", _raw_span(SHA256_SIZE, tail_length)),
+                                (
+                                    "raw_hex",
+                                    "" if tail is None else tail.raw.hex(),
+                                ),
+                            )
+                        ),
+                    )
+                ),
+            ),
+            (
+                "lookup",
+                JSONObject(
+                    (
+                        ("algorithm", "sha256"),
+                        ("digest_hex", parsed.sha256.hex()),
+                        ("comparison", "exact_32_bytes"),
+                        ("role", "friendly_file_lookup_key"),
+                    )
+                ),
+            ),
+            ("recid_tail", _recid_tail_semantics(tail)),
+        )
+    )
+    return RuleSemantics(
+        status="unsupported" if unsupported else "confirmed_subset",
+        representation="friendlyfile.sha256_lookup.ir.v1",
+        data=data,
+        evidence=(
+            "mpengine 1.443.903.0 FRIENDLYFILE_SHA256 RecordPush and Lookup data flow",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
     FRIENDLYFILE_SHA256_TYPE,
     "FRIENDLYFILE_SHA256",
     parse_friendlyfile_sha256,
     render_friendlyfile_sha256,
+    semantic_exporter=export_friendlyfile_sha256_semantics,
 )
