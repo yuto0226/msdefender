@@ -100,6 +100,8 @@ class NScriptBrutePayload:
 
     @property
     def runtime_consumer(self) -> str | None:
+        # nscript_scan always passes the containing context to the worker, but
+        # only candidate entries with runtime type 6 enter its BMMatchEx2 path.
         if self.runtime_script_type == 6:
             return "SearchBruteWorker -> BMMatchEx2"
         return None
@@ -434,6 +436,38 @@ def export_nscript_semantics(parsed: NScriptPayload) -> RuleSemantics:
     tail = _tail_issue("NSCRIPT_NORMAL", parsed.trailing)
     if tail:
         issues.append(tail)
+    crc_candidates = []
+    append_candidates = []
+    for index, (primary, secondary) in enumerate(parsed.pairs):
+        if parsed.mode and index == 0:
+            append_candidates.append(
+                JSONObject(
+                    (
+                        ("source_index", index),
+                        ("anchor_crc32", parsed.anchor_crc32),
+                        ("normalized_length", parsed.normalized_length),
+                        ("primary", primary),
+                        ("mode", parsed.mode),
+                    )
+                )
+            )
+        else:
+            crc_candidates.append(
+                JSONObject(
+                    (
+                        ("source_index", index),
+                        ("primary", primary),
+                        ("secondary", secondary),
+                    )
+                )
+            )
+    issues.append(
+        SemanticIssue(
+            "nscript_normal_interpreter_and_verdict_unknown",
+            "These are confirmed receiver vectors and token/state-search candidates; "
+            "the complete interpreter and final verdict policy remain unknown.",
+        )
+    )
     outer = _outer(
         parsed.raw,
         _raw_framing(parsed.raw, tuple(fields)),
@@ -446,6 +480,26 @@ def export_nscript_semantics(parsed: NScriptPayload) -> RuleSemantics:
         normalized_length=parsed.normalized_length,
         secondary_present=secondary_present,
         secondary=JSONArray(tuple(parsed.secondary or ())),
+        runtime_candidate_subset=JSONObject(
+            (
+                ("stdCrcArr", JSONArray(tuple(crc_candidates))),
+                ("stdAppendArr", JSONArray(tuple(append_candidates))),
+                (
+                    "match_flags_low_byte",
+                    parsed.match_flags if parsed.match_flags_raw is not None else None,
+                ),
+                (
+                    "consumer_functions",
+                    JSONArray(
+                        (
+                            "nscript::EndRoutine",
+                            "nscript::SearchStdEndMatches",
+                            "nscript::AddToken",
+                        )
+                    ),
+                ),
+            )
+        ),
         match_flags_raw=parsed.match_flags_raw,
         match_flags_low_byte=(
             parsed.match_flags if parsed.match_flags_raw is not None else None
@@ -453,14 +507,16 @@ def export_nscript_semantics(parsed: NScriptPayload) -> RuleSemantics:
         trailing_raw_hex=parsed.trailing.hex(),
         layers=_semantic_layers(
             "counted u32 fields and optional groups decoded",
-            "mode 0 entries go to stdCrcArr; nonzero mode adds first entry to stdAppendArr; low match-flags byte is stored",
-            "stdCrcArr/stdAppendArr are read by token/state search routines; full interpreter policy is unknown",
+            "mode 0 entries go to stdCrcArr; nonzero mode adds first entry "
+            "to stdAppendArr; low match-flags byte is stored",
+            "stdCrcArr/stdAppendArr are read by token/state search routines; "
+            "full interpreter policy is unknown",
             "unknown",
         ),
     )
     return RuleSemantics(
-        status="unsupported" if issues else "observed_only",
-        representation="nscript.normal.receiver.v1",
+        status="unsupported" if tail else "confirmed_subset",
+        representation="nscript.normal.receiver_runtime_candidates.v1",
         data=outer,
         evidence=(
             "pushNScriptWorker @ 0x1804A836C receiver layout and writes",
@@ -508,9 +564,16 @@ def export_nscript_sp_semantics(parsed: NScriptSPPayload) -> RuleSemantics:
     tail = _tail_issue("NSCRIPT_SP", parsed.trailing)
     if tail:
         issues.append(tail)
+    issues.append(
+        SemanticIssue(
+            "nscript_sp_pcode_and_verdict_policy_unknown",
+            "SearchExact candidate checks and PCode handoff are confirmed; "
+            "PCode result interpretation and final report policy remain unknown.",
+        )
+    )
     return RuleSemantics(
-        status="unsupported" if issues else "observed_only",
-        representation="nscript.sp.receiver.v1",
+        status="unsupported" if tail else "confirmed_subset",
+        representation="nscript.sp.receiver_runtime_candidates.v1",
         data=_outer(
             parsed.raw,
             _raw_framing(parsed.raw, fields),
@@ -523,11 +586,35 @@ def export_nscript_sp_semantics(parsed: NScriptSPPayload) -> RuleSemantics:
             full_crc32=parsed.full_crc32,
             normalized_length=parsed.normalized_length,
             trailing_raw_hex=parsed.trailing.hex(),
+            runtime_candidate_subset=JSONObject(
+                (
+                    (
+                        "route",
+                        (
+                            "mode 1/2 with unpacked name containing :IRC/ -> "
+                            "synthesized NORMAL via pushNScriptWorker; otherwise spArr"
+                        ),
+                    ),
+                    ("spArr_consumer", "SearchExact"),
+                    ("candidate_key", "CRC of mapped scan range"),
+                    (
+                        "candidate_fields",
+                        JSONArray(("normalized_length", "full_crc32", "mode")),
+                    ),
+                    (
+                        "post_crc_handoff",
+                        "sigseqfromrecid -> ValidateSignatureWithPcode",
+                    ),
+                    ("lowfi_forwarded", parsed.lowfi),
+                )
+            ),
             layers=_semantic_layers(
                 "fixed SP prefix decoded",
                 "spType appended; mode 1/2 with IRC name may be converted into NORMAL",
-                "SearchExact performs CRC/length/mode candidate checks then PCode validation",
-                "unknown; validation result policy and final report are not fully mapped",
+                "SearchExact performs CRC/length/mode candidate checks then "
+                "PCode validation",
+                "unknown; validation result policy and final report are not "
+                "fully mapped",
             ),
         ),
         evidence=(
@@ -555,9 +642,11 @@ def render_nscript_brute(parsed: NScriptBrutePayload) -> FormatResult:
                     ),
                     (
                         "runtime_gate",
-                        "UFS base plugin id 6"
-                        if parsed.runtime_consumer is not None
-                        else "unknown",
+                        (
+                            "UFS base plugin id 6"
+                            if parsed.runtime_consumer is not None
+                            else "record-specific consumer unknown"
+                        ),
                     ),
                     ("lowfi", str(parsed.lowfi)),
                     ("direction_raw", f"0x{parsed.direction_raw:02X}"),
@@ -612,6 +701,16 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
             ("position_raw", parsed.position_raw),
             ("body_length", parsed.body_len),
             ("trailing_raw_hex", parsed.trailing.hex()),
+            ("context_consumer", "nscript_scan -> SearchBruteWorker"),
+            ("runtime_consumer", parsed.runtime_consumer),
+            (
+                "runtime_gate",
+                (
+                    "runtime type 6 and UFS base plugin id 6"
+                    if parsed.runtime_consumer is not None
+                    else "record-specific consumer unknown"
+                ),
+            ),
         )
     )
     return RuleSemantics(
@@ -619,7 +718,15 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
         representation="bm.pattern.ir.v1",
         data=JSONObject(pattern_data.items + (("outer", outer),)),
         evidence=(
-            "NSCRIPT_BRUTE wire framing and decoded fields for mpengine 1.443.903.0",
+            (
+                "nscript_scan @ 0x18011BE20 passes g_VdmBruteSigs to "
+                "SearchBruteWorker @ 0x1800AA6F0"
+            ),
+            (
+                "SearchBruteWorker reads 24-byte entries and only runtime type 6 "
+                "enters its BMMatchEx2 candidate path"
+            ),
+            "0x29 NSCRIPT_BRUTE registration is distinct from 0xD0 BRUTE",
         ),
         profile=f"mpengine-{parsed.pattern.profile}",
         issues=(
@@ -712,6 +819,21 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
                 ),
             )
         )
+    issues.append(
+        SemanticIssue(
+            "nscript_cure_final_cure_and_report_policy_unknown",
+            "The wire-kind to runtime selector byte source and helper branches "
+            "are confirmed, but their complete cure and report outcome is not "
+            "established.",
+            (("wire_kind", parsed.kind),),
+        )
+    )
+    runtime_selector = parsed.data_len & 0xFF if parsed.kind == 5 else parsed.kind
+    selector_candidate = {
+        1: "ScriptCureRemoveStart",
+        2: "ScriptCureRemoveEnd",
+        4: "ScriptCureReplace",
+    }.get(runtime_selector)
     details = (
         ("kind", parsed.kind),
         ("name_crc32", parsed.name_crc32),
@@ -719,27 +841,59 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
         ("data_length", parsed.data_len),
         ("data_raw_hex", parsed.data.hex()),
         ("accepted_by_receiver", parsed.accepted_by_receiver),
+        (
+            "runtime_candidate_subset",
+            JSONObject(
+                (
+                    ("consumer", "nscript_scan"),
+                    ("lookup", "CRC_1 key against cureArr"),
+                    ("runtime_selector_byte", runtime_selector),
+                    ("selector_candidate", selector_candidate),
+                    (
+                        "selector_source",
+                        "wire kind for 1..4; data_length low byte for kind 5",
+                    ),
+                    ("final_cure_and_report_policy", "unknown"),
+                )
+            ),
+        ),
         ("bm_pattern", bm_data),
         ("trailing_raw_hex", parsed.trailing.hex()),
         (
             "layers",
             _semantic_layers(
                 "kind/name CRC and kind-dependent payload decoded",
-                "kind 3/4 append without data; other kinds store data; kind 1/2 may success-and-ignore",
-                "cureArr is searched by nscript_scan; selector may dispatch remove/replace paths",
+                "kind 3/4 append without data; other kinds store data; "
+                "kind 1/2 may success-and-ignore",
+                "cureArr candidates are searched by name CRC; selector 1/2/4 "
+                "dispatches remove-start/remove-end/replace helpers",
                 "unknown; kind 5 consumer and cure outcome policy remain unresolved",
             ),
         ),
     )
     return RuleSemantics(
-        status="ignored" if ignored else "unsupported" if issues else "observed_only",
-        representation="nscript.cure.receiver.v1",
+        status=(
+            "ignored"
+            if ignored
+            else "unsupported"
+            if tail or parsed.kind not in (1, 2, 3, 4, 5)
+            else "confirmed_subset"
+        ),
+        representation="nscript.cure.receiver_runtime_candidates.v1",
         data=_outer(
             parsed.raw, _raw_framing(parsed.raw, tuple(fields)), **dict(details)
         ),
         evidence=(
             "pushCure @ 0x180470AC0 receiver layout and cureType writes",
-            "nscript_scan @ 0x18011BE20 reads cureArr and enters cure search/apply branches",
+            (
+                "nscript_scan @ 0x18011BE20 CRC_1/equal_range lookup and selector "
+                "calls at 0x18011DD25-0x18011DD8B"
+            ),
+            (
+                "ScriptCureRemoveStart @ 0x180BF7BD4; "
+                "ScriptCureRemoveEnd @ 0x180BF79F0; "
+                "ScriptCureReplace @ 0x180BF7CE4"
+            ),
         ),
         profile=(
             f"mpengine-{parsed.pattern.profile}"
