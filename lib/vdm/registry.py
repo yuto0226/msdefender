@@ -59,6 +59,7 @@ from .types.unplib import SPEC as UNPLIB_SPEC
 from .types.vdll_code import FAMILY_SPECS as VDLL_CODE_SPECS
 from .types.vdll_meta import FAMILY_SPECS as VDLL_META_SPECS
 from .types.versioncheck import SPEC as VERSIONCHECK_SPEC
+from .types.vfile import VFILE_SPEC, VFILEEX_SPEC
 from .types.vreg import SPEC as VREG_SPEC
 
 DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
@@ -124,6 +125,8 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             NDAT_SPEC,
             *NSCRIPT_SPECS,
             *VDLL_META_SPECS,
+            VFILE_SPEC,
+            VFILEEX_SPEC,
             *VDLL_CODE_SPECS,
         )
     }

@@ -341,6 +341,16 @@ from .vdll_meta import (
 )
 from .versioncheck import SPEC as VERSIONCHECK_SPEC
 from .versioncheck import VersionCheckPayload, parse_versioncheck, render_versioncheck
+from .vfile import (
+    VFILE_SPEC,
+    VFILE_TYPE,
+    VFILEEX_SPEC,
+    VFILEEX_TYPE,
+    VFilePayload,
+    parse_vfile,
+    parse_vfileex,
+    render_vfile,
+)
 from .vreg import SPEC as VREG_SPEC
 from .vreg import VREG_TYPE, VregPayload, parse_vreg, render_vreg
 
@@ -448,6 +458,10 @@ __all__ = [
     "VDLL_CODE_TYPES",
     "VDLL_META_SPECS",
     "VERSIONCHECK_SPEC",
+    "VFILEEX_SPEC",
+    "VFILEEX_TYPE",
+    "VFILE_SPEC",
+    "VFILE_TYPE",
     "VREG_SPEC",
     "VREG_TYPE",
     "AggregatorPayload",
@@ -528,6 +542,7 @@ __all__ = [
     "TrustedPublisher",
     "UfspDisablePayload",
     "UnpLibPayload",
+    "VFilePayload",
     "VdllCodePayload",
     "VdllMetaPayload",
     "VersionCheckPayload",
@@ -596,6 +611,8 @@ __all__ = [
     "parse_vdll_code",
     "parse_vdll_meta",
     "parse_versioncheck",
+    "parse_vfile",
+    "parse_vfileex",
     "parse_vreg",
     "render_aggregator",
     "render_appmap",
@@ -660,6 +677,7 @@ __all__ = [
     "render_vdll_code",
     "render_vdll_meta",
     "render_versioncheck",
+    "render_vfile",
     "render_vreg",
     "threat_category_name",
 ]
