@@ -141,13 +141,33 @@ def export_vdll_meta(
             ),
             (
                 "vdll_code_linkage",
-                "No VDLL_CODE record linkage is established by this payload.",
+                JSONObject(
+                    (
+                        (
+                            "entry_pairing",
+                            (
+                                "No unique VDLL_CODE record pairing is established "
+                                "by this payload."
+                            ),
+                        ),
+                        (
+                            "linker_symbol_lookup",
+                            (
+                                "VDLL finalize queries hashed engine symbols through "
+                                "the current code object's address lookup, then falls "
+                                "back to PE exports; its connection to this metadata "
+                                "table is unconfirmed."
+                            ),
+                        ),
+                    )
+                ),
             ),
             (
                 "runtime_loader",
                 (
-                    "Metadata registration/storage does not establish code loading "
-                    "or execution."
+                    "The metadata receiver stores this record in a type-specific "
+                    "table; a direct path from this table to code loading or symbol "
+                    "resolution is not established."
                 ),
             ),
             ("raw_hex", parsed.raw.hex()),
@@ -157,7 +177,7 @@ def export_vdll_meta(
     if parsed.trailing:
         return RuleSemantics(
             status="unsupported",
-            representation="vdll_metadata_record.v1",
+            representation="vdll_metadata_record.v2",
             data=data,
             evidence=(
                 (
@@ -183,16 +203,28 @@ def export_vdll_meta(
         )
     return RuleSemantics(
         status="observed_only",
-        representation="vdll_metadata_record.v1",
+        representation="vdll_metadata_record.v2",
         data=data,
         evidence=(
             (
-                "vdll_metadata_receiver inserts parsed fields into a type-specific "
-                "metadata table using hash_key modulo bucket_count."
+                "mpengine 1.443.903.0 vdll_metadata_receiver @ 0x1804C7B80 "
+                "inserts parsed fields into a type-specific metadata table "
+                "using hash_key modulo bucket_count."
             ),
             (
-                "The receiver does not establish that this record is a detection "
-                "expression."
+                "mpengine 1.443.903.0 load_vdll_metadata @ 0x18048A27C "
+                "initializes the per-type metadata contexts and bucket counts."
+            ),
+            (
+                "mpengine 1.443.903.0 vdll_receiver_end @ 0x1800FF328 "
+                "queries the current code object's address lookup for hashed "
+                "engine symbols and falls back to PE exports; a direct "
+                "connection to this type-specific metadata table is not "
+                "established."
+            ),
+            (
+                "The metadata receiver's observed role is table insertion; this "
+                "record is not a confirmed detection expression or final verdict."
             ),
         ),
         profile="mpengine-1.443.903.0",
