@@ -3,11 +3,20 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 MACRO_SOURCE_TYPE: Final = 0x43
 PRIMARY_PREVIEW_LIMIT: Final = 16
 WORD_SIZE: Final = 4
+SUBTYPE_METADATA: Final = {0: (0, 1), 2: (2,), 4: (3,), 8: (4,)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,9 +125,219 @@ def render_macro_source(parsed: MacroSourcePayload) -> FormatResult:
     )
 
 
+def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
+    """Export the confirmed source-pair lookup/match contract without guessing names."""
+    header_offset = 1 + len(parsed.name_bytes)
+    primary_offset = header_offset + WORD_SIZE
+    primary_length = parsed.count * WORD_SIZE
+    secondary_offset = primary_offset + primary_length
+    secondary_length = parsed.count * WORD_SIZE if parsed.secondary is not None else 0
+    raw = bytearray((len(parsed.name_bytes),))
+    raw.extend(parsed.name_bytes)
+    raw.extend(parsed.packed_header.to_bytes(WORD_SIZE, "little"))
+    for value in parsed.primary:
+        raw.extend(value.to_bytes(WORD_SIZE, "little"))
+    if parsed.secondary is not None:
+        for value in parsed.secondary:
+            raw.extend(value.to_bytes(WORD_SIZE, "little"))
+    raw.extend(parsed.trailing)
+
+    issues = [
+        SemanticIssue(
+            "pair_dword_names_unknown",
+            "The two safecrc DWORDs are retained by position; their business names are unknown.",
+        ),
+        SemanticIssue(
+            "name_encoding_unknown",
+            "The receiver preserves name bytes, but does not establish a text encoding.",
+        ),
+        SemanticIssue(
+            "subtype_enum_names_unknown",
+            "Subtype compatibility values are confirmed, but their business enum names are unknown.",
+        ),
+        SemanticIssue(
+            "final_verdict_unknown",
+            "The source signature report path does not establish the final host-visible verdict.",
+        ),
+    ]
+    # A complete optional secondary vector and no unexplained suffix are the
+    # only framing shape for which this semantic manifest is complete.
+    if parsed.trailing:
+        issues.append(
+            SemanticIssue(
+                "unconsumed_bytes",
+                "Unconsumed bytes are retained verbatim and prevent a complete semantic export.",
+                (("length", len(parsed.trailing)),),
+            )
+        )
+    if parsed.metadata_raw not in SUBTYPE_METADATA:
+        issues.append(
+            SemanticIssue(
+                "subtype_compatibility_unknown",
+                "No confirmed subtype compatibility condition exists for this metadata value.",
+                (("metadata_raw", parsed.metadata_raw),),
+            )
+        )
+
+    pairs = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("index", index),
+                    ("field0", first),
+                    ("field1", second),
+                    (
+                        "raw_hex",
+                        first.to_bytes(4, "little").hex()
+                        + second.to_bytes(4, "little").hex(),
+                    ),
+                )
+            )
+            for index, (first, second) in enumerate(parsed.pairs)
+        )
+    )
+    compatible = SUBTYPE_METADATA.get(parsed.metadata_raw, ())
+    return RuleSemantics(
+        status=(
+            "confirmed_subset"
+            if not parsed.trailing and parsed.metadata_raw in SUBTYPE_METADATA
+            else "unsupported"
+        ),
+        representation="macro_source.matcher_manifest.v1",
+        data=JSONObject(
+            (
+                ("record_type", MACRO_SOURCE_TYPE),
+                ("raw_payload_hex", bytes(raw).hex()),
+                (
+                    "receiver_framing",
+                    JSONObject(
+                        (
+                            ("name_length_offset", 0),
+                            ("name_length", len(parsed.name_bytes)),
+                            ("name_offset", 1),
+                            ("name_length_bytes", len(parsed.name_bytes)),
+                            ("name_encoding", "unknown"),
+                            ("header_offset", header_offset),
+                            ("header_width", WORD_SIZE),
+                            ("header_byte_order", "little"),
+                            ("packed_header", parsed.packed_header),
+                            ("count_mask", 0x3F),
+                            ("count", parsed.count),
+                            ("metadata_raw", parsed.metadata_raw),
+                            ("primary_offset", primary_offset),
+                            ("primary_length", primary_length),
+                            ("secondary_offset", secondary_offset),
+                            (
+                                "secondary_state",
+                                "complete"
+                                if parsed.secondary is not None
+                                else "absent_or_incomplete",
+                            ),
+                            ("secondary_length", secondary_length),
+                            (
+                                "unconsumed_offset",
+                                secondary_offset + secondary_length,
+                            ),
+                            (
+                                "unconsumed_role",
+                                "trailing_or_incomplete_secondary_raw",
+                            ),
+                            ("trailing_raw_hex", parsed.trailing.hex()),
+                        )
+                    ),
+                ),
+                (
+                    "safecrc_pair_map",
+                    JSONObject(
+                        (
+                            ("key_width", 8),
+                            ("key_fields", JSONArray(("field0", "field1"))),
+                            ("field_names_confirmed", False),
+                            ("field0_source", "primary[index]"),
+                            (
+                                "field1_source",
+                                "secondary[index], or zero when no complete vector exists",
+                            ),
+                            ("value", "source_entry_index"),
+                            ("inserted_for_each_pair", True),
+                            ("duplicate_keys_allowed", True),
+                        )
+                    ),
+                ),
+                ("source_pairs", pairs),
+                (
+                    "candidate_matching",
+                    JSONObject(
+                        (
+                            ("lookup", "safecrc_pair_map membership candidate lookup"),
+                            (
+                                "comparison",
+                                "all source entry pairs must occur in candidate pairs",
+                            ),
+                            ("empty_candidate_pairs_match", False),
+                            ("empty_source_entry_pairs_match", False),
+                            (
+                                "pair_order",
+                                "source vector sorted for binary search; wire order is not proof of sortedness",
+                            ),
+                            ("pair_field_names", "unknown"),
+                        )
+                    ),
+                ),
+                (
+                    "subtype_compatibility",
+                    JSONObject(
+                        (
+                            ("metadata_raw", parsed.metadata_raw),
+                            ("compatible_subtype_values", JSONArray(compatible)),
+                            (
+                                "confirmed_metadata_to_subtypes",
+                                JSONArray(
+                                    tuple(
+                                        JSONObject(
+                                            (
+                                                ("metadata_raw", metadata),
+                                                ("subtypes", JSONArray(subtypes)),
+                                            )
+                                        )
+                                        for metadata, subtypes in sorted(
+                                            SUBTYPE_METADATA.items()
+                                        )
+                                    )
+                                ),
+                            ),
+                            ("enum_names", "unknown"),
+                        )
+                    ),
+                ),
+                (
+                    "report_path",
+                    JSONArray(
+                        (
+                            "RME::MatchSigs",
+                            "RME::CompareSig",
+                            "metadata subtype compatibility check",
+                            "RME::reportvirus(recid, 0, EmptySha1, false)",
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "macro_source_push (mpengine 1.443.903.0) frames name/header and constructs safecrc pairs",
+            "RME::MatchSigs uses each candidate pair to retrieve source-entry indices from the pair map",
+            "RME::CompareSig requires every source pair to occur in the candidate set before subtype validation",
+            "RME::CompareSig reports the entry RecID only after subtype compatibility succeeds",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
     MACRO_SOURCE_TYPE,
     "MACRO_SOURCE",
     parse_macro_source,
     render_macro_source,
+    semantic_exporter=export_macro_source_semantics,
 )
