@@ -189,7 +189,7 @@ def render_bm_yara(
             None,
             BmYaraFidelity.UNSUPPORTED,
             tuple(issues),
-            requirements,
+            (),
             printable_preview,
         )
     body = "{ " + " ".join(part for part, _, _, _ in parts) + " }"
