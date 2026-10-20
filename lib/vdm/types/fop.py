@@ -5,7 +5,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+    SemanticJSONValue,
+)
 
 FOP_TYPES: Final = MappingProxyType(
     {
@@ -24,6 +32,18 @@ FOP_EXTENDED_TYPES: Final = frozenset(FOP_TYPES) - FOP_PLAIN_TYPES
 FOP_PLAIN_HEADER_SIZE: Final = 4
 FOP_EXTENDED_HEADER_SIZE: Final = 10
 FOP_PREVIEW_SIZE: Final = 64
+_FOP_ROUTES: Final = MappingProxyType(
+    {
+        0x7F: "x86",
+        0x89: "x86",
+        0xB4: "vb",
+        0xC7: "vb",
+        0xBA: "msil",
+        0xC6: "msil",
+        0xC8: "x64",
+        0xC9: "x64",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +197,73 @@ def render_fop(parsed: FopPayload) -> FormatResult:
     return FormatResult(sections=(DisplaySection("FOP", rows=tuple(rows)),))
 
 
+def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
+    """Export the observed engine route and bytes without inventing rule meaning."""
+    evidence = (
+        "mpengine 1.443.903.0 FopScanner::Init @ 0x1805F0120",
+        "mpengine 1.443.903.0 FopScanner::AddNewPatternCommon @ 0x18046F9AC",
+        "mpengine 1.443.903.0 FopSearch @ 0x180522D28",
+        "mpengine 1.443.903.0 FopScanner::Scan @ 0x18040AF48",
+    )
+    if parsed.ignored_reason is not None:
+        return RuleSemantics(
+            status="ignored",
+            representation="fop.engine_pattern.v1",
+            data=JSONObject(
+                (
+                    ("raw_hex", parsed.raw.hex()),
+                    ("type_byte", parsed.type_byte),
+                    ("ignored_reason", parsed.ignored_reason),
+                )
+            ),
+            evidence=evidence,
+            profile="mpengine-1.443.903.0",
+        )
+
+    assert parsed.flags is not None
+    data_items: list[tuple[str, SemanticJSONValue]] = [
+        ("raw_hex", parsed.raw.hex()),
+        ("type_byte", parsed.type_byte),
+        ("route", _FOP_ROUTES[parsed.type_byte]),
+        ("prefix_hex", parsed.prefix.hex()),
+        ("pattern_hex", parsed.pattern.hex()),
+        ("flag_bit0_raw", bool(parsed.flags & 1)),
+        ("family_report_path_observed", "MpAggregateAttributeEx (conditional)"),
+    ]
+    issues = [
+        SemanticIssue(
+            "engine_context_required",
+            "FopSearch uses masked decoded-instruction comparison; matching still "
+            "requires the engine decoder and cannot be evaluated from stored bytes "
+            "alone.",
+        )
+    ]
+    if parsed.pattern_options is not None:
+        assert parsed.section1 is not None and parsed.section2 is not None
+        data_items.extend(
+            (
+                ("section1_raw_hex", parsed.section1.hex()),
+                ("section2_raw_hex", parsed.section2.hex()),
+                ("pattern_options_raw", parsed.pattern_options),
+            )
+        )
+        issues.append(
+            SemanticIssue(
+                "extended_fields_uninterpreted",
+                "section1, section2, and pattern_options are retained as raw "
+                "observations; their matching/report effects are not assigned.",
+            )
+        )
+    return RuleSemantics(
+        status="observed_only",
+        representation="fop.engine_pattern.v1",
+        data=JSONObject(tuple(data_items)),
+        evidence=evidence,
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 def _parser_for(type_byte: int) -> Callable[[bytes], FopPayload]:
     def parser(payload: bytes) -> FopPayload:
         return parse_fop(payload, type_byte=type_byte)
@@ -185,6 +272,12 @@ def _parser_for(type_byte: int) -> Callable[[bytes], FopPayload]:
 
 
 FOP_SPECS = tuple(
-    FamilySpec(type_byte, name, _parser_for(type_byte), render_fop)
+    FamilySpec(
+        type_byte,
+        name,
+        _parser_for(type_byte),
+        render_fop,
+        semantic_exporter=export_fop_semantics,
+    )
     for type_byte, name in FOP_TYPES.items()
 )
