@@ -42,8 +42,13 @@ class VFilePayload:
 
     @property
     def path(self) -> str | None:
-        """Decode the first entry's bounded UTF-16LE NUL-terminated candidate."""
-        if not self.path_terminated or self.path_raw is None:
+        """Decode the runtime VFS name after its bounded copy and terminator."""
+        if self.path_raw is None:
+            return None
+        # vfileAndVfileexReceiver copies exactly 0x208 bytes, then writes a
+        # UTF-16 NUL immediately after that field. A full-width field therefore
+        # still forms a terminated runtime name without an in-field NUL.
+        if not self.path_terminated and len(self.path_raw) != _ENTRY_PATH_FIELD_SIZE:
             return None
         return self.path_raw.decode("utf-16le", errors="surrogatepass")
 
@@ -250,8 +255,11 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                     "text_candidate",
                     path_candidate.decode("utf-16le", errors="surrogatepass")
                     if terminator_at is not None
+                    or len(path_candidate) == _ENTRY_PATH_FIELD_SIZE
                     else None,
                 ),
+                ("runtime_terminator_appended", True),
+                ("runtime_use", "VfsFileData::addFile path argument"),
             )
         )
         entries.append(
@@ -306,6 +314,25 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
             ("entry_count", parsed.entry_count),
             ("entries", JSONArray(tuple(entries))),
             (
+                "portable_subset",
+                JSONObject(
+                    (
+                        ("name_field_offset_within_entry", _ENTRY_PREFIX_SIZE),
+                        ("name_field_size", _ENTRY_PATH_FIELD_SIZE),
+                        ("encoding", "UTF-16LE"),
+                        (
+                            "runtime_terminator",
+                            "receiver appends UTF-16 NUL after copied field",
+                        ),
+                        ("consumer", "VfsFileData::addFile builds VirtualFS tree"),
+                        (
+                            "content_source",
+                            "MpFileDataEntry ByteStream from kstoreex tail",
+                        ),
+                    )
+                ),
+            ),
+            (
                 "tail",
                 JSONObject(
                     (
@@ -336,21 +363,24 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
         )
     )
     return RuleSemantics(
-        status="observed_only",
-        representation="vfile.receiver_framing.v1",
+        status="confirmed_subset",
+        representation="vfile.receiver_vfs_entry.ir.v2",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 vfileAndVfileexReceiver @ 0x1802C8A58",
             "mpengine 1.443.903.0 VFILE/VFILEEX offline receiver registrations",
             "mpengine 1.443.903.0 VFILEEX offline and cached receiver-end routines",
+            "mpengine 1.443.903.0 populateVfsWithVfiles @ 0x18019FF7C",
+            "mpengine 1.443.903.0 VfsFileData::addFile @ 0x18019E640",
         ),
         profile="mpengine-1.443.903.0",
         issues=(
             SemanticIssue(
                 "scan_time_matcher_report_unlocated",
-                "The scan-time matcher and report consumer for VFILE/VFILEEX have "
-                "not been located; receiver and persistence behavior do not establish "
-                "scan-time detection semantics.",
+                "The runtime VFS file-construction consumer is located, but the "
+                "specific scan-time matcher and report consumer for VFILE/VFILEEX "
+                "remain unknown; this data flow does not establish scan-time "
+                "detection semantics.",
             ),
             SemanticIssue(
                 "tail_framing_unknown",
