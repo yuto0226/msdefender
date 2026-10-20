@@ -48,6 +48,7 @@ from .types.rpf_routine import SPEC as RPF_ROUTINE_SPEC
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.snidex import SNIDEX_SPECS
 from .types.static import SPEC as STATIC_SPEC
+from .types.target_script_pcode import SPEC as TARGET_SCRIPT_PCODE_SPEC
 from .types.threat import THREAT_SPECS
 from .types.threat_update_status import SPEC as THREAT_UPDATE_STATUS_SPEC
 from .types.titanflt import SPEC as TITANFLT_SPEC
@@ -98,6 +99,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             GENSFX_SPEC,
             SIGTREE_BM_SPEC,
             STATIC_SPEC,
+            TARGET_SCRIPT_PCODE_SPEC,
             KCRCE_SPEC,
             KPAT_SPEC,
             KPATEX_SPEC,
