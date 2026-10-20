@@ -92,7 +92,7 @@ def _render(parsed: KpatPayload, *, extended: bool) -> FormatResult:
         rows.append(
             (
                 "pattern_semantics",
-                "runtime matcher semantics unresolved",
+                "BMMatchEx2 matcher confirmed; wire-to-row projection unresolved",
             )
         )
     return FormatResult(
@@ -108,19 +108,22 @@ def render_kpatex(parsed: KpatPayload) -> FormatResult:
     return _render(parsed, extended=True)
 
 
-def _export_semantics(parsed: KpatPayload, *, record_type: str) -> RuleSemantics:
-    """Export known wire framing while leaving receiver and matcher unresolved."""
+def _export_semantics(
+    parsed: KpatPayload, *, record_type: str, extended: bool
+) -> RuleSemantics:
+    """Export matcher behavior separately from unresolved wire-to-row mapping."""
     name_length_offset = parsed.prefix_size + 1
     name_offset = name_length_offset + (parsed.name_raw is not None)
     suffix_offset = name_offset + (len(parsed.name_raw) if parsed.name_raw else 0)
     issues = [
         SemanticIssue(
-            "runtime_mapping_unresolved",
-            "The record registration and receiver path have not been tied to "
-            "the named KPAT matcher; pattern bytes remain opaque.",
+            "wire_to_row_projection_unresolved",
+            "The engine matcher is confirmed, but the offline payload framing has "
+            "not been proven to project one-to-one into the loaded tsig row. "
+            "Do not treat pattern_raw as the confirmed matcher input.",
         )
     ]
-    status = "observed_only"
+    status = "confirmed_subset"
     if parsed.suffix:
         status = "unsupported"
         issues.append(
@@ -129,6 +132,41 @@ def _export_semantics(parsed: KpatPayload, *, record_type: str) -> RuleSemantics
                 "Bytes after the framed name have no confirmed receiver meaning.",
                 (("suffix_raw_hex", parsed.suffix.hex()),),
             )
+        )
+    if extended:
+        matcher = JSONObject(
+            (
+                ("kind", "bm_match_ex2"),
+                ("registration_group", "second tsig row group"),
+                ("flags_source", "BMGetPatternFlags"),
+                ("match_function", "BMMatchEx2"),
+                ("match_map", "BM_MAP_ALL"),
+                ("loaded_row_matcher", "BM token matcher with row flags"),
+                ("wire_payload_projection", "unresolved"),
+                ("pattern_input_equivalence", "unresolved"),
+            )
+        )
+        matcher_evidence = (
+            "mpengine 1.443.903.0 pattsearch_init registers type 0x4BC in the second tsig row group",
+            "mpengine 1.443.903.0 tsig_push_end calls BMGetPatternFlags for the second group and stores row flags",
+            "mpengine 1.443.903.0 kpatsearchex calls BMMatchEx2 with BM_MAP_ALL and the loaded row flags",
+        )
+    else:
+        matcher = JSONObject(
+            (
+                ("kind", "wildcard_raw_byte_compare"),
+                ("registration_group", "first tsig row group"),
+                ("comparison", "bytewise pattern/subject comparison"),
+                ("wildcard_byte", 0x90),
+                ("wildcard_behavior", "matches any one subject byte"),
+                ("wire_payload_projection", "unresolved"),
+                ("pattern_input_equivalence", "unresolved"),
+            )
+        )
+        matcher_evidence = (
+            "mpengine 1.443.903.0 pattsearch_init registers type 0x4BB in the first tsig row group",
+            "mpengine 1.443.903.0 tsig_push_end adds the first-group pattern object to FilteredTrie without BMGetPatternFlags",
+            "mpengine 1.443.903.0 kpatsearchex byte-compares first-group candidates; pattern byte 0x90 matches any subject byte",
         )
     data = JSONObject(
         (
@@ -152,19 +190,18 @@ def _export_semantics(parsed: KpatPayload, *, record_type: str) -> RuleSemantics
             ("name_raw_hex", (parsed.name_raw or b"").hex()),
             ("suffix_offset", suffix_offset),
             ("suffix_raw_hex", parsed.suffix.hex()),
-            ("runtime_matcher", "unresolved"),
+            ("runtime_matcher", matcher),
+            ("wire_payload_projection", "unresolved"),
         )
     )
     return RuleSemantics(
         status=status,
-        representation="kpat.wire_observation.v1",
+        representation="kpat.runtime_matcher_subset.ir.v2",
         data=data,
         evidence=(
-            "WIRE PARSER: the size byte bounds an 8-byte key and opaque pattern bytes;",
-            (
-                "IDA: kpatsearchex and ValidateKpatMatch exist, but their input has not "
-                "been mapped to this record's wire fields."
-            ),
+            *matcher_evidence,
+            "Wire framing is an offline hypothesis; current binary template descriptor does not establish payload-to-row projection",
+            "ValidateKpatMatch may validate/report candidates; complete verdict policy remains unresolved",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
@@ -172,11 +209,11 @@ def _export_semantics(parsed: KpatPayload, *, record_type: str) -> RuleSemantics
 
 
 def export_kpat_semantics(parsed: KpatPayload) -> RuleSemantics:
-    return _export_semantics(parsed, record_type="KPAT")
+    return _export_semantics(parsed, record_type="KPAT", extended=False)
 
 
 def export_kpatex_semantics(parsed: KpatPayload) -> RuleSemantics:
-    return _export_semantics(parsed, record_type="KPATEX")
+    return _export_semantics(parsed, record_type="KPATEX", extended=True)
 
 
 KPAT_SPEC = FamilySpec(
