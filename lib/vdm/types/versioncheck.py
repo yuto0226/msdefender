@@ -184,8 +184,18 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
         0x38: VersionCheckPredicate("partial"),
         0x2C: VersionCheckPredicate("partial"),
         0x05: VersionCheckPredicate("partial"),
+        0x06: VersionCheckPredicate(
+            "known",
+            "dword(gktab+0xB20) < field_04",
+            "full uint32_t unsigned comparison",
+        ),
         0x08: VersionCheckPredicate(
             "known", "dword(gktab+0xB20) != field_04", "full uint32_t inequality"
+        ),
+        0x0C: VersionCheckPredicate(
+            "known",
+            "dword(gktab+0xB28) < field_04",
+            "full uint32_t unsigned comparison",
         ),
         0x10: VersionCheckPredicate(
             "known",
