@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 BOOT_TYPE: Final = 0x44
 _FIELD_SIZE: Final = 32
@@ -220,4 +228,178 @@ def render_boot(parsed: BootPayload) -> FormatResult:
     return FormatResult(sections=(DisplaySection("BOOT", rows=tuple(rows)),))
 
 
-BOOT_SPEC = FamilySpec(BOOT_TYPE, "BOOT", parse_boot, render_boot)
+def _wire_span(name: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("name", name),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def _ordinary_pattern_atoms(pattern: bytes) -> JSONArray:
+    return JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("offset", offset),
+                    (
+                        "kind",
+                        "wildcard" if offset >= 4 and value == 0x90 else "exact",
+                    ),
+                    ("value", None if offset >= 4 and value == 0x90 else value),
+                )
+            )
+            for offset, value in enumerate(pattern)
+        )
+    )
+
+
+def export_boot_semantics(parsed: BootPayload) -> RuleSemantics:
+    """Export receiver-confirmed BOOT probe details without a verdict."""
+    issues = [
+        SemanticIssue(
+            "outer_verdict_unknown",
+            "A BOOT probe result does not establish a final detection verdict.",
+        ),
+    ]
+    identity_end = parsed.raw.find(b"\0")
+    framing: list[JSONObject] = []
+    unsupported = parsed.variant != "current"
+    if parsed.variant == "current":
+        assert identity_end >= 0 and parsed.descriptor_raw is not None
+        field_offset = identity_end + 1
+        field = parsed.descriptor_raw
+        framing.extend(
+            (
+                _wire_span("identity", parsed.identity_raw or b"", 0),
+                _wire_span("identity_terminator", b"\0", identity_end),
+                _wire_span("descriptor", field, field_offset),
+                _wire_span("trailing", parsed.trailing_raw, field_offset + len(field)),
+            )
+        )
+        if parsed.selector_domain == "ordinary":
+            assert parsed.pattern_raw is not None and parsed.selector_raw is not None
+            selector_raw = field[:1]
+            pattern_offset = field_offset + 1
+            rule = JSONObject(
+                (
+                    ("kind", "candidate_byte_probe"),
+                    ("selector_raw", parsed.selector_raw),
+                    ("selector", _wire_span("selector", selector_raw, field_offset)),
+                    (
+                        "runtime_compare_span",
+                        JSONObject((("offset", 0), ("length", parsed.selector_raw))),
+                    ),
+                    (
+                        "pattern",
+                        _wire_span("pattern", parsed.pattern_raw, pattern_offset),
+                    ),
+                    ("comparison", _ordinary_pattern_atoms(parsed.pattern_raw)),
+                    ("candidate_end_bound", "offset + length < buffer_length"),
+                )
+            )
+        elif parsed.selector_domain == "special_32":
+            assert parsed.selector_raw is not None
+            rule = JSONObject(
+                (
+                    ("kind", "special_crc_probe"),
+                    ("selector_raw", parsed.selector_raw),
+                    ("flags_raw", field[1]),
+                    (
+                        "special_header",
+                        _wire_span("special_header", field[:2], field_offset),
+                    ),
+                    (
+                        "prefix",
+                        _wire_span(
+                            "prefix", parsed.special_prefix or b"", field_offset + 2
+                        ),
+                    ),
+                    (
+                        "check_length_raw",
+                        _wire_span("check_length", field[10:12], field_offset + 10),
+                    ),
+                    ("check_length", parsed.special_check_length),
+                    (
+                        "crc32_raw",
+                        _wire_span("crc32", field[12:16], field_offset + 12),
+                    ),
+                    ("crc32", parsed.special_crc32),
+                    ("crc_algorithm", "mpengine.CRC_1"),
+                    ("candidate_end_bound", "offset + check_length < buffer_length"),
+                )
+            )
+        else:
+            unsupported = True
+            issues.append(
+                SemanticIssue(
+                    "wrapped_selector_semantics_unknown",
+                    "The selector span wraps, but its predicate semantics are unknown.",
+                    (("selector_raw", parsed.selector_raw),),
+                )
+            )
+            rule = JSONObject(
+                (
+                    ("kind", "opaque_wrapped_probe"),
+                    ("selector_raw", parsed.selector_raw),
+                    (
+                        "runtime_compare_span",
+                        JSONArray(parsed.runtime_compare_span or ()),
+                    ),
+                    ("descriptor_raw_hex", field.hex()),
+                )
+            )
+        if parsed.trailing_raw:
+            issues.append(
+                SemanticIssue(
+                    "receiver_ignored_trailing",
+                    "The current template receiver ignores bytes after the fixed descriptor.",
+                    (("length", len(parsed.trailing_raw)),),
+                )
+            )
+    else:
+        rule = JSONObject((("kind", "opaque_legacy"),))
+        framing.append(_wire_span("payload", parsed.raw, 0))
+        issues.append(
+            SemanticIssue(
+                "legacy_shape_unrecognized",
+                "The payload does not contain a complete current BOOT descriptor.",
+            )
+        )
+
+    return RuleSemantics(
+        status="unsupported" if unsupported else "confirmed_subset",
+        representation="boot.candidate_probe.ir.v1",
+        data=JSONObject(
+            (
+                ("raw_hex", parsed.raw.hex()),
+                ("framing", JSONArray(tuple(framing))),
+                (
+                    "identity_raw_hex",
+                    parsed.identity_raw.hex()
+                    if parsed.identity_raw is not None
+                    else None,
+                ),
+                ("selector_domain", parsed.selector_domain),
+                ("rule", rule),
+                ("trailing_raw_hex", parsed.trailing_raw.hex()),
+            )
+        ),
+        evidence=(
+            "BOOT receiver selector span, modulo-wrap, and special CRC path",
+            "BOOT identity and cure caller path",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+BOOT_SPEC = FamilySpec(
+    BOOT_TYPE,
+    "BOOT",
+    parse_boot,
+    render_boot,
+    semantic_exporter=export_boot_semantics,
+)
