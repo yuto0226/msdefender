@@ -571,7 +571,7 @@ def render_lua_standalone(parsed: LuaStandalonePayload) -> FormatResult:
 
 
 def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemantics:
-    """Export confirmed record framing without claiming Lua runtime behavior."""
+    """Export record framing and the statically confirmed runtime route subset."""
     metadata_items = tuple(
         JSONObject(
             (
@@ -635,8 +635,9 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
     issues = [
         SemanticIssue(
             "runtime_effect_unresolved",
-            "Lua artifact decoding does not establish script registration, "
-            "interpreter compatibility, or execution effects.",
+            "The confirmed VM route does not establish that this individual "
+            "record executes, what side effects it has, or whether it produces "
+            "a final detection.",
         )
     ]
     if unknown_keys:
@@ -683,7 +684,7 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
     )
     return RuleSemantics(
         status="unsupported" if unsupported else "observed_only",
-        representation="luastandalone.receiver_and_luaq.v1",
+        representation="luastandalone.receiver_and_luaq.v2",
         data=JSONObject(
             (
                 ("signature_type", LUASTANDALONE_TYPE),
@@ -701,6 +702,129 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                 ("script_sha256", hashlib.sha256(parsed.script).hexdigest()),
                 ("artifact_decode", artifact_decode),
                 (
+                    "execution_routing",
+                    JSONObject(
+                        (
+                            ("status", "confirmed_subset"),
+                            (
+                                "scope",
+                                (
+                                    "static control-flow and data-flow observations; "
+                                    "does not assert that this record was executed"
+                                ),
+                            ),
+                            (
+                                "record_to_vm",
+                                JSONObject(
+                                    (
+                                        ("status", "confirmed_subset"),
+                                        (
+                                            "steps",
+                                            JSONArray(
+                                                (
+                                                    "LuaStandalone::AddScript",
+                                                    "ProcessedLuaScript::Process",
+                                                    "ProcessedLuaScript::LoadScript",
+                                                    "f_cached_parser",
+                                                    "ProcessedLuaScript::LoadFunction",
+                                                    "LuaStandaloneScriptRunner::RunScript",
+                                                    "lua_pcall",
+                                                )
+                                            ),
+                                        ),
+                                        (
+                                            "addresses",
+                                            JSONObject(
+                                                (
+                                                    (
+                                                        "LuaStandalone::AddScript",
+                                                        "0x18031DD00",
+                                                    ),
+                                                    (
+                                                        "ProcessedLuaScript::Process",
+                                                        "0x18031F7E0",
+                                                    ),
+                                                    (
+                                                        "ProcessedLuaScript::LoadScript",
+                                                        "0x180031B80",
+                                                    ),
+                                                    ("f_cached_parser", "0x180031380"),
+                                                    (
+                                                        "ProcessedLuaScript::LoadFunction",
+                                                        "0x180032950",
+                                                    ),
+                                                    (
+                                                        "LuaStandaloneScriptRunner::RunScript",
+                                                        "0x180085998",
+                                                    ),
+                                                )
+                                            ),
+                                        ),
+                                        (
+                                            "confirmed_behavior",
+                                            (
+                                                "AddScript stores a ProcessedLuaScript in a "
+                                                "holder; LoadFunction copies the LuaQ code "
+                                                "pointer/count into Proto; RunScript loads the "
+                                                "closure and calls lua_pcall."
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "signature_validator",
+                                JSONObject(
+                                    (
+                                        ("status", "confirmed_subset"),
+                                        (
+                                            "lookup",
+                                            (
+                                                "validator map lookup by U64 SigSeq, then "
+                                                "LuaStandalone::GetScript"
+                                            ),
+                                        ),
+                                        ("lookup_address", "0x18002E756"),
+                                        ("get_script_address", "0x18002E76B"),
+                                        (
+                                            "execution",
+                                            (
+                                                "includes run before main; main output is "
+                                                "validated by IsValidScanStatus"
+                                            ),
+                                        ),
+                                        (
+                                            "execution_address",
+                                            "0x18002EB9B / 0x18002EC86",
+                                        ),
+                                        (
+                                            "status_gate",
+                                            "IsValidScanStatus at 0x1803D7A68",
+                                        ),
+                                        (
+                                            "status_writeback",
+                                            (
+                                                "IsValidScanStatus-gated match+0x30; invalid "
+                                                "status or execution failure -> 0"
+                                            ),
+                                        ),
+                                        (
+                                            "result_limit",
+                                            (
+                                                "successful Lua execution does not imply a "
+                                                "nonzero scan status or final detection"
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
+                            ("final_detection", "unknown"),
+                            ("script_effect", "unknown"),
+                            ("peb_injection", "unknown"),
+                        )
+                    ),
+                ),
+                (
                     "luaq_consumed",
                     parsed.lua_chunk.consumed if parsed.lua_chunk is not None else None,
                 ),
@@ -716,9 +840,15 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
             )
         ),
         evidence=(
-            "mpengine 1.443.903.0 LuaStandalone::AddScript",
-            "mpengine 1.443.903.0 ProcessedLuaScript::Process",
-            "mpengine 1.443.903.0 ProcessedLuaScript::ProcessFunction",
+            "mpengine 1.443.903.0 LuaStandalone::AddScript @ 0x18031DD00",
+            "mpengine 1.443.903.0 ProcessedLuaScript::Process @ 0x18031F7E0",
+            "mpengine 1.443.903.0 ProcessedLuaScript::LoadScript @ 0x180031B80",
+            "mpengine 1.443.903.0 f_cached_parser @ 0x180031380",
+            "mpengine 1.443.903.0 ProcessedLuaScript::LoadFunction @ 0x180032950",
+            "mpengine 1.443.903.0 LuaStandaloneScriptRunner::RunScript @ 0x180085998",
+            "mpengine 1.443.903.0 ValidateSignatureWithPcodeStandaloneWorker2 @ 0x18002E670",
+            "mpengine 1.443.903.0 IsValidScanStatus @ 0x1803D7A68",
+            "mpengine 1.443.903.0 ProcessedLuaScript::ProcessFunction @ 0x18031F8A0",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
