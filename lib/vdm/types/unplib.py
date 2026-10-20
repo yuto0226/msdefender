@@ -11,11 +11,11 @@ PAYLOAD_SIZE: Final = 24
 
 @dataclass(frozen=True, slots=True)
 class UnpLibPayload:
-    """Observed fixed-size UNPLIB record with neutral field names."""
+    """UNPLIB row with its consumer-confirmed lookup key."""
 
     raw: bytes
     prefix: bytes
-    prefix_word: int
+    lookup_key: int
     word_08: int
     word_0c: int
     word_10: int
@@ -32,7 +32,7 @@ def parse_unplib(payload: bytes) -> UnpLibPayload:
     return UnpLibPayload(
         raw=payload,
         prefix=payload[:8],
-        prefix_word=int.from_bytes(payload[:2], "little"),
+        lookup_key=int.from_bytes(payload[:4], "little"),
         word_08=int.from_bytes(payload[0x08:0x0C], "little"),
         word_0c=int.from_bytes(payload[0x0C:0x10], "little"),
         word_10=int.from_bytes(payload[0x10:0x14], "little"),
@@ -48,7 +48,7 @@ def render_unplib(parsed: UnpLibPayload) -> FormatResult:
                 "UNPLIB",
                 rows=(
                     ("prefix", parsed.prefix.hex(" ")),
-                    ("prefix_word", f"0x{parsed.prefix_word:04X}"),
+                    ("lookup_key", f"0x{parsed.lookup_key:08X}"),
                     ("word_08", f"0x{parsed.word_08:08X}"),
                     ("word_0c", f"0x{parsed.word_0c:08X}"),
                     ("word_10", f"0x{parsed.word_10:08X}"),
