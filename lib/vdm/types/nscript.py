@@ -89,6 +89,12 @@ class NScriptBrutePayload:
     def body_len(self) -> int:
         return len(self.body)
 
+    @property
+    def runtime_consumer(self) -> str | None:
+        if self.runtime_script_type == 6:
+            return "SearchBruteWorker -> BMMatchEx2"
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class NScriptCurePayload:
@@ -363,6 +369,16 @@ def render_nscript_brute(parsed: NScriptBrutePayload) -> FormatResult:
                     ("script_type_flags", f"0x{parsed.script_type_flags:02X}"),
                     ("script_type_raw", str(parsed.script_type_raw)),
                     ("runtime_script_type", str(parsed.runtime_script_type)),
+                    (
+                        "runtime_consumer",
+                        parsed.runtime_consumer or "unknown",
+                    ),
+                    (
+                        "runtime_gate",
+                        "UFS base plugin id 6"
+                        if parsed.runtime_consumer is not None
+                        else "unknown",
+                    ),
                     ("lowfi", str(parsed.lowfi)),
                     ("direction_raw", f"0x{parsed.direction_raw:02X}"),
                     ("position_raw", f"0x{parsed.position_raw:08X}"),
