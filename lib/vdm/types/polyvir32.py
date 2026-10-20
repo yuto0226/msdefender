@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 POLYVIR32_TYPE: Final = 0x21
 POLYVIR32_SIZE: Final = 34
@@ -77,4 +84,51 @@ def render_polyvir32(parsed: Polyvir32Payload) -> FormatResult:
     return FormatResult(sections=(DisplaySection("POLYVIR32", rows=rows),))
 
 
-SPEC: Final = FamilySpec(POLYVIR32_TYPE, "POLYVIR32", parse_polyvir32, render_polyvir32)
+def export_polyvir32_semantics(parsed: Polyvir32Payload) -> RuleSemantics:
+    """Export the exact corpus-profile bytes without assigning field meanings."""
+    return RuleSemantics(
+        status="observed_only",
+        representation="polyvir32.observed_layout.v1",
+        data=JSONObject(
+            (
+                ("record_type", "POLYVIR32"),
+                ("raw_hex", parsed.raw.hex()),
+                ("profile_size", len(parsed.raw)),
+                ("bytes_00_0f_hex", parsed.bytes_00_0f.hex()),
+                ("word_10_raw_le", parsed.word_10),
+                ("word_12_raw_le", parsed.word_12),
+                ("dword_14_raw_le", parsed.dword_14),
+                ("word_18_raw_le", parsed.word_18),
+                ("word_1a_raw_le", parsed.word_1a),
+                ("dword_1c_raw_le", parsed.dword_1c),
+                ("tail_20_21_raw_hex", parsed.raw[0x20:].hex()),
+            )
+        ),
+        evidence=(
+            (
+                "The local mpav.sig corpus contains 151 type 0x21 records with "
+                "the observed 34-byte layout; mpas.sig contains none."
+            ),
+            (
+                "mpengine 1.443.903.0 DispatchRecord at 0x1800FAF18 uses the "
+                "dynamic gktab dispatcher; no type 0x21 receiver or payload "
+                "consumer was confirmed by the bounded static audit."
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "payload_semantics_unknown",
+                "Offset groups and zero tail are corpus observations; engine field meanings are unconfirmed.",
+            ),
+        ),
+    )
+
+
+SPEC: Final = FamilySpec(
+    POLYVIR32_TYPE,
+    "POLYVIR32",
+    parse_polyvir32,
+    render_polyvir32,
+    semantic_exporter=export_polyvir32_semantics,
+)

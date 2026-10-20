@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 KVIR32_TYPE: Final = 0x20
 _PREFIX_SIZE: Final = 16
@@ -80,4 +87,68 @@ def render_kvir32(parsed: Kvir32Payload) -> FormatResult:
     return FormatResult(sections=(DisplaySection("KVIR32", rows=tuple(rows)),))
 
 
-SPEC: Final = FamilySpec(KVIR32_TYPE, "KVIR32", parse_kvir32, render_kvir32)
+def export_kvir32_semantics(parsed: Kvir32Payload) -> RuleSemantics:
+    """Export the observed framing and complete bytes without inferred meaning."""
+    data = JSONObject(
+        (
+            ("record_type", "KVIR32"),
+            ("raw_hex", parsed.raw.hex()),
+            (
+                "observed_profile",
+                "16-byte prefix with optional 0x21 extension framing",
+            ),
+            ("opaque_prefix_hex", parsed.opaque_prefix.hex()),
+            ("extension_present", parsed.extension_marker is not None),
+            (
+                "following_size_raw",
+                parsed.raw[_PREFIX_SIZE]
+                if parsed.extension_marker is not None
+                else None,
+            ),
+            ("extension_marker_raw", parsed.extension_marker),
+            (
+                "extension_data_raw_hex",
+                parsed.extension_data.hex()
+                if parsed.extension_data is not None
+                else None,
+            ),
+            (
+                "extension_data_length",
+                len(parsed.extension_data)
+                if parsed.extension_data is not None
+                else None,
+            ),
+        )
+    )
+    return RuleSemantics(
+        status="observed_only",
+        representation="kvir32.observed_framing.v1",
+        data=data,
+        evidence=(
+            (
+                "The local mpas.sig/mpav.sig corpus contains 6,595 type 0x20 "
+                "records matching the 16-byte prefix and optional extension profile."
+            ),
+            (
+                "mpengine 1.443.903.0 DispatchRecord at 0x1800FAF18 uses the "
+                "dynamic gktab dispatcher; no type 0x20 receiver or payload "
+                "consumer was confirmed by the bounded static audit."
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "payload_semantics_unknown",
+                "KVIR32 bytes are preserved as observed framing; no detection behavior is established.",
+            ),
+        ),
+    )
+
+
+SPEC: Final = FamilySpec(
+    KVIR32_TYPE,
+    "KVIR32",
+    parse_kvir32,
+    render_kvir32,
+    semantic_exporter=export_kvir32_semantics,
+)
