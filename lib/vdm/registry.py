@@ -7,6 +7,7 @@ from .types.aggregator import AGGREGATOR_SPECS
 from .types.bm_info import SPEC as BM_INFO_SPEC
 from .types.ck import CK_SPECS
 from .types.common_code import SPEC as COMMON_CODE_SPEC
+from .types.fop import FOP_SPECS
 from .types.fpath import FPATH_SPECS
 from .types.friendlyfile import SPEC as FRIENDLYFILE_SHA256_SPEC
 from .types.hstr import HSTR_SPECS
@@ -53,6 +54,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             KCRCE_SPEC,
             PESTATIC_SPEC,
             *FPATH_SPECS,
+            *FOP_SPECS,
             *THREAT_SPECS,
             *HSTR_SPECS,
             *NID_SPECS,

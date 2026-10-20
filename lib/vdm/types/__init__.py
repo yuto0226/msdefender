@@ -18,6 +18,15 @@ from .ck import (
 )
 from .common_code import SPEC as COMMON_CODE_SPEC
 from .common_code import CommonCodePayload, parse_common_code, render_common_code
+from .fop import (
+    FOP_EXTENDED_TYPES,
+    FOP_PLAIN_TYPES,
+    FOP_SPECS,
+    FOP_TYPES,
+    FopPayload,
+    parse_fop,
+    render_fop,
+)
 from .fpath import FPATH_SPECS, FPATH_TYPES, FpathPayload, parse_fpath, render_fpath
 from .friendlyfile import (
     FriendlyFileSha256,
@@ -143,6 +152,10 @@ __all__ = [
     "CKSIMPLEREC_TYPE",
     "CK_SPECS",
     "COMMON_CODE_SPEC",
+    "FOP_EXTENDED_TYPES",
+    "FOP_PLAIN_TYPES",
+    "FOP_SPECS",
+    "FOP_TYPES",
     "FPATH_SPECS",
     "FPATH_TYPES",
     "HSTR_SPECS",
@@ -180,6 +193,7 @@ __all__ = [
     "CkOldPayload",
     "CkSimplePayload",
     "CommonCodePayload",
+    "FopPayload",
     "FpathPayload",
     "FriendlyFileSha256",
     "HstrFlags",
@@ -217,6 +231,7 @@ __all__ = [
     "parse_ckoldrec",
     "parse_cksimplerec",
     "parse_common_code",
+    "parse_fop",
     "parse_fpath",
     "parse_friendlyfile_sha256",
     "parse_hstr",
@@ -247,6 +262,7 @@ __all__ = [
     "render_ckoldrec",
     "render_cksimplerec",
     "render_common_code",
+    "render_fop",
     "render_fpath",
     "render_friendlyfile_sha256",
     "render_hstr",
