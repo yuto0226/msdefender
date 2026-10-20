@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 SNIDEX_TYPE: Final = 0xE5
 SNIDEX2_TYPE: Final = 0xE6
@@ -104,8 +111,190 @@ def render_snidex(parsed: SnidExPayload) -> FormatResult:
     return FormatResult(sections=(DisplaySection(title, rows=tuple(rows)),))
 
 
-SNIDEX_SPEC = FamilySpec(SNIDEX_TYPE, "SNIDEX", _parser_for(SNIDEX_TYPE), render_snidex)
+def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
+    """Export confirmed matching/report structure without naming opaque keys."""
+    prefix_size = len(parsed.key_blocks) * 16 + 1
+    raw_key = b"".join(parsed.key_blocks)
+    record_name = "SNIDEX2" if parsed.type == SNIDEX2_TYPE else "SNIDEX"
+    if parsed.type == SNIDEX2_TYPE:
+        report_path = JSONObject(
+            (
+                (
+                    "attribute_name",
+                    JSONObject(
+                        (
+                            (
+                                "without_reply",
+                                "return_state_1_and_optionally_write_out_recid",
+                            ),
+                            (
+                                "with_reply",
+                                "MpAggregateAttributeEx_then_ShouldContinueScanning",
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "ordinary_name",
+                    JSONObject(
+                        (
+                            ("gate", "nid64search_type_108_by_sequence"),
+                            (
+                                "gate_nonzero",
+                                (
+                                    "state_2; with reply SetDetectionData then "
+                                    "ShouldContinueScanning"
+                                ),
+                            ),
+                            (
+                                "gate_zero",
+                                (
+                                    "state_1; with reply SetDetectionData then "
+                                    "ShouldContinueScanning and delayed-detection gate"
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+            )
+        )
+    else:
+        report_path = JSONObject(
+            (
+                (
+                    "attribute_name",
+                    JSONObject(
+                        (
+                            ("without_reply", "return_nonzero_match_state"),
+                            ("with_reply", "write_out_recid"),
+                        )
+                    ),
+                ),
+                (
+                    "ordinary_name",
+                    JSONObject(
+                        (
+                            ("gate", "nid64search_type_108_by_sequence"),
+                            ("gate_result_zero", "ordinary_match_state"),
+                            ("gate_result_nonzero", "alternate_match_state"),
+                            ("reply_present", "write_out_recid"),
+                        )
+                    ),
+                ),
+            )
+        )
+    recid = JSONObject(
+        (
+            ("input_raw_hex", parsed.recid_input_raw.hex()),
+            (
+                "mode",
+                "outer_threat_and_sig_ids"
+                if not parsed.recid_input_raw
+                else "createrecidz_then_resolve_threat_and_sig_ids",
+            ),
+            (
+                "interned_object_raw_hex",
+                None if parsed.object_raw is None else parsed.object_raw.hex(),
+            ),
+            ("ignored_after_first_nul_hex", parsed.ignored_trailing_raw.hex()),
+            (
+                "first_nul_included_in_object",
+                bool(parsed.object_raw and parsed.object_raw.endswith(b"\0")),
+            ),
+        )
+    )
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="snidex.exact_match_entry.v1",
+        data=JSONObject(
+            (
+                ("type", record_name),
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "wire_entry",
+                    JSONObject(
+                        (
+                            ("raw_key_hex", raw_key.hex()),
+                            ("raw_key_length", len(raw_key)),
+                            ("category_byte", parsed.category_value),
+                            ("category_offset", len(raw_key)),
+                            ("recid_input_offset", prefix_size),
+                            ("recid", recid),
+                        )
+                    ),
+                ),
+                (
+                    "lookup",
+                    JSONObject(
+                        (
+                            (
+                                "prefilter",
+                                "four_bloom_bit_probes_if_filter_nonempty",
+                            ),
+                            ("candidate_range", "std_equal_range_by_query_selector"),
+                            ("exact_raw_key_compare", "memcmp"),
+                            ("exact_raw_key_length", len(raw_key)),
+                            ("exact_category_compare", "single_byte_equality"),
+                            ("provider_selector_source", "unknown"),
+                            ("raw_key_generation", "unknown"),
+                        )
+                    ),
+                ),
+                (
+                    "matched_entry_report_path",
+                    JSONObject(
+                        (
+                            ("resolve_threat_name", True),
+                            ("read_signature_sequence", True),
+                            (
+                                "signature_sha_input",
+                                f"type_0x{parsed.type:02x}_plus_wire_prefix_{prefix_size}_bytes",
+                            ),
+                            ("report_path", report_path),
+                            ("final_verdict", "unknown"),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            (
+                "mpengine 1.443.903.0 SNIDEX Lookup 0x180477668 and "
+                "RecordPush 0x180540574"
+            ),
+            (
+                "mpengine 1.443.903.0 SNIDEX2 Lookup 0x18052EFB0 and "
+                "RecordPush 0x18055B540"
+            ),
+            "mpengine 1.443.903.0 createrecidz",
+            "mpengine 1.443.903.0 nid64searchrecidex",
+            "mpas.sig corpus: 123 SNIDEX and 50 SNIDEX2 records",
+            "mpav.sig corpus: no SNIDEX or SNIDEX2 records",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "snidex_key_inputs_unknown",
+                "The provider selector source and raw-key generation algorithm "
+                "are not established; hash meaning, category meaning, and final "
+                "scan verdict also remain unknown.",
+            ),
+        ),
+    )
+
+
+SNIDEX_SPEC = FamilySpec(
+    SNIDEX_TYPE,
+    "SNIDEX",
+    _parser_for(SNIDEX_TYPE),
+    render_snidex,
+    semantic_exporter=export_snidex_semantics,
+)
 SNIDEX2_SPEC = FamilySpec(
-    SNIDEX2_TYPE, "SNIDEX2", _parser_for(SNIDEX2_TYPE), render_snidex
+    SNIDEX2_TYPE,
+    "SNIDEX2",
+    _parser_for(SNIDEX2_TYPE),
+    render_snidex,
+    semantic_exporter=export_snidex_semantics,
 )
 SNIDEX_SPECS: Final = (SNIDEX_SPEC, SNIDEX2_SPEC)
