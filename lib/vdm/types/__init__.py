@@ -219,6 +219,13 @@ from .pemain_locator import (
 from .pemain_locator import SPEC as PEMAIN_LOCATOR_SPEC
 from .pestatic import SPEC as PESTATIC_SPEC
 from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
+from .polyvir32 import (
+    POLYVIR32_TYPE,
+    Polyvir32Payload,
+    parse_polyvir32,
+    render_polyvir32,
+)
+from .polyvir32 import SPEC as POLYVIR32_SPEC
 from .regkey import SPEC as REGKEY_SPEC
 from .regkey import RegKeyPayload, parse_regkey, render_regkey
 from .removal_policy import (
@@ -423,6 +430,8 @@ __all__ = [
     "PEMAIN_LOCATOR_SPEC",
     "PEMAIN_LOCATOR_TYPE",
     "PESTATIC_SPEC",
+    "POLYVIR32_SPEC",
+    "POLYVIR32_TYPE",
     "REGKEY_SPEC",
     "REMOVAL_POLICY_BY_NAME_SPEC",
     "REMOVAL_POLICY_BY_NAME_TYPE",
@@ -515,6 +524,7 @@ __all__ = [
     "PeFileCure",
     "PeMainLocatorPayload",
     "PeStaticPayload",
+    "Polyvir32Payload",
     "RegKeyPayload",
     "RemovalPolicy",
     "RemovalPolicyByName",
@@ -592,6 +602,7 @@ __all__ = [
     "parse_pefile_cure",
     "parse_pemain_locator",
     "parse_pestatic",
+    "parse_polyvir32",
     "parse_regkey",
     "parse_removal_policy",
     "parse_removal_policy_by_name",
@@ -658,6 +669,7 @@ __all__ = [
     "render_pefile_cure",
     "render_pemain_locator",
     "render_pestatic",
+    "render_polyvir32",
     "render_regkey",
     "render_removal_policy",
     "render_removal_policy_by_name",

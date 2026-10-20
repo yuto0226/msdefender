@@ -42,6 +42,7 @@ from .types.pebmpat import SPEC as PEBMPAT_SPEC
 from .types.pefile_cure import SPEC as PEFILE_CURE_SPEC
 from .types.pemain_locator import SPEC as PEMAIN_LOCATOR_SPEC
 from .types.pestatic import SPEC as PESTATIC_SPEC
+from .types.polyvir32 import SPEC as POLYVIR32_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
 from .types.removal_policy import REMOVAL_POLICY_SPECS
 from .types.revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
@@ -91,6 +92,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
             KVIR32_SPEC,
+            POLYVIR32_SPEC,
             *SNIDEX_SPECS,
             BM_INFO_SPEC,
             BM_ENV_VAR_MAP_SPEC,
