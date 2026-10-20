@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import FamilySpec, FormatResult
+from ..core import FamilySpec, FormatResult, JSONObject, RuleSemantics, SemanticIssue
 
 _NAME_PREVIEW_BYTES = 64
 _NAME_PREVIEW_CHARS = 96
@@ -100,9 +100,103 @@ def render_threat_update_status(
     )
 
 
+def export_threat_update_status_semantics(
+    parsed: ThreatUpdateStatusPayload,
+) -> RuleSemantics:
+    """Export confirmed framing and receiver storage without guessing policy."""
+    has_trailing = bool(parsed.trailing_raw)
+    issues = [
+        SemanticIssue(
+            "status_word_consumers_unresolved",
+            "The consumers and value domains of both DWORDs are unconfirmed.",
+            (("fields", "word_08, word_0c"),),
+        )
+    ]
+    if has_trailing:
+        issues.append(
+            SemanticIssue(
+                "unconsumed_trailing_bytes",
+                "The registered receiver accepts bytes after the two DWORDs, but "
+                "their interpretation is unconfirmed; only the prefix is exported.",
+                (("trailing_length", len(parsed.trailing_raw)),),
+            )
+        )
+
+    return RuleSemantics(
+        # This describes our knowledge, not engine acceptance. The receiver
+        # accepts a suffix after the registered template fields.
+        status="observed_only",
+        representation="vdm.threat_update_status.receiver_observation.v1",
+        profile="mpengine-1.443.903.0",
+        evidence=(
+            (
+                "mpengine 1.443.903.0 SigDataInit at 0x1809AEE24 registers "
+                "type 0xC3 with a 0x16-byte row and three template fields."
+            ),
+            (
+                "mpengine 1.443.903.0 ReceiveNewTemplate at 0x1803224D0 "
+                "decodes one length-prefixed byte string and two little-endian "
+                "DWORDs into row offsets 0x00, 0x08, and 0x0C."
+            ),
+            (
+                "The local mpas.sig corpus contains three type 0xC3 records; "
+                "the bounded static audit did not identify dedicated consumers "
+                "for either DWORD."
+            ),
+        ),
+        issues=tuple(issues),
+        data=JSONObject(
+            (
+                ("record_type", f"0x{THREAT_UPDATE_STATUS_TYPE:02X}"),
+                ("raw_payload_hex", parsed.raw.hex()),
+                ("payload_length", len(parsed.raw)),
+                (
+                    "wire_framing",
+                    (
+                        "u8 name_length; name_length bytes; u32_le value_0; "
+                        "u32_le value_1"
+                    ),
+                ),
+                ("name_length", parsed.name_len),
+                ("name_raw_hex", parsed.name_raw.hex()),
+                ("name_safe", parsed.name),
+                (
+                    "receiver_row_observation",
+                    JSONObject(
+                        (
+                            (
+                                "offset_0x00",
+                                (
+                                    "pointer returned by kstore(name_raw, name_length, 0); "
+                                    "the pointed-to bytes are preserved as name_raw_hex"
+                                ),
+                            ),
+                            ("offset_0x08_raw_u32", parsed.word_08),
+                            ("offset_0x0c_raw_u32", parsed.word_0c),
+                            (
+                                "row_stride",
+                                (
+                                    "0x16 bytes; bytes at offsets 0x10..0x15 are not "
+                                    "assigned by this template"
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                ("word_08", parsed.word_08),
+                ("word_0c", parsed.word_0c),
+                ("value_semantics", "unresolved; no dedicated consumer confirmed"),
+                ("trailing_length", len(parsed.trailing_raw)),
+                ("trailing_raw_hex", parsed.trailing_raw.hex()),
+            )
+        ),
+    )
+
+
 SPEC = FamilySpec(
     THREAT_UPDATE_STATUS_TYPE,
     "THREAT_UPDATE_STATUS",
     parse_threat_update_status,
     render_threat_update_status,
+    semantic_exporter=export_threat_update_status_semantics,
 )
