@@ -172,7 +172,7 @@ def export_bloom_filter_semantics(parsed: BloomFilterPayload) -> RuleSemantics:
             for kind, offset, size, raw in framing_items
         )
     )
-    status = "confirmed_subset" if parsed.version == 0 else "unsupported"
+    status = "confirmed_subset"
     return RuleSemantics(
         status=status,
         representation="bloom_filter.payload.ir.v1",
@@ -222,11 +222,20 @@ def export_bloom_filter_semantics(parsed: BloomFilterPayload) -> RuleSemantics:
                         )
                     ),
                 ),
+                (
+                    "nonzero_version_consumer",
+                    JSONObject(
+                        (
+                            ("behavior", "skip_compare_return_false"),
+                            ("effect_on_match", "none"),
+                        )
+                    ),
+                ),
             )
         ),
         evidence=(
             "bloomfilter_record::Load wire framing and bounds in mpengine 1.443.903.0",
-            "BloomFilterProvider::CompareValues version-0 consumer subset",
+            "BloomFilterProvider::CompareValues version gate and version-0 consumer subset",
         ),
         profile="mpengine-1.443.903.0",
         issues=(
@@ -234,17 +243,6 @@ def export_bloom_filter_semantics(parsed: BloomFilterPayload) -> RuleSemantics:
                 "candidate_derivation_not_portable",
                 "Version-0 probe constants and candidate sources are confirmed, "
                 "but reproducing all candidates still requires engine scan context.",
-            ),
-            *(
-                (
-                    SemanticIssue(
-                        "nonzero_version_behavior_unknown",
-                        "The consumer behavior for nonzero versions is not confirmed.",
-                        (("version", parsed.version),),
-                    ),
-                )
-                if parsed.version != 0
-                else ()
             ),
             SemanticIssue(
                 "keys_encoding_unknown",
