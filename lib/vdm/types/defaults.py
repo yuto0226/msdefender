@@ -4,7 +4,15 @@ import json
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 DEFAULTS_TYPE: Final = 0x58
 _PREVIEW_BYTES: Final = 64
@@ -217,4 +225,175 @@ def render_defaults(parsed: DefaultsPayload) -> FormatResult:
     )
 
 
-SPEC = FamilySpec(DEFAULTS_TYPE, "DEFAULTS", parse_defaults, render_defaults)
+def _raw_span(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def export_defaults_semantics(parsed: DefaultsPayload) -> RuleSemantics:
+    """Export confirmed registration routing separately from later lookup effects."""
+    if parsed.ignored_body:
+        return RuleSemantics(
+            status="ignored",
+            representation="defaults.registration.ir.v1",
+            data=JSONObject(
+                (
+                    ("raw_hex", parsed.raw.hex()),
+                    ("receiver_mutation", "none"),
+                    ("downstream_effect", "none_established"),
+                    ("body_disposition", "receiver_early_return"),
+                )
+            ),
+            evidence=(
+                "DefaultsSignatureParser returns success for flags_0a & 6 in {2, 6} before entry construction",
+            ),
+            profile="mpengine-1.443.903.0",
+        )
+
+    is_special = bool(parsed.field_06 & 0x1000)
+    selector = parsed.field_06 & 0x0FFF if is_special else parsed.field_06
+    selector_limit = 3 if is_special else 215
+    selector_valid = selector < selector_limit
+    mutation = (
+        "append_default_entry_to_special_list"
+        if is_special
+        else "append_default_entry_to_general_list"
+    )
+    if not selector_valid:
+        mutation = "none_selector_out_of_range"
+
+    spans = [
+        _raw_span("header_0x08_os_mask", parsed.raw[8:10], 8),
+        _raw_span("header_0x0a_flags", parsed.raw[10:12], 10),
+        _raw_span("primary_name_utf16le_nul", parsed.primary_name_raw, 12),
+    ]
+    spans.append(
+        _raw_span(
+            "primary_gap",
+            parsed.primary_gap_raw,
+            12 + len(parsed.primary_name_raw),
+        )
+    )
+    cursor = parsed.first_subrecord_offset
+    subrecords = []
+    for item in parsed.subrecords:
+        item_spans = (
+            _raw_span("subrecord_header", item.raw[:12], cursor),
+            _raw_span("name_utf16le_nul", item.name_raw, cursor + 12),
+            _raw_span(
+                "data",
+                item.data_raw,
+                cursor + 12 + len(item.name_raw),
+            ),
+            _raw_span(
+                "stride_tail",
+                item.trailing_raw,
+                cursor + item.stride - len(item.trailing_raw),
+            ),
+        )
+        spans.extend(item_spans)
+        subrecords.append(
+            JSONObject(
+                (
+                    ("offset", cursor),
+                    ("stride", item.stride),
+                    ("fields", JSONArray(item_spans)),
+                )
+            )
+        )
+        cursor += item.stride
+
+    issues = [
+        SemanticIssue(
+            "default_entry_fields_uninterpreted",
+            "Subrecord names, data, and auxiliary fields are retained as raw spans; their consumer meanings are not established.",
+        ),
+        SemanticIssue(
+            "downstream_default_action_contextual",
+            "Registration does not establish a final action; the observed file-resource consumer applies a default only after a matching lookup.",
+        ),
+    ]
+    if is_special:
+        issues.append(
+            SemanticIssue(
+                "special_list_consumer_unknown",
+                "The special list is populated, but its retrieval consumer and final effect are not established.",
+            )
+        )
+    if parsed.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "receiver_accepted_suffix",
+                "Bytes after the declared subrecords are preserved; the receiver does not explicitly require cursor equality with payload length.",
+                (("length", len(parsed.trailing_raw)),),
+            )
+        )
+
+    return RuleSemantics(
+        status="confirmed_subset" if selector_valid else "ignored",
+        representation="defaults.registration.ir.v1",
+        data=JSONObject(
+            (
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "receiver_mutation",
+                    JSONObject(
+                        (
+                            ("kind", mutation),
+                            ("list", "special" if is_special else "general"),
+                            ("selector", selector),
+                            ("selector_limit_exclusive", selector_limit),
+                            ("selector_valid", selector_valid),
+                            ("allocation_dependent", selector_valid),
+                        )
+                    ),
+                ),
+                (
+                    "entry_match_metadata",
+                    JSONObject(
+                        (
+                            ("os_mask", parsed.field_08),
+                            ("os_mask_raw_hex", parsed.raw[8:10].hex()),
+                            (
+                                "match_condition",
+                                "query_mask == (query_mask & entry_mask)",
+                            ),
+                        )
+                    ),
+                ),
+                ("lookup_key", parsed.primary_name),
+                ("downstream_effect", "contextual_lookup_only"),
+                (
+                    "wire_spans",
+                    JSONArray((*spans,)),
+                ),
+                ("subrecords", JSONArray(tuple(subrecords))),
+                (
+                    "trailing_raw",
+                    _raw_span("unparsed_suffix", parsed.trailing_raw, cursor),
+                ),
+            )
+        ),
+        evidence=(
+            "DefaultsSignatureParser copies the entry and calls AddDefaultData",
+            "AddDefaultData routes field_06 to the general or special list and appends valid entries",
+            "CDefaultDataList::FindExact compares header +0x08 as a mask against the query mask",
+            "GetDefaultData reads only the general list; CResmgrFile::Action applies a matched file default",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+SPEC = FamilySpec(
+    DEFAULTS_TYPE,
+    "DEFAULTS",
+    parse_defaults,
+    render_defaults,
+    semantic_exporter=export_defaults_semantics,
+)
