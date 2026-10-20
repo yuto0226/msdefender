@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 LATENT_THREAT_TYPE: Final = 0x69
 PAYLOAD_SIZE: Final = 8
@@ -58,9 +66,103 @@ def render_latent_threat(parsed: LatentThreat) -> FormatResult:
     )
 
 
+def export_latent_threat_semantics(parsed: LatentThreat) -> RuleSemantics:
+    """Export the confirmed two-reference resolution and runtime gate."""
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="latent_threat.reference_gate.ir.v1",
+        data=JSONObject(
+            (
+                ("type", "latent_threat"),
+                ("raw_hex", parsed.raw.hex()),
+                ("wire_length", len(parsed.raw)),
+                (
+                    "words",
+                    JSONArray(
+                        (
+                            JSONObject(
+                                (
+                                    ("offset", 0),
+                                    ("value", parsed.word_0),
+                                    ("wire_role", "primary_threat_reference"),
+                                    (
+                                        "load_transform",
+                                        "get_threat_index(reference)",
+                                    ),
+                                    ("runtime_role", "primary_threat_index"),
+                                )
+                            ),
+                            JSONObject(
+                                (
+                                    ("offset", WORD_SIZE),
+                                    ("value", parsed.word_1),
+                                    ("wire_role", "secondary_threat_reference"),
+                                    (
+                                        "load_transform",
+                                        "get_threat_index(reference)",
+                                    ),
+                                    (
+                                        "runtime_role",
+                                        "secondary_threat_index",
+                                    ),
+                                )
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "load_filter",
+                    "discard_pair_if_either_get_threat_index_result_is_minus_one",
+                ),
+                ("lookup", "exact_primary_threat_index"),
+                (
+                    "gate",
+                    JSONObject(
+                        (
+                            ("consumer", "get_threat_match_level"),
+                            (
+                                "condition",
+                                (
+                                    "secondary entry exists, is enabled, and has "
+                                    "nonzero concrete level"
+                                ),
+                            ),
+                            (
+                                "effect",
+                                "permit primary threat concrete match level",
+                            ),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 latent_info_receiver",
+            "mpengine 1.443.903.0 fix_latent_threats",
+            "mpengine 1.443.903.0 get_latent_record",
+            "mpengine 1.443.903.0 get_threat_match_level",
+            "mpas.sig corpus: one 8-byte LATENT_THREAT record",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "corpus_pair_resolution_unknown",
+                "Static analysis does not establish whether the sole observed "
+                "pair survives threat-table resolution in a live engine.",
+            ),
+            SemanticIssue(
+                "outer_report_policy_unknown",
+                "The reference gate is confirmed, but the complete latent-resource "
+                "reporting policy is not exported.",
+            ),
+        ),
+    )
+
+
 SPEC = FamilySpec(
     LATENT_THREAT_TYPE,
     "LATENT_THREAT",
     parse_latent_threat,
     render_latent_threat,
+    semantic_exporter=export_latent_threat_semantics,
 )
