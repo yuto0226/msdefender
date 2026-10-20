@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 BLOOM_FILTER_TYPE: Final = 0xDB
 _FILTER_PREVIEW_BYTES: Final = 16
@@ -128,11 +136,131 @@ def render_bloom_filter(parsed: BloomFilterPayload) -> FormatResult:
     )
 
 
+def export_bloom_filter_semantics(parsed: BloomFilterPayload) -> RuleSemantics:
+    """Export confirmed wire/receiver facts without interpreting filter bits."""
+    filter_offset = 4
+    keys_len_offset = filter_offset + parsed.filter_len
+    keys_offset = keys_len_offset + 1
+    version_offset = keys_offset + parsed.keys_len
+    framing_items = (
+        ("filter_len", 0, 4, parsed.raw[:4]),
+        ("filter_data", filter_offset, parsed.filter_len, parsed.filter_data),
+        ("keys_len", keys_len_offset, 1, parsed.raw[keys_len_offset:keys_offset]),
+        ("keys_data", keys_offset, parsed.keys_len, parsed.keys_data),
+        (
+            "version",
+            version_offset,
+            len(parsed.version_raw),
+            parsed.version_raw,
+        ),
+        (
+            "trailing",
+            version_offset + len(parsed.version_raw),
+            len(parsed.trailing_raw),
+            parsed.trailing_raw,
+        ),
+    )
+    framing = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("kind", kind),
+                    ("raw_span", JSONObject((("offset", offset), ("length", size)))),
+                    ("raw_hex", raw.hex()),
+                )
+            )
+            for kind, offset, size, raw in framing_items
+        )
+    )
+    status = "confirmed_subset" if parsed.version == 0 else "unsupported"
+    return RuleSemantics(
+        status=status,
+        representation="bloom_filter.payload.ir.v1",
+        data=JSONObject(
+            (
+                ("type", "bloom_filter_payload"),
+                ("raw_hex", parsed.raw.hex()),
+                ("framing", framing),
+                ("filter_len", parsed.filter_len),
+                ("filter_raw_hex", parsed.filter_data.hex()),
+                ("keys_len", parsed.keys_len),
+                ("keys_raw_hex", parsed.keys_data.hex()),
+                ("keys_consumer_role", "scan_attribute_name_bytes"),
+                ("version", parsed.version),
+                ("version_present", bool(parsed.version_raw)),
+                ("version_raw_hex", parsed.version_raw.hex()),
+                ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                (
+                    "version0_consumer",
+                    JSONObject(
+                        (
+                            (
+                                "candidate_sources",
+                                JSONArray(
+                                    (
+                                        "provider_hash",
+                                        "scan_context_hash",
+                                        "crc_4096_at_offset_4288",
+                                        "crc_file_prefix_up_to_64k",
+                                        "get_hashes_outputs",
+                                    )
+                                ),
+                            ),
+                            (
+                                "probe_multipliers_signed_u32",
+                                JSONArray(
+                                    (
+                                        1996959901,
+                                        -301047503,
+                                        -1727442449,
+                                        124634143,
+                                    )
+                                ),
+                            ),
+                            ("effect_on_match", "set_scan_attribute"),
+                            ("direct_threat_verdict", False),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "bloomfilter_record::Load wire framing and bounds in mpengine 1.443.903.0",
+            "BloomFilterProvider::CompareValues version-0 consumer subset",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "candidate_derivation_not_portable",
+                "Version-0 probe constants and candidate sources are confirmed, "
+                "but reproducing all candidates still requires engine scan context.",
+            ),
+            *(
+                (
+                    SemanticIssue(
+                        "nonzero_version_behavior_unknown",
+                        "The consumer behavior for nonzero versions is not confirmed.",
+                        (("version", parsed.version),),
+                    ),
+                )
+                if parsed.version != 0
+                else ()
+            ),
+            SemanticIssue(
+                "keys_encoding_unknown",
+                "keys_data is retained as bytes; its encoding and termination "
+                "requirements are not established by the wire parser.",
+            ),
+        ),
+    )
+
+
 SPEC = FamilySpec(
     BLOOM_FILTER_TYPE,
     "BLOOM_FILTER",
     parse_bloom_filter,
     render_bloom_filter,
+    semantic_exporter=export_bloom_filter_semantics,
 )
 BLOOM_FILTER_SPEC = SPEC
 
@@ -142,6 +270,7 @@ __all__ = [
     "BLOOM_FILTER_TYPE",
     "SPEC",
     "BloomFilterPayload",
+    "export_bloom_filter_semantics",
     "parse_bloom_filter",
     "render_bloom_filter",
 ]
