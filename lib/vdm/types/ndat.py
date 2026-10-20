@@ -1,7 +1,7 @@
-"""Lossless parser and renderer for NDAT (0xA9) payloads."""
+"""Parser and renderer for NDAT (0xA9) payloads."""
 
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final
 
 from ..core import DisplaySection, FamilySpec, FormatResult
 
@@ -11,42 +11,49 @@ PREVIEW_SIZE: Final = 16
 
 @dataclass(frozen=True, slots=True)
 class NdatPayload:
-    """Observed NDAT wire data with counted and opaque body variants."""
+    """NDAT wire fields consumed by ``ReceiveNewTemplate``."""
 
     raw: bytes
-    callback_index_candidate: int
-    variant: Literal["counted", "opaque"]
-    body_raw: bytes
-    data_raw: bytes | None
-    declared_size: int | None
+    data_length: int
+    data_raw: bytes
+    callback_index: int
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
 
 
 def parse_ndat(payload: bytes) -> NdatPayload:
-    """Parse the trailing callback index and observed optional counted body."""
-    if not payload:
-        raise ValueError("truncated NDAT payload: need callback index byte, have 0")
+    """Parse the counted data, callback index, and optional record-ID suffix."""
+    if len(payload) < 4:
+        raise ValueError(
+            f"truncated NDAT payload: need 4-byte data length, have {len(payload)}"
+        )
 
-    body_raw = payload[:-1]
-    callback_index_candidate = payload[-1]
-    if len(body_raw) >= 4:
-        declared_size = int.from_bytes(body_raw[:4], "little")
-        if declared_size == len(payload) - 5:
-            return NdatPayload(
-                raw=payload,
-                callback_index_candidate=callback_index_candidate,
-                variant="counted",
-                body_raw=body_raw,
-                data_raw=body_raw[4:],
-                declared_size=declared_size,
-            )
+    data_length = int.from_bytes(payload[:4], "little")
+    callback_offset = 4 + data_length
+    if callback_offset >= len(payload):
+        available = max(0, len(payload) - 4)
+        raise ValueError(
+            "truncated NDAT payload: "
+            f"declared {data_length} data bytes and callback byte, have {available}"
+        )
+
+    suffix_and_trailing = payload[callback_offset + 1 :]
+    record_id_suffix_raw: bytes | None = None
+    trailing_raw = b""
+    if suffix_and_trailing:
+        terminator = suffix_and_trailing.find(b"\0")
+        if terminator < 0:
+            raise ValueError("unterminated NDAT record-ID suffix")
+        record_id_suffix_raw = suffix_and_trailing[: terminator + 1]
+        trailing_raw = suffix_and_trailing[terminator + 1 :]
 
     return NdatPayload(
         raw=payload,
-        callback_index_candidate=callback_index_candidate,
-        variant="opaque",
-        body_raw=body_raw,
-        data_raw=None,
-        declared_size=None,
+        data_length=data_length,
+        data_raw=payload[4:callback_offset],
+        callback_index=payload[callback_offset],
+        record_id_suffix_raw=record_id_suffix_raw,
+        trailing_raw=trailing_raw,
     )
 
 
@@ -58,43 +65,27 @@ def _text_preview(data: bytes) -> str:
     return text or "(empty)"
 
 
-def _body_rows(data: bytes, *, include_length: bool) -> tuple[tuple[str, str], ...]:
-    rows = [("body_length", f"{len(data)} B")] if include_length else []
-    rows.extend(
-        (
-            ("hex_preview", data[:PREVIEW_SIZE].hex(" ") or "(empty)"),
-            ("text_preview", _text_preview(data)),
-        )
+def _preview_rows(data: bytes) -> tuple[tuple[str, str], ...]:
+    return (
+        ("hex_preview", data[:PREVIEW_SIZE].hex(" ") or "(empty)"),
+        ("text_preview", _text_preview(data)),
     )
-    return tuple(rows)
 
 
 def render_ndat(parsed: NdatPayload) -> FormatResult:
-    callback_candidate = parsed.callback_index_candidate
+    suffix = parsed.record_id_suffix_raw
     rows = [
-        ("variant", parsed.variant),
-        (
-            "callback_index_candidate",
-            f"{callback_candidate} (0x{callback_candidate:02x})",
-        ),
+        ("data_length", f"{parsed.data_length} B"),
+        ("callback_index", f"{parsed.callback_index} (0x{parsed.callback_index:02x})"),
+        ("record_id_suffix", _text_preview(suffix[:-1]) if suffix else "not present"),
     ]
-    if parsed.variant == "counted":
-        assert parsed.data_raw is not None
-        rows.append(("declared_size", f"{parsed.declared_size} B"))
-        rows.append(("data_length", f"{len(parsed.data_raw)} B"))
-        rows.append(
-            ("data_ends_with_nul", "yes" if parsed.data_raw.endswith(b"\0") else "no")
-        )
-        preview_rows = _body_rows(parsed.data_raw, include_length=False)
-        title = "NDAT Counted Data"
-    else:
-        preview_rows = _body_rows(parsed.body_raw, include_length=True)
-        title = "NDAT Opaque Body"
+    if parsed.trailing_raw:
+        rows.append(("ignored_trailing_length", f"{len(parsed.trailing_raw)} B"))
 
     return FormatResult(
         sections=(
             DisplaySection("NDAT Metadata", rows=tuple(rows)),
-            DisplaySection(title, rows=preview_rows),
+            DisplaySection("NDAT Data", rows=_preview_rows(parsed.data_raw)),
         )
     )
 
