@@ -5,7 +5,16 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+    SemanticJSONValue,
+)
 
 VERSIONCHECK_TYPE: Final = 0x7A
 BASE_SIZE: Final = 8
@@ -503,9 +512,121 @@ def render_versioncheck(parsed: VersionCheckPayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
+def _profile_predicate(predicate: VersionCheckPredicate) -> JSONObject:
+    """Represent a confirmed predicate without claiming portable execution."""
+    if predicate.expression is None:
+        raise ValueError("known VERSIONCHECK predicate has no expression")
+    items: tuple[tuple[str, SemanticJSONValue], ...] = (
+        ("type", "mpengine_expression"),
+        ("result_type", "bool"),
+        ("text", predicate.expression),
+    )
+    if predicate.field_04_domain is not None:
+        items += (("operand_domain", predicate.field_04_domain),)
+    return JSONObject(items)
+
+
+def _versioncheck_data(
+    parsed: VersionCheckPayload,
+    predicate: VersionCheckPredicate | None,
+) -> JSONObject:
+    wire = JSONObject(
+        (
+            ("selector_raw", parsed.field_00),
+            ("operand_raw", parsed.field_04),
+            ("trailing_raw_hex", parsed.trailing_raw.hex()),
+        )
+    )
+    if predicate is None or predicate.status != "known":
+        evaluation = JSONObject(
+            (
+                ("type", "unsupported_selector"),
+                ("selector_raw", parsed.field_00),
+            )
+        )
+    else:
+        predicate_ir = _profile_predicate(predicate)
+        if predicate.effect is None:
+            evaluation = JSONObject(
+                (
+                    ("type", "predicate_evaluation"),
+                    ("predicate", predicate_ir),
+                )
+            )
+        else:
+            evaluation = JSONObject(
+                (
+                    ("type", "stateful_evaluation"),
+                    (
+                        "steps",
+                        JSONArray(
+                            (
+                                JSONObject(
+                                    (
+                                        ("type", "mpengine_state_effect"),
+                                        ("text", predicate.effect),
+                                    )
+                                ),
+                                predicate_ir,
+                            )
+                        ),
+                    ),
+                    ("result_step", 1),
+                )
+            )
+    return JSONObject(
+        (
+            ("type", "version_check"),
+            ("wire", wire),
+            ("evaluation", evaluation),
+        )
+    )
+
+
+def export_versioncheck_semantics(parsed: VersionCheckPayload) -> RuleSemantics:
+    """Export the verified engine-profile semantics of one VERSIONCHECK record.
+
+    The IR is portable as immutable JSON data, but its expressions deliberately
+    retain neutral mpengine state offsets and are not engine-independent code.
+    """
+    predicate = VERSIONCHECK_PREDICATES.get(parsed.field_00)
+    issues: list[SemanticIssue] = []
+    status: Literal["confirmed_subset", "unsupported"] = "confirmed_subset"
+    if predicate is None or predicate.status != "known":
+        status = "unsupported"
+        issues.append(
+            SemanticIssue(
+                "unknown_selector",
+                "VERSIONCHECK selector has no confirmed engine semantics.",
+                (("selector_raw", parsed.field_00),),
+            )
+        )
+    if parsed.trailing_raw:
+        status = "unsupported"
+        issues.append(
+            SemanticIssue(
+                "trailing_bytes_uninterpreted",
+                "VERSIONCHECK bytes after the confirmed eight-byte payload are not interpreted.",
+                (("length", len(parsed.trailing_raw)),),
+            )
+        )
+    return RuleSemantics(
+        status=status,
+        representation="versioncheck.engine_profile.ir.v1",
+        data=_versioncheck_data(parsed, predicate),
+        evidence=(
+            "mpengine 1.443.903.0 EvaluateVersioningOperator control and data flow",
+            "all 90 VERSIONCHECK selectors observed in the current corpus are mapped",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
     VERSIONCHECK_TYPE,
     "VERSIONCHECK",
     parse_versioncheck,
     render_versioncheck,
+    semantic_exporter=export_versioncheck_semantics,
 )
