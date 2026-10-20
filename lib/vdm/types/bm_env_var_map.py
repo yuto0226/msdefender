@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import FamilySpec, FormatResult
+from ..core import (
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 BM_ENV_VAR_MAP_TYPE: Final = 0xED
 _WORD_PREVIEW_COUNT: Final = 16
@@ -91,7 +98,8 @@ def render_bm_env_var_map(parsed: BMEnvVarMap) -> FormatResult:
     """Render bounded metadata and previews; retain complete bytes in the model."""
     name_preview = parsed.name_raw[:_NAME_PREVIEW_BYTES].hex(" ")
     if len(parsed.name_raw) > _NAME_PREVIEW_BYTES:
-        name_preview += f" … ({len(parsed.name_raw) - _NAME_PREVIEW_BYTES} more bytes)"
+        remaining = len(parsed.name_raw) - _NAME_PREVIEW_BYTES
+        name_preview += f" … ({remaining} more bytes)"
 
     return FormatResult(
         fields=(
@@ -106,9 +114,167 @@ def render_bm_env_var_map(parsed: BMEnvVarMap) -> FormatResult:
     )
 
 
+def export_bm_env_var_map_semantics(parsed: BMEnvVarMap) -> RuleSemantics:
+    """Export the confirmed receiver mutation and tokenized-path handoff."""
+    name_offset = 1
+    vector_a_count_offset = name_offset + len(parsed.name_raw)
+    vector_a_offset = vector_a_count_offset + 2
+    vector_b_count_offset = vector_a_offset + 2 * len(parsed.vector_a)
+    vector_b_offset = vector_b_count_offset + 2
+
+    def word_entries(words: tuple[int, ...], offset: int) -> JSONArray:
+        return JSONArray(
+            tuple(
+                JSONObject(
+                    (
+                        ("index", index),
+                        ("word_raw", word),
+                        ("raw_hex", word.to_bytes(2, "little").hex()),
+                        ("payload_offset", offset + index * 2),
+                    )
+                )
+                for index, word in enumerate(words)
+            )
+        )
+
+    issues = (
+        SemanticIssue(
+            "environment_name_lookup_not_reproduced",
+            "The engine performs a case-insensitive name lookup; this exporter "
+            "retains the bytes and does not duplicate the complete alias table.",
+        ),
+        SemanticIssue(
+            "word_and_token_names_unknown",
+            "WORD values and token/selector identifiers remain raw; their domain "
+            "names are not established by the confirmed dataflow.",
+        ),
+        SemanticIssue(
+            "candidate_expansion_runtime_dependent",
+            "The IEnvMatch virtual methods produce wide-string candidates, but "
+            "their expansion rules are not established here.",
+        ),
+        SemanticIssue(
+            "final_detection_policy_unknown",
+            "Candidate strings are passed into the general detection path; this "
+            "record alone does not establish a final detection or report.",
+        ),
+    )
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="bm_env_var_map.tokenized_path_manifest.v1",
+        data=JSONObject(
+            (
+                ("record_type", BM_ENV_VAR_MAP_TYPE),
+                ("raw_payload_hex", parsed.raw.hex()),
+                (
+                    "wire",
+                    JSONObject(
+                        (
+                            ("name_length_offset", 0),
+                            ("name_length", parsed.name_len),
+                            ("name_offset", name_offset),
+                            ("name_raw_hex", parsed.name_raw.hex()),
+                            ("name_encoding", "unknown"),
+                            ("vector_a_count_offset", vector_a_count_offset),
+                            ("vector_a_count", len(parsed.vector_a)),
+                            ("vector_a_offset", vector_a_offset),
+                            (
+                                "vector_a",
+                                word_entries(parsed.vector_a, vector_a_offset),
+                            ),
+                            ("vector_b_count_offset", vector_b_count_offset),
+                            ("vector_b_count", len(parsed.vector_b)),
+                            ("vector_b_offset", vector_b_offset),
+                            (
+                                "vector_b",
+                                word_entries(parsed.vector_b, vector_b_offset),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "receiver_mutation",
+                    JSONObject(
+                        (
+                            ("name_to_environment_id", "case_insensitive_exact_lookup"),
+                            (
+                                "unknown_name_effect",
+                                "no_map_write_when_environment_id_is_zero",
+                            ),
+                            (
+                                "maps",
+                                JSONArray(
+                                    (
+                                        JSONObject(
+                                            (
+                                                ("vector", "a"),
+                                                ("map_member_offset", 0),
+                                                ("key_source", "vector_a WORD"),
+                                            )
+                                        ),
+                                        JSONObject(
+                                            (
+                                                ("vector", "b"),
+                                                ("map_member_offset", 16),
+                                                ("key_source", "vector_b WORD"),
+                                            )
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "insertion",
+                                (
+                                    "map[WORD] |= environment_id; create map[WORD] "
+                                    "= environment_id when absent"
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "consumer_semantics",
+                    JSONObject(
+                        (
+                            ("consumer", "tokenized_path_signature_matcher"),
+                            ("lookup_key_source", "signature_attribute WORD at +0x22"),
+                            ("lookup", "query both maps and obtain two QWORD values"),
+                            (
+                                "candidate_boundary",
+                                "IEnvMatch virtual methods at vtable +0x18/+0x20",
+                            ),
+                            (
+                                "candidate_result",
+                                (
+                                    "wide-string candidates passed to general "
+                                    "detection path"
+                                ),
+                            ),
+                            ("word_meaning", "unknown"),
+                            ("token_or_selector_meaning", "unknown"),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "docs/signature/0xED_BM_ENV_VAR_MAP.md",
+            "docs/mpengine.dll/BMEnvVarReceiver.md",
+            "docs/mpengine.dll/BmEnvVarMapping_AddVar.md",
+            "docs/mpengine.dll/BmEnvVarMapping_AddVarInMap.md",
+            "docs/mpengine.dll/GetVarListFromSigs.md",
+            "docs/mpengine.dll/SignatureHandler_TestForDetectionWithTokenizedPath.md",
+            "mpengine-1.443.903.0",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=issues,
+    )
+
+
 SPEC = FamilySpec(
     BM_ENV_VAR_MAP_TYPE,
     "BM_ENV_VAR_MAP",
     parse_bm_env_var_map,
     render_bm_env_var_map,
+    semantic_exporter=export_bm_env_var_map_semantics,
 )
