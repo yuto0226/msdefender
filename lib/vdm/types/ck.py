@@ -349,19 +349,23 @@ def _ck_semantics(
             )
         )
         comparison = "each callback result equals its stored DWORD"
-        representation = "ckoldrec.callback_checks.ir.v1"
+        representation = "ckoldrec.callback_checks.ir.v2"
         callback_description = "caller_supplied_callback"
         callback_sequence = JSONArray((first, second))
         key = JSONObject(
-            (("kind", "callback_slot"), ("index", parsed.callback_mode_index))
+            (
+                ("kind", "callback_slot"),
+                ("index", parsed.callback_mode_index),
+                ("first_word_raw", parsed.first_word),
+                ("uninterpreted_high_bits", parsed.first_word & ~0x3F),
+            )
         )
         first_word_unknown = parsed.first_word & ~0x3F
         if first_word_unknown:
-            unsupported = True
             issues.append(
                 SemanticIssue(
                     "unknown_first_word_bits",
-                    "CKOLDREC first_word bits outside the low six callback index bits are uninterpreted.",
+                    "CKOLDREC first_word bits outside the low six callback index bits are uninterpreted; raw row bytes are retained for identity hashes.",
                     (("unknown_bits", first_word_unknown),),
                 )
             )
@@ -390,6 +394,20 @@ def _ck_semantics(
             (
                 ("kind", "subject_first_dword"),
                 ("value", parsed.first_dword),
+            )
+        )
+
+    evidence = [
+        "ReceiveNewTemplate 0x1000/0x1006 descriptor behavior",
+        "CK scanner callback/key comparisons documented for this engine profile",
+        "ShouldContinueScanning separates a scanner match from final reporting",
+    ]
+    if old:
+        evidence.extend(
+            (
+                "krecpush_end @ 0x180474B20 and ksigsearch @ 0x18019428C",
+                "SigseqFromDatabaseRecord @ 0x1805F7D84",
+                "SigshaFromDatabaseRecord @ 0x1803CA9B4",
             )
         )
 
@@ -428,11 +446,7 @@ def _ck_semantics(
                 ),
             )
         ),
-        evidence=(
-            "ReceiveNewTemplate 0x1000/0x1006 descriptor behavior",
-            "CK scanner callback/key comparisons documented for this engine profile",
-            "ShouldContinueScanning separates a scanner match from final reporting",
-        ),
+        evidence=tuple(evidence),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
     )
