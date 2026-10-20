@@ -82,7 +82,12 @@ def _render(parsed: KpatPayload, *, extended: bool) -> FormatResult:
         ("suffix_preview", _preview(parsed.suffix)),
     ]
     if extended:
-        rows.append(("pattern_semantics", "unverified; raw bytes retained"))
+        rows.append(
+            (
+                "pattern_semantics",
+                "BM runtime matcher confirmed; wire-to-row mapping unverified",
+            )
+        )
     return FormatResult(
         sections=(DisplaySection("KPATEX" if extended else "KPAT", rows=tuple(rows)),)
     )
