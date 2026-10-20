@@ -60,6 +60,15 @@ from .hstr import (
     render_hstr,
 )
 from .kcrce import KcrcePayload, parse_kcrce, render_kcrce
+from .kpat import (
+    KPAT_SPEC,
+    KPATEX_SPEC,
+    KpatPayload,
+    parse_kpat,
+    parse_kpatex,
+    render_kpat,
+    render_kpatex,
+)
 from .latent_threat import SPEC as LATENT_THREAT_SPEC
 from .latent_threat import LatentThreat, parse_latent_threat, render_latent_threat
 from .lua_standalone import (
@@ -202,6 +211,8 @@ __all__ = [
     "FPATH_TYPES",
     "HOSTSENTRY_TYPE",
     "HSTR_SPECS",
+    "KPATEX_SPEC",
+    "KPAT_SPEC",
     "LATENT_THREAT_SPEC",
     "LUASTANDALONE_SPEC",
     "LUASTANDALONE_TYPE",
@@ -253,6 +264,7 @@ __all__ = [
     "HstrPayload",
     "HstrSubsignature",
     "KcrcePayload",
+    "KpatPayload",
     "LatentThreat",
     "LuaMetadataField",
     "LuaScriptCategory",
@@ -297,6 +309,8 @@ __all__ = [
     "parse_hostsentry",
     "parse_hstr",
     "parse_kcrce",
+    "parse_kpat",
+    "parse_kpatex",
     "parse_latent_threat",
     "parse_lua_standalone",
     "parse_macro_pcode",
@@ -336,6 +350,8 @@ __all__ = [
     "render_hostsentry",
     "render_hstr",
     "render_kcrce",
+    "render_kpat",
+    "render_kpatex",
     "render_latent_threat",
     "render_lua_standalone",
     "render_macro_pcode",

@@ -16,6 +16,7 @@ from .types.friendlyfile import SPEC as FRIENDLYFILE_SHA256_SPEC
 from .types.hostsentry import SPEC as HOSTSENTRY_SPEC
 from .types.hstr import HSTR_SPECS
 from .types.kcrce import SPEC as KCRCE_SPEC
+from .types.kpat import KPAT_SPEC, KPATEX_SPEC
 from .types.latent_threat import SPEC as LATENT_THREAT_SPEC
 from .types.lua_standalone import SPEC as LUASTANDALONE_SPEC
 from .types.macro_pcode import MACRO_PCODE_SPECS
@@ -63,6 +64,8 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             SIGTREE_BM_SPEC,
             STATIC_SPEC,
             KCRCE_SPEC,
+            KPAT_SPEC,
+            KPATEX_SPEC,
             HOSTSENTRY_SPEC,
             PESTATIC_SPEC,
             PEBMPAT_SPEC,
