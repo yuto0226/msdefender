@@ -12,8 +12,8 @@ BASE_SIZE: Final = 8
 @dataclass(frozen=True, slots=True)
 class VersionCheckPayload:
     raw: bytes
-    operator_value: int
-    comparison_value: int
+    field_00: int
+    field_04: int
     trailing_raw: bytes
 
 
@@ -27,20 +27,23 @@ def parse_versioncheck(payload: bytes) -> VersionCheckPayload:
 
     return VersionCheckPayload(
         raw=payload,
-        operator_value=int.from_bytes(payload[0:4], "little"),
-        comparison_value=int.from_bytes(payload[4:8], "little"),
+        field_00=int.from_bytes(payload[0:4], "little"),
+        field_04=int.from_bytes(payload[4:8], "little"),
         trailing_raw=payload[BASE_SIZE:],
     )
 
 
 def render_versioncheck(parsed: VersionCheckPayload) -> FormatResult:
-    """Render the two observed DWORDs without assigning unknown flag meanings."""
+    """Render confirmed DWORD ordering and conservative evaluator roles."""
     sections = [
         DisplaySection(
             "Version Check",
             rows=(
-                ("operator_value", f"0x{parsed.operator_value:08x}"),
-                ("comparison_value", f"0x{parsed.comparison_value:08x}"),
+                (
+                    "field_00",
+                    f"0x{parsed.field_00:08x} (evaluator selector; mapping unresolved)",
+                ),
+                ("field_04", f"0x{parsed.field_04:08x} (selector-dependent operand)"),
             ),
         )
     ]
