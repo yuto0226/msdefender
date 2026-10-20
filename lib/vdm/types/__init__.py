@@ -264,6 +264,8 @@ from .threat import (
     render_threat_end,
     threat_category_name,
 )
+from .titanflt import SPEC as TITANFLT_SPEC
+from .titanflt import TITANFLT_TYPE, TitanFltPayload, parse_titanflt, render_titanflt
 from .trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
 from .trusted_publisher import (
     TrustedPublisher,
@@ -375,6 +377,8 @@ __all__ = [
     "SPEC",
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
+    "TITANFLT_SPEC",
+    "TITANFLT_TYPE",
     "TRUSTED_PUBLISHER_SPEC",
     "UNPLIB_SPEC",
     "UNPLIB_TYPE",
@@ -445,6 +449,7 @@ __all__ = [
     "ThreatBegin",
     "ThreatEnd",
     "ThreatMetadata",
+    "TitanFltPayload",
     "TrustedPublisher",
     "UnpLibPayload",
     "VdllCodePayload",
@@ -503,6 +508,7 @@ __all__ = [
     "parse_static",
     "parse_threat_begin",
     "parse_threat_end",
+    "parse_titanflt",
     "parse_trusted_publisher",
     "parse_unplib",
     "parse_vdll_code",
@@ -560,6 +566,7 @@ __all__ = [
     "render_static",
     "render_threat_begin",
     "render_threat_end",
+    "render_titanflt",
     "render_trusted_publisher",
     "render_unplib",
     "render_vdll_code",

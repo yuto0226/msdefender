@@ -47,6 +47,7 @@ from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.snidex import SNIDEX_SPECS
 from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
+from .types.titanflt import SPEC as TITANFLT_SPEC
 from .types.trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
 from .types.unplib import SPEC as UNPLIB_SPEC
 from .types.vdll_code import FAMILY_SPECS as VDLL_CODE_SPECS
@@ -105,6 +106,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             *FPATH_SPECS,
             *FOP_SPECS,
             *THREAT_SPECS,
+            TITANFLT_SPEC,
             *HSTR_SPECS,
             *NID_SPECS,
             NDAT_SPEC,
