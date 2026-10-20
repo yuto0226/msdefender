@@ -419,6 +419,27 @@ _FAMILY_NAMES = MappingProxyType(
     }
 )
 
+# Only list families with an identified scan consumer in this engine database.
+_CONFIRMED_MATCHER_FAMILIES = frozenset(
+    {
+        0x61,  # PEHSTR
+        0x78,  # PEHSTR_EXT
+        0x85,  # PEHSTR_EXT2
+        0x8C,  # ELFHSTR_EXT
+        0x8D,  # MACHOHSTR_EXT
+        0x8F,  # MACROHSTR_EXT
+        0x92,  # ASCRIPTHSTR_EXT
+        0xBE,  # DEXHSTR_EXT
+        0xBF,  # JAVAHSTR_EXT
+        0xC5,  # ARHSTR_EXT
+        0xD1,  # SWFHSTR_EXT
+        0xD3,  # AUTOITHSTR_EXT
+        0xD4,  # INNOHSTR_EXT
+        0xD7,  # CMDHSTR_EXT
+        0xEA,  # DMGHSTR_EXT
+    }
+)
+
 
 def _read_u16(payload: bytes, cursor: int, label: str) -> tuple[int, int]:
     end = cursor + 2
@@ -703,12 +724,12 @@ def _raw_field(kind: str, raw: bytes, offset: int) -> JSONObject:
 
 
 def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
-    """Export a lossless HSTR view without claiming a final engine verdict."""
+    """Export a lossless HSTR matcher subset, never a final engine verdict."""
     unsupported = False
     issues: list[SemanticIssue] = [
         SemanticIssue(
             "outer_verdict_unknown",
-            "HSTR scoring, validators, and policy are not exported as a final verdict.",
+            "Tag scoring, report gates, validators, and policy are outside this matcher subset.",
         )
     ]
     if parsed.receiver_ignored:
@@ -716,6 +737,23 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             SemanticIssue(
                 "receiver_ignored",
                 "The receiver skips this record because a flag exceeds 0x03FF.",
+            )
+        )
+    if parsed.type_byte not in _CONFIRMED_MATCHER_FAMILIES:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "family_matcher_context_unconfirmed",
+                "This family has no confirmed scan consumer in the analyzed database.",
+                (("type_byte", parsed.type_byte),),
+            )
+        )
+    if not parsed.subsignatures:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "empty_subsignature_set",
+                "No HSTR matcher was available to confirm a non-empty subset.",
             )
         )
 
@@ -767,6 +805,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         if subsig.flags is not None and subsig.flags.value & 0x0002:
             pattern = decode_bm_pattern(subsig.data)
             pattern_data, pattern_issues = serialize_bm_pattern(pattern)
+            bm_render = render_bm_yara(pattern)
             unsupported |= bool(pattern_issues)
             for issue in pattern_issues:
                 issues.append(
@@ -776,15 +815,30 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                         (("subsignature_index", index), *issue.details),
                     )
                 )
-            if any(
-                isinstance(operation, BmOpaque)
-                for operation in interpret_bm_pattern(pattern).operations
+            if (
+                any(
+                    isinstance(operation, BmOpaque)
+                    for operation in interpret_bm_pattern(pattern).operations
+                )
+                or bm_render.fidelity.value == "unsupported"
             ):
                 unsupported = True
                 issues.append(
                     SemanticIssue(
                         "unsupported_bm_operation",
                         "At least one BM operation has no confirmed semantics.",
+                        (("subsignature_index", index),),
+                    )
+                )
+            elif bm_render.fidelity.value != "exact" or bm_render.requirements:
+                unsupported = True
+                issues.append(
+                    SemanticIssue(
+                        "bm_match_context_unconfirmed",
+                        (
+                            "BM lowering requires matcher context not supplied "
+                            "by this family export."
+                        ),
                         (("subsignature_index", index),),
                     )
                 )
@@ -861,6 +915,18 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
     data = JSONObject(
         (
             ("raw_hex", parsed.raw.hex()),
+            ("semantic_scope", "generic_matcher_subset_not_detection"),
+            (
+                "scope_excludes",
+                JSONArray(
+                    (
+                        "tag_score_aggregation_and_thresholds",
+                        "report_gates_and_match_levels",
+                        "validator_outcomes",
+                        "final_detection_verdict",
+                    )
+                ),
+            ),
             ("framing", JSONArray(tuple(framing))),
             ("type_byte", parsed.type_byte),
             ("family", _FAMILY_NAMES[parsed.type_byte]),
@@ -881,12 +947,15 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if parsed.receiver_ignored
             else "unsupported"
             if unsupported
-            else "observed_only"
+            else "confirmed_subset"
         ),
-        representation="hstr.subsignatures.ir.v1",
+        representation="hstr.matcher-subset.ir.v1",
         data=data,
         evidence=(
-            "HSTR wire framing and matcher classification for mpengine 1.443.903.0",
+            "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
+            "mpengine 1.443.903.0 add_sstring_internal @ 0x1800FE008",
+            "mpengine 1.443.903.0 hstr_internal_search_worker @ 0x1800E9F70",
+            "mpengine 1.443.903.0 hstr_internal_report_match_worker @ 0x180136268",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
