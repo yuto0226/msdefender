@@ -41,6 +41,7 @@ class ThreatBlock:
 
     @property
     def id_matches(self) -> bool | None:
+        """Compare local envelope IDs; this is not an engine acceptance check."""
         if self.end is None:
             return None
         return self.begin.threat_id == self.end.threat_id
@@ -120,7 +121,7 @@ def iter_wire_records(source: Path | BinaryIO) -> Iterator[WireRecord]:
 
 
 def iter_threat_events(source: Path | BinaryIO) -> Iterator[StreamEvent]:
-    """Group records while yielding out-of-block records in original order."""
+    """Group adjacent markers for inspection, not to emulate engine validation."""
     begin_record: WireRecord | None = None
     begin: ThreatBegin | None = None
     interior: list[WireRecord] = []
