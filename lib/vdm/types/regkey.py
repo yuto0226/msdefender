@@ -7,28 +7,6 @@ from ..core import DisplaySection, FamilySpec, FormatResult
 
 REGKEY_TYPE: Final = 0x63
 
-# These labels are analyst candidates inferred from receiver routing and samples;
-# the engine does not expose a confirmed enum name table in the analyzed docs.
-_KEY_TYPE_CANDIDATES: Final = {
-    0x0001: "hive",
-    0x0002: "subkey",
-    0x0003: "root-path",
-    0x0004: "value",
-}
-
-_REGISTRY_HIVES: Final = (
-    "HKEY_CLASSES_ROOT",
-    "HKEY_CURRENT_USER",
-    "HKEY_LOCAL_MACHINE",
-    "HKEY_USERS",
-    "HKEY_CURRENT_CONFIG",
-    "HKCR",
-    "HKCU",
-    "HKLM",
-    "HKU",
-    "HKCC",
-)
-
 
 @dataclass(frozen=True, slots=True)
 class RegKeyPayload:
@@ -43,8 +21,6 @@ class RegKeyPayload:
     value_raw: bytes
     value_utf8_preview: str | None
     tail_raw: bytes
-    hive: str | None
-    subkey: str | None
 
 
 def _decode_utf8(data: bytes) -> str | None:
@@ -61,20 +37,6 @@ def _decode_printable_utf8_preview(data: bytes) -> str | None:
     if decoded is None or not decoded.isprintable():
         return None
     return decoded
-
-
-def _split_registry_hive(path: str | None) -> tuple[str | None, str | None]:
-    if path is None:
-        return None, None
-
-    upper_path = path.upper()
-    for hive in _REGISTRY_HIVES:
-        if upper_path == hive:
-            return hive, ""
-        prefix = hive + "\\"
-        if upper_path.startswith(prefix):
-            return hive, path[len(prefix) :]
-    return None, None
 
 
 def parse_regkey(payload: bytes) -> RegKeyPayload:
@@ -110,8 +72,6 @@ def parse_regkey(payload: bytes) -> RegKeyPayload:
     key_path_raw = payload[4:key_path_end]
     key_path = _decode_utf8(key_path_raw)
     value_raw = payload[value_offset:value_end]
-    hive, subkey = _split_registry_hive(key_path)
-
     return RegKeyPayload(
         raw=payload,
         key_type=key_type,
@@ -122,16 +82,11 @@ def parse_regkey(payload: bytes) -> RegKeyPayload:
         value_raw=value_raw,
         value_utf8_preview=_decode_printable_utf8_preview(value_raw),
         tail_raw=payload[value_end:],
-        hive=hive,
-        subkey=subkey,
     )
 
 
 def render_regkey(parsed: RegKeyPayload) -> FormatResult:
-    candidate = _KEY_TYPE_CANDIDATES.get(parsed.key_type)
     key_type = f"0x{parsed.key_type:04x}"
-    if candidate is not None:
-        key_type += f" (candidate: {candidate})"
 
     rows: list[tuple[str, str]] = [
         ("key_type", key_type),
@@ -142,13 +97,6 @@ def render_regkey(parsed: RegKeyPayload) -> FormatResult:
     else:
         rows.append(("key_path_raw", parsed.key_path_raw.hex(" ") or "(empty)"))
         rows.append(("key_path_text", "invalid UTF-8; raw bytes preserved"))
-    if parsed.hive is not None:
-        rows.extend(
-            (
-                ("hive", parsed.hive),
-                ("subkey", parsed.subkey or "(empty)"),
-            )
-        )
     rows.extend((("value_len", str(parsed.value_len)),))
     if parsed.value_utf8_preview is not None:
         rows.append(("value_utf8_preview", parsed.value_utf8_preview))
