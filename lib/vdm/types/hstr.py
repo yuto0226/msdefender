@@ -14,8 +14,6 @@ from ..bm import (
 from ..bm_semantic import serialize_bm_pattern
 from ..bm_yara import (
     BmMatchContext,
-    BmRenderIssue,
-    BmYaraFidelity,
     BmYaraRender,
     render_bm_yara,
 )
@@ -571,7 +569,7 @@ def parse_hstr(payload: bytes, *, type_byte: int) -> HstrPayload:
 
 def _hstr_bm_runtime_context(
     subsig: HstrSubsignature, pattern: BmPattern
-) -> tuple[JSONObject, BmMatchContext | None, bool]:
+) -> tuple[JSONObject, BmMatchContext | None]:
     """Derive BM worker facts from an explicitly selected HSTR BM subsig."""
     assert subsig.flags is not None
     flags = subsig.flags.value
@@ -592,35 +590,22 @@ def _hstr_bm_runtime_context(
             ("capture_opcode_present", capture_opcode_present),
         )
     )
-    match_context = (
-        BmMatchContext(
+    match_context = None
+    if not capture_opcode_present:
+        match_context = BmMatchContext(
             reader_kind="BUFFER",
-            translation=translation,
+            translation=translation if identity else "ascii_lowercase",
             worker_mode=worker_mode,
             capture_enabled=False,
         )
-        if identity and not capture_opcode_present
-        else None
-    )
-    return display, match_context, identity
+    return display, match_context
 
 
 def _render_hstr_bm_yara(
     subsig: HstrSubsignature, pattern: BmPattern
 ) -> tuple[BmYaraRender, JSONObject]:
-    runtime_context, match_context, identity = _hstr_bm_runtime_context(subsig, pattern)
+    runtime_context, match_context = _hstr_bm_runtime_context(subsig, pattern)
     rendered = render_bm_yara(pattern, context=match_context)
-    if not identity:
-        rendered = BmYaraRender(
-            body=None,
-            fidelity=BmYaraFidelity.UNSUPPORTED,
-            diagnostics=(
-                *rendered.diagnostics,
-                BmRenderIssue("bm_nonidentity_translation", 0),
-            ),
-            requirements=rendered.requirements,
-            printable_preview=rendered.printable_preview,
-        )
     return rendered, runtime_context
 
 
@@ -947,10 +932,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                         (("subsignature_index", index), *issue.details),
                     )
                 )
-            unsupported_render_diagnostic = any(
-                diagnostic.code != "bm_nonidentity_translation"
-                for diagnostic in bm_render.diagnostics
-            )
+            unsupported_render_diagnostic = bool(bm_render.diagnostics)
             if (
                 any(
                     isinstance(operation, BmOpaque)
@@ -966,16 +948,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                         (("subsignature_index", index),),
                     )
                 )
-            if not (subsig.flags.value & 0x0001):
-                unsupported = True
-                issues.append(
-                    SemanticIssue(
-                        "bm_nonidentity_translation",
-                        "The HSTR BM caller applies an ASCII lowercase translation map.",
-                        (("subsignature_index", index),),
-                    )
-                )
-            elif bm_render.fidelity.value == "conditional" or bm_render.requirements:
+            if bm_render.fidelity.value == "conditional" or bm_render.requirements:
                 unsupported = True
                 issues.append(
                     SemanticIssue(
@@ -1139,12 +1112,14 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v3",
+        representation="hstr.matcher-subset.ir.v4",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
             "mpengine 1.443.903.0 add_sstring_internal @ 0x1800FE008",
             "mpengine 1.443.903.0 hstr_internal_search_worker @ 0x1800E9F70",
+            "mpengine 1.443.903.0 BMPatternToLower @ 0x1800FECFC",
+            "mpengine 1.443.903.0 BM_MAP_LOWCASE selected when HSTR flags bit0 is clear",
             "mpengine 1.443.903.0 hstr_internal_report_match_worker @ 0x180136268",
         ),
         profile="mpengine-1.443.903.0",

@@ -36,12 +36,13 @@ class BmRenderIssue:
 class BmMatchContext:
     """Explicit worker facts; None means unknown, not a permissive default.
 
-    Translation is the complete 256-byte map. HSTR BYTE_EXACT is a wire flag,
-    not evidence for worker_mode. Invalid or incompatible facts fail closed.
+    Translation is either a complete 256-byte map or one explicitly modeled
+    map. HSTR BYTE_EXACT is a wire flag, not evidence for worker_mode. Invalid
+    or incompatible facts fail closed.
     """
 
     reader_kind: Literal["BUFFER", "FILE"] | None = None
-    translation: bytes | None = None
+    translation: bytes | Literal["ascii_lowercase"] | None = None
     worker_mode: int | None = None
     capture_enabled: bool | None = None
 
@@ -115,8 +116,11 @@ def _context_requirements(
         (
             "translation",
             context.translation,
-            isinstance(context.translation, bytes)
-            and context.translation == _IDENTITY_TRANSLATION,
+            (
+                isinstance(context.translation, bytes)
+                and context.translation == _IDENTITY_TRANSLATION
+            )
+            or context.translation == "ascii_lowercase",
         ),
         (
             "worker_mode",
@@ -155,13 +159,39 @@ def render_bm_yara(
         issues.append(BmRenderIssue("remaining_raw", pattern.consumed))
 
     parts: list[tuple[str, int, bool, int | None]] = []
+    lowercase_map = context is not None and context.translation == "ascii_lowercase"
     output_limited = False
     for operation in interpret_bm_pattern(pattern).operations:
         if isinstance(operation, BmLiteral):
             if operation.value:
-                parts.append(
-                    (operation.value.hex(" ").upper(), operation.offset, False, None)
-                )
+                if lowercase_map:
+                    estimated = (
+                        sum(
+                            12 if 0x41 <= byte <= 0x5A or 0x61 <= byte <= 0x7A else 2
+                            for byte in operation.value
+                        )
+                        + len(operation.value)
+                        - 1
+                    )
+                    existing = sum(len(part[0]) for part in parts) + len(parts)
+                    if existing + estimated + 4 > MAX_YARA_RHS_CHARS:
+                        output_limited = True
+                        issues.append(
+                            BmRenderIssue("unsupported.output_limit", operation.offset)
+                        )
+                        continue
+                    atoms = []
+                    for byte in operation.value:
+                        if 0x41 <= byte <= 0x5A:
+                            byte += 0x20
+                        if 0x61 <= byte <= 0x7A:
+                            atoms.append(f"( {byte - 0x20:02X} | {byte:02X} )")
+                        else:
+                            atoms.append(f"{byte:02X}")
+                    literal = " ".join(atoms)
+                else:
+                    literal = operation.value.hex(" ").upper()
+                parts.append((literal, operation.offset, False, None))
         elif isinstance(operation, BmGap):
             if operation.maximum:
                 jump = (
@@ -183,7 +213,17 @@ def render_bm_yara(
                 )
                 parts.append((jump, operation.offset, True, operation.raw[1]))
         elif isinstance(operation, BmAlternatives):
-            if not operation.choices or any(not choice for choice in operation.choices):
+            if lowercase_map:
+                issues.append(
+                    BmRenderIssue(
+                        "unsupported.ascii_lowercase_alternatives",
+                        operation.offset,
+                        operation.token.raw_id,
+                    )
+                )
+            elif not operation.choices or any(
+                not choice for choice in operation.choices
+            ):
                 issues.append(
                     BmRenderIssue(
                         "empty_alternative", operation.offset, operation.token.raw_id
@@ -194,6 +234,14 @@ def render_bm_yara(
                     choice.hex(" ").upper() for choice in operation.choices
                 )
                 parts.append((f"( {choices} )", operation.offset, False, None))
+        elif lowercase_map and isinstance(operation, BmExtension):
+            issues.append(
+                BmRenderIssue(
+                    "unsupported.ascii_lowercase_extension",
+                    operation.offset,
+                    operation.token.raw_id,
+                )
+            )
         elif (
             isinstance(operation, BmExtension)
             and operation.name in ("RANGE_REPEAT", "RANGE_NEGATIVE_REPEAT")
