@@ -140,6 +140,16 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
                 "else +0xBA8 if nonzero, else 5 (0 if gktab is null)"
             ),
         ),
+        0x22: VersionCheckPredicate(
+            "partial",
+            "shared CRC/lower-string path; complete state gates and comparison predicate unresolved",
+            "field_04 high byte seeds CRCLowerStringW; low 24 bits feed a floating-point comparison; accepted domain unresolved",
+        ),
+        0x39: VersionCheckPredicate(
+            "partial",
+            "shared CRC/lower-string path; complete state gates and comparison predicate unresolved",
+            "field_04 high byte seeds CRCLowerStringW; low 24 bits feed a floating-point comparison; accepted domain unresolved",
+        ),
         0x84: VersionCheckPredicate(
             "known",
             "always false; unsupported selector path",
