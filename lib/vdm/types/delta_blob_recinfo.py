@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 DELTA_BLOB_RECINFO_TYPE: Final = 0x74
 ENTRY_SIZE: Final = 4
@@ -88,9 +96,83 @@ def render_delta_blob_recinfo(parsed: DeltaBlobRecInfo) -> FormatResult:
     )
 
 
+def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemantics:
+    """Export the exact observed entry bytes without assigning field meanings."""
+    entries = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("index", index),
+                    ("wire_offset", 4 + index * ENTRY_SIZE),
+                    ("type_raw", entry.type),
+                    ("value_raw_u24le", entry.value),
+                    (
+                        "raw_hex",
+                        parsed.raw[
+                            4 + index * ENTRY_SIZE : 8 + index * ENTRY_SIZE
+                        ].hex(),
+                    ),
+                )
+            )
+            for index, entry in enumerate(parsed.entries)
+        )
+    )
+    return RuleSemantics(
+        status="observed_only",
+        representation="delta_blob_recinfo.observed_metadata.v1",
+        data=JSONObject(
+            (
+                ("record_type", "DELTA_BLOB_RECINFO"),
+                ("raw_hex", parsed.raw.hex()),
+                ("entry_count", parsed.entry_count),
+                ("entry_size", ENTRY_SIZE),
+                ("entries", entries),
+                (
+                    "association",
+                    "adjacent DELTA_BLOB record observed; exact linkage unresolved",
+                ),
+                (
+                    "detection_relevance",
+                    "metadata observation; no detection predicate established",
+                ),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8",
+            "The alternate-mode 0x74 skip branch does not inspect payload fields",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "entry_field_semantics_unknown",
+                (
+                    "The one-byte type and three-byte value fields are preserved "
+                    "as raw numeric values; their meanings are unresolved."
+                ),
+                (("entry_count", parsed.entry_count),),
+            ),
+            SemanticIssue(
+                "record_linkage_unconfirmed",
+                (
+                    "Adjacency to DELTA_BLOB does not prove that entries identify "
+                    "its commands or reconstructed output."
+                ),
+            ),
+            SemanticIssue(
+                "not_detection_rule",
+                (
+                    "No evidence establishes that this metadata record is a "
+                    "scan-time detection predicate or verdict."
+                ),
+            ),
+        ),
+    )
+
+
 SPEC = FamilySpec(
     DELTA_BLOB_RECINFO_TYPE,
     "DELTA_BLOB_RECINFO",
     parse_delta_blob_recinfo,
     render_delta_blob_recinfo,
+    semantic_exporter=export_delta_blob_recinfo_semantics,
 )

@@ -6,7 +6,15 @@ import zlib
 from dataclasses import dataclass
 from typing import BinaryIO, Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 DELTA_BLOB_TYPE: Final = 0x73
 HEADER_SIZE: Final = 8
@@ -247,4 +255,117 @@ def render_delta_blob(parsed: DeltaBlob) -> FormatResult:
     return FormatResult(sections=(DisplaySection("DELTA_BLOB", rows=tuple(rows)),))
 
 
-SPEC = FamilySpec(DELTA_BLOB_TYPE, "DELTA_BLOB", parse_delta_blob, render_delta_blob)
+def export_delta_blob_semantics(parsed: DeltaBlob) -> RuleSemantics:
+    """Export the complete observed patch program without calling it a rule."""
+    commands = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("index", index),
+                    ("command_offset", command.command_offset),
+                    ("operation", command.kind),
+                    ("output_length", command.output_length),
+                    ("literal_data_offset", command.data_offset),
+                    ("source_offset", command.source_offset),
+                )
+            )
+            for index, command in enumerate(parsed.commands)
+        )
+    )
+    return RuleSemantics(
+        status="observed_only",
+        representation="delta_blob.patch_artifact.v1",
+        data=JSONObject(
+            (
+                ("record_type", "DELTA_BLOB"),
+                ("role", "compressed_input_patch_artifact"),
+                (
+                    "wire",
+                    JSONObject(
+                        (
+                            ("raw_hex", parsed.raw.hex()),
+                            ("header_size", HEADER_SIZE),
+                            ("expected_output_size", parsed.expected_output_size),
+                            ("expected_output_crc32_raw", parsed.expected_output_crc32),
+                            ("source_offset_width", parsed.source_offset_width),
+                            ("command_stream_consumed_to_eof", True),
+                        )
+                    ),
+                ),
+                (
+                    "application",
+                    JSONObject(
+                        (
+                            ("operation", "copy_from_source_or_inline_literal"),
+                            ("source_size", parsed.source_size),
+                            ("reconstruction_performed", False),
+                            ("commands", commands),
+                        )
+                    ),
+                ),
+                (
+                    "integrity",
+                    JSONObject(
+                        (
+                            ("declared_output_size_matches_command_total", True),
+                            ("copy_ranges_checked", parsed.source_size is not None),
+                            ("crc32_status", "not_verified_without_source"),
+                            (
+                                "crc32_algorithm",
+                                "raw CRC32; initial 0xFFFFFFFF; no final XOR",
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "detection_relevance",
+                    "patch artifact; not a detection predicate or rule",
+                ),
+                (
+                    "command_totals",
+                    JSONObject(
+                        (
+                            ("count", len(parsed.commands)),
+                            ("literal_bytes", parsed.literal_bytes),
+                            ("copied_bytes", parsed.copied_bytes),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8",
+            "mpengine 1.443.903.0 DispatchProxy::ConsumeInputCompressed @ 0x1800D9ED0",
+            (
+                "Observed mpas.sig and mpav.sig streams parse to EOF and their "
+                "reconstructed size/CRC match the headers"
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "source_required_for_crc_verification",
+                (
+                    "The expected CRC covers reconstructed bytes; no source bytes "
+                    "were supplied to this semantic exporter."
+                ),
+                (("expected_crc32_raw", parsed.expected_output_crc32),),
+            ),
+            SemanticIssue(
+                "patch_artifact_not_detection_rule",
+                (
+                    "This record describes input reconstruction operations and "
+                    "does not encode a scan-time detection predicate."
+                ),
+            ),
+        ),
+    )
+
+
+SPEC = FamilySpec(
+    DELTA_BLOB_TYPE,
+    "DELTA_BLOB",
+    parse_delta_blob,
+    render_delta_blob,
+    semantic_exporter=export_delta_blob_semantics,
+)
