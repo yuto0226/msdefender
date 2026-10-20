@@ -9,7 +9,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 MAX_FIELD_COUNT = 256
 # Grammar-derived ceiling: at most MAX_FIELD_COUNT full fields, each with a
@@ -193,6 +201,121 @@ def render_cleanstore_rule(parsed: CleanStoreRule) -> FormatResult:
     return FormatResult(sections=(section,))
 
 
+def export_cleanstore_rule_semantics(parsed: CleanStoreRule) -> RuleSemantics:
+    """Export the corpus-observed wire partition without inferred semantics."""
+    framing = []
+    for field in parsed.fields:
+        header = parsed.raw[field.offset : field.offset + field.header_size]
+        framing.append(
+            JSONObject(
+                (
+                    ("kind", "corpus_observed_field_envelope"),
+                    (
+                        "raw_span",
+                        JSONObject(
+                            (("offset", field.offset), ("length", field.header_size))
+                        ),
+                    ),
+                    ("raw_hex", header.hex()),
+                    ("tag_raw_hex", parsed.raw[field.offset : field.offset + 2].hex()),
+                    (
+                        "selector_raw_hex",
+                        parsed.raw[
+                            field.offset + 2 : field.offset
+                            + field.header_size
+                            - (3 if field.value_type is not None else 2)
+                        ].hex(),
+                    ),
+                    (
+                        "value_type_raw_hex",
+                        None
+                        if field.value_type is None
+                        else parsed.raw[field.offset + 4 : field.offset + 5].hex(),
+                    ),
+                    (
+                        "data_span",
+                        JSONObject(
+                            (
+                                ("offset", field.offset + field.header_size),
+                                ("length", field.size),
+                            )
+                        ),
+                    ),
+                    ("data_raw_hex", field.data.hex()),
+                )
+            )
+        )
+
+    unknown = JSONObject((("status", "unknown"), ("evidence", JSONArray(()))))
+    issues = (
+        SemanticIssue(
+            "engine_semantics_unconfirmed",
+            "The 0xC1 receiver, storage, runtime consumer, and final policy are not identified.",
+        ),
+        SemanticIssue(
+            "corpus_profile_only",
+            "The envelope partition is supported by the current corpus, not validated as an engine ABI.",
+        ),
+    )
+    return RuleSemantics(
+        status="observed_only",
+        representation="cleanstore_rule.corpus_wire_profile.v1",
+        data=JSONObject(
+            (
+                ("raw_hex", parsed.raw.hex()),
+                ("raw_length", len(parsed.raw)),
+                (
+                    "wire",
+                    JSONObject(
+                        (
+                            ("partition", JSONArray(tuple(framing))),
+                            ("tail_disposition", "no_unparsed_tail"),
+                        )
+                    ),
+                ),
+                ("receiver", unknown),
+                ("storage", unknown),
+                ("runtime_consumer", unknown),
+                ("final_policy", unknown),
+                (
+                    "corpus",
+                    JSONObject(
+                        (
+                            ("stream", "mpas.sig"),
+                            ("record_type", "0xC1"),
+                            ("record_count", 61),
+                            ("block", "!InfrastructureShared"),
+                            ("threat_id", "0x7FFFFFF0"),
+                            (
+                                "payload_lengths",
+                                JSONArray((49, 78, 86, 88, 90, 95, 103, 109)),
+                            ),
+                            ("mpav_record_count", 0),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            (
+                "The local mpas.sig corpus contains 61 records whose bytes are "
+                "fully partitioned by this parser."
+            ),
+            (
+                "mpengine 1.443.903.0 DispatchRecord at 0x1800FAF18 uses the "
+                "dynamic gktab dispatcher; the type 0xC1 receiver slot remains "
+                "unverified."
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=issues,
+    )
+
+
 SPEC = FamilySpec(
-    0xC1, "CLEANSTORE_RULE", parse_cleanstore_rule, render_cleanstore_rule
+    0xC1,
+    "CLEANSTORE_RULE",
+    parse_cleanstore_rule,
+    render_cleanstore_rule,
+    semantic_exporter=export_cleanstore_rule_semantics,
 )
