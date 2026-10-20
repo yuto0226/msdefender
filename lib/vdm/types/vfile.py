@@ -3,7 +3,16 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+    SemanticJSONValue,
+)
 
 VFILE_TYPE: Final = 0x83
 VFILEEX_TYPE: Final = 0xB2
@@ -194,8 +203,179 @@ def render_vfile(parsed: VFilePayload) -> FormatResult:
     )
 
 
-VFILE_SPEC = FamilySpec(VFILE_TYPE, "VFILE", parse_vfile, render_vfile)
-VFILEEX_SPEC = FamilySpec(VFILEEX_TYPE, "VFILEEX", parse_vfileex, render_vfile)
+def _span(offset: int, length: int) -> JSONObject:
+    return JSONObject((("offset", offset), ("length", length)))
+
+
+def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
+    """Export confirmed receiver framing while preserving opaque entry bytes."""
+    prefix_size = 4 if parsed.signature_type == VFILEEX_TYPE else 0
+    entries: list[SemanticJSONValue] = []
+    for index in range(parsed.entry_count):
+        entry_offset = prefix_size + index * _ENTRY_STRIDE
+        entry = parsed.entries_raw[index * _ENTRY_STRIDE : (index + 1) * _ENTRY_STRIDE]
+        path_field = entry[
+            _ENTRY_PREFIX_SIZE : _ENTRY_PREFIX_SIZE + _ENTRY_PATH_FIELD_SIZE
+        ]
+        terminator_at = next(
+            (
+                offset
+                for offset in range(0, _ENTRY_PATH_FIELD_SIZE, 2)
+                if path_field[offset : offset + 2] == b"\0\0"
+            ),
+            None,
+        )
+        path_candidate = (
+            path_field if terminator_at is None else path_field[:terminator_at]
+        )
+        copied_field = JSONObject(
+            (
+                (
+                    "raw_span",
+                    _span(entry_offset + _ENTRY_PREFIX_SIZE, len(path_field)),
+                ),
+                ("raw_hex", path_field.hex()),
+                ("receiver_copy_size", _ENTRY_PATH_FIELD_SIZE),
+            )
+        )
+        path_object = JSONObject(
+            (
+                (
+                    "raw_span",
+                    _span(entry_offset + _ENTRY_PREFIX_SIZE, len(path_candidate)),
+                ),
+                ("raw_hex", path_candidate.hex()),
+                ("nul_terminated_within_520_bytes", terminator_at is not None),
+                (
+                    "text_candidate",
+                    path_candidate.decode("utf-16le", errors="surrogatepass")
+                    if terminator_at is not None
+                    else None,
+                ),
+            )
+        )
+        entries.append(
+            JSONObject(
+                (
+                    ("index", index),
+                    ("raw_span", _span(entry_offset, _ENTRY_STRIDE)),
+                    ("raw_hex", entry.hex()),
+                    ("prefix_raw_hex", entry[:_ENTRY_PREFIX_SIZE].hex()),
+                    ("receiver_copied_field", copied_field),
+                    ("path_candidate", path_object),
+                )
+            )
+        )
+
+    framing_items: list[tuple[str, SemanticJSONValue]] = [
+        ("entry_stride", _ENTRY_STRIDE),
+        ("entry_region", _span(prefix_size, len(parsed.entries_raw))),
+        ("tail_required_nonempty", True),
+    ]
+    if parsed.signature_type == VFILEEX_TYPE:
+        framing_items.append(
+            (
+                "count_prefix",
+                JSONObject(
+                    (
+                        ("raw_span", _span(0, 4)),
+                        ("raw_hex", parsed.raw[:4].hex()),
+                        ("value", parsed.entry_count),
+                    )
+                ),
+            )
+        )
+    else:
+        framing_items.append(("entry_count", 1))
+
+    confirmed_routes = ["offline_receiver"]
+    persistence_details = "offline storage serialization is not confirmed for this type"
+    if parsed.signature_type == VFILEEX_TYPE:
+        confirmed_routes.append("offline_storage_serialization_and_cached_load")
+        persistence_details = (
+            "receiver-end writes deduplicated DATA/LINK chunks to compressed offline "
+            "storage; cached-end reads the storage and calls vfs_global_vfileinit"
+        )
+
+    data = JSONObject(
+        (
+            ("type", "vfile" if parsed.signature_type == VFILE_TYPE else "vfileex"),
+            ("signature_type", parsed.signature_type),
+            ("raw_hex", parsed.raw.hex()),
+            ("framing", JSONObject(tuple(framing_items))),
+            ("entry_count", parsed.entry_count),
+            ("entries", JSONArray(tuple(entries))),
+            (
+                "tail",
+                JSONObject(
+                    (
+                        (
+                            "raw_span",
+                            _span(
+                                prefix_size + len(parsed.entries_raw),
+                                len(parsed.tail_raw),
+                            ),
+                        ),
+                        ("raw_hex", parsed.tail_raw.hex()),
+                        ("consumer", "kstoreex"),
+                        ("framing_semantics", "unknown"),
+                    )
+                ),
+            ),
+            (
+                "persistence",
+                JSONObject(
+                    (
+                        ("confirmed_routes", JSONArray(tuple(confirmed_routes))),
+                        ("details", persistence_details),
+                    )
+                ),
+            ),
+            ("scan_time_matcher", None),
+            ("report_consumer", None),
+        )
+    )
+    return RuleSemantics(
+        status="observed_only",
+        representation="vfile.receiver_framing.v1",
+        data=data,
+        evidence=(
+            "mpengine 1.443.903.0 vfileAndVfileexReceiver @ 0x1802C8A58",
+            "mpengine 1.443.903.0 VFILE/VFILEEX offline receiver registrations",
+            "mpengine 1.443.903.0 VFILEEX offline and cached receiver-end routines",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "scan_time_matcher_report_unlocated",
+                "The scan-time matcher and report consumer for VFILE/VFILEEX have "
+                "not been located; receiver and persistence behavior do not establish "
+                "scan-time detection semantics.",
+            ),
+            SemanticIssue(
+                "tail_framing_unknown",
+                "Bytes after the fixed-stride entry region are retained as raw tail; "
+                "their internal framing is unknown.",
+                (("length", len(parsed.tail_raw)),),
+            ),
+        ),
+    )
+
+
+VFILE_SPEC = FamilySpec(
+    VFILE_TYPE,
+    "VFILE",
+    parse_vfile,
+    render_vfile,
+    semantic_exporter=export_vfile_semantics,
+)
+VFILEEX_SPEC = FamilySpec(
+    VFILEEX_TYPE,
+    "VFILEEX",
+    parse_vfileex,
+    render_vfile,
+    semantic_exporter=export_vfile_semantics,
+)
 
 __all__ = [
     "VFILEEX_SPEC",
@@ -203,6 +383,7 @@ __all__ = [
     "VFILE_SPEC",
     "VFILE_TYPE",
     "VFilePayload",
+    "export_vfile_semantics",
     "parse_vfile",
     "parse_vfileex",
     "render_vfile",
