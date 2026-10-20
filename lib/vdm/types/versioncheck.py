@@ -124,6 +124,44 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
         0x38: VersionCheckPredicate("partial"),
         0x2C: VersionCheckPredicate("partial"),
         0x05: VersionCheckPredicate("partial"),
+        0x08: VersionCheckPredicate(
+            "known", "dword(gktab+0xB20) != field_04", "full uint32_t inequality"
+        ),
+        0x10: VersionCheckPredicate(
+            "known",
+            "dword(gktab+0xB2C) >= field_04",
+            "full uint32_t unsigned comparison",
+        ),
+        0x12: VersionCheckPredicate(
+            "known", "dword(gktab+0xB64) != field_04", "full uint32_t inequality"
+        ),
+        0x26: VersionCheckPredicate(
+            "known", "dword(gktab+0xB8C) != field_04", "full uint32_t inequality"
+        ),
+        0x30: VersionCheckPredicate(
+            "known",
+            "dword(gktab+0xB80) >= field_04 and byte(gktab+0xB40) != bool(field_04) and byte(gktab+0xB51) != bool(field_04)",
+            "full uint32_t unsigned comparison plus two raw uint8_t comparisons against operand truthiness",
+        ),
+        0x4D: VersionCheckPredicate(
+            "known",
+            "byte(gktab+0xB40) != bool(field_04) and byte(gktab+0xB51) != bool(field_04)",
+            "two raw uint8_t comparisons against uint32_t truthiness",
+        ),
+        0x6E: VersionCheckPredicate(
+            "known",
+            "dword(gktab+0x15968) >= field_04",
+            "full uint32_t unsigned comparison",
+        ),
+        0x72: VersionCheckPredicate(
+            "known", "dword(gktab+0xB74) == field_04", "full uint32_t equality"
+        ),
+        0x76: VersionCheckPredicate("partial"),
+        0x85: VersionCheckPredicate(
+            "known",
+            "version_state(gktab) != field_04",
+            "full uint32_t inequality; state is gktab+0xBBC if nonzero, else +0xBA8 if nonzero, else 5 (0 if gktab is null)",
+        ),
     }
 )
 
