@@ -5,6 +5,7 @@ from typing import Any
 from .core import FamilySpec
 from .types.aggregator import AGGREGATOR_SPECS
 from .types.bm_info import SPEC as BM_INFO_SPEC
+from .types.boot import BOOT_SPEC
 from .types.brute import SPEC as BRUTE_SPEC
 from .types.ck import CK_SPECS
 from .types.cleanscript import SPEC as CLEANSCRIPT_SPEC
@@ -65,6 +66,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             KVIR32_SPEC,
             *SNIDEX_SPECS,
             BM_INFO_SPEC,
+            BOOT_SPEC,
             BRUTE_SPEC,
             *CK_SPECS,
             FRIENDLYFILE_SHA256_SPEC,
