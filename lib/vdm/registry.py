@@ -24,6 +24,7 @@ from .types.gensfx import SPEC as GENSFX_SPEC
 from .types.hostsentry import SPEC as HOSTSENTRY_SPEC
 from .types.hstr import HSTR_SPECS
 from .types.il2_pattern import SPEC as IL2_PATTERN_SPEC
+from .types.jsinit import SPEC as JSINIT_SPEC
 from .types.kcrce import SPEC as KCRCE_SPEC
 from .types.kpat import KPAT_SPEC, KPATEX_SPEC
 from .types.kvir32 import SPEC as KVIR32_SPEC
@@ -94,6 +95,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             KPAT_SPEC,
             KPATEX_SPEC,
             IL2_PATTERN_SPEC,
+            JSINIT_SPEC,
             MAGICCODE_SPEC,
             HOSTSENTRY_SPEC,
             PESTATIC_SPEC,

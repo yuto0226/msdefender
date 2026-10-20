@@ -120,6 +120,8 @@ from .il2_pattern import (
 from .il2_pattern import (
     SPEC as IL2_PATTERN_SPEC,
 )
+from .jsinit import JSINIT_TYPE, JsInitPayload, parse_jsinit, render_jsinit
+from .jsinit import SPEC as JSINIT_SPEC
 from .kcrce import KcrcePayload, parse_kcrce, render_kcrce
 from .kpat import (
     KPAT_SPEC,
@@ -326,6 +328,8 @@ __all__ = [
     "HSTR_SPECS",
     "IL2_PATTERN_SPEC",
     "IL2_PATTERN_TYPE",
+    "JSINIT_SPEC",
+    "JSINIT_TYPE",
     "KPATEX_SPEC",
     "KPAT_SPEC",
     "KVIR32_SPEC",
@@ -407,6 +411,7 @@ __all__ = [
     "HstrPayload",
     "HstrSubsignature",
     "IL2Pattern",
+    "JsInitPayload",
     "KcrcePayload",
     "KpatPayload",
     "Kvir32Payload",
@@ -468,6 +473,7 @@ __all__ = [
     "parse_hostsentry",
     "parse_hstr",
     "parse_il2_pattern",
+    "parse_jsinit",
     "parse_kcrce",
     "parse_kpat",
     "parse_kpatex",
@@ -525,6 +531,7 @@ __all__ = [
     "render_hostsentry",
     "render_hstr",
     "render_il2_pattern",
+    "render_jsinit",
     "render_kcrce",
     "render_kpat",
     "render_kpatex",
