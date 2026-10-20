@@ -1,6 +1,9 @@
 from .aggregator import (
     AGGREGATOR_SPECS,
+    AggregatorCondition,
     AggregatorPayload,
+    AggregatorSemanticIssue,
+    interpret_aggregator,
     parse_aggregator,
     render_aggregator,
 )
@@ -492,7 +495,9 @@ __all__ = [
     "VFILE_TYPE",
     "VREG_SPEC",
     "VREG_TYPE",
+    "AggregatorCondition",
     "AggregatorPayload",
+    "AggregatorSemanticIssue",
     "AppMapPayload",
     "AppMapSection",
     "AppMapTerminator",
@@ -581,6 +586,7 @@ __all__ = [
     "VersionCheckPayload",
     "VregPayload",
     "compute_delta_blob_output_crc32",
+    "interpret_aggregator",
     "parse_aggregator",
     "parse_appmap",
     "parse_bloom_filter",
