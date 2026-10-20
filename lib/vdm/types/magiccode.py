@@ -37,9 +37,10 @@ def _take(payload: bytes, cursor: int, size: int, label: str) -> tuple[bytes, in
 def parse_magiccode(payload: bytes) -> MagicCodePayload:
     """Decode the three length-prefixed fields observed in the local corpus.
 
-    This framing is a corpus profile, not the registered engine receiver
-    grammar. Static analysis of that receiver reaches 0xA004 before an entry is
-    built for this type in the documented engine version.
+    This framing is a corpus profile, not an engine-confirmed receiver
+    grammar. The current binary's module initializer registers database
+    storage for this signature family, but this audit did not identify a
+    C0-specific receiver acceptance path.
     """
     if not payload:
         raise ValueError("truncated MAGICCODE field 00 length")
@@ -75,7 +76,7 @@ def _text_preview(data: bytes) -> str:
 
 def render_magiccode(parsed: MagicCodePayload) -> FormatResult:
     rows = (
-        ("semantic_status", "corpus profile; registered receiver returns 0xA004"),
+        ("semantic_status", "corpus profile; engine receiver acceptance unresolved"),
         ("profile", "u8-length field, u32-length field, u16-length field"),
         ("field_00_length", str(len(parsed.field_00_raw))),
         ("field_00_text", _text_preview(parsed.field_00_c_string)),
