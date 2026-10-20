@@ -12,6 +12,7 @@ from .types.boot import BOOT_SPEC
 from .types.brute import SPEC as BRUTE_SPEC
 from .types.ck import CK_SPECS
 from .types.cleanscript import SPEC as CLEANSCRIPT_SPEC
+from .types.cleanstore_rule import SPEC as CLEANSTORE_RULE_SPEC
 from .types.common_code import SPEC as COMMON_CODE_SPEC
 from .types.dbvar import SPEC as DBVAR_SPEC
 from .types.defaults import SPEC as DEFAULTS_SPEC
@@ -99,6 +100,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             BOOT_SPEC,
             BRUTE_SPEC,
             *CK_SPECS,
+            CLEANSTORE_RULE_SPEC,
             FRIENDLYFILE_SHA256_SPEC,
             FTRIE_POS_SPEC,
             GENSFX_SPEC,

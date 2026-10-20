@@ -52,6 +52,13 @@ from .cleanscript import (
     parse_cleanscript,
     render_cleanscript,
 )
+from .cleanstore_rule import SPEC as CLEANSTORE_RULE_SPEC
+from .cleanstore_rule import (
+    CleanStoreField,
+    CleanStoreRule,
+    parse_cleanstore_rule,
+    render_cleanstore_rule,
+)
 from .common_code import SPEC as COMMON_CODE_SPEC
 from .common_code import CommonCodePayload, parse_common_code, render_common_code
 from .dbvar import DBVAR_TYPE, DbVarPayload, parse_dbvar, render_dbvar
@@ -376,6 +383,7 @@ __all__ = [
     "CKSIMPLEREC_TYPE",
     "CK_SPECS",
     "CLEANSCRIPT_SPEC",
+    "CLEANSTORE_RULE_SPEC",
     "COMMON_CODE_SPEC",
     "DBVAR_SPEC",
     "DBVAR_TYPE",
@@ -485,6 +493,8 @@ __all__ = [
     "CkOldPayload",
     "CkSimplePayload",
     "CleanScriptPayload",
+    "CleanStoreField",
+    "CleanStoreRule",
     "CommonCodePayload",
     "DbVarPayload",
     "DefaultsPayload",
@@ -567,6 +577,7 @@ __all__ = [
     "parse_ckoldrec",
     "parse_cksimplerec",
     "parse_cleanscript",
+    "parse_cleanstore_rule",
     "parse_common_code",
     "parse_dbvar",
     "parse_defaults",
@@ -635,6 +646,7 @@ __all__ = [
     "render_ckoldrec",
     "render_cksimplerec",
     "render_cleanscript",
+    "render_cleanstore_rule",
     "render_common_code",
     "render_dbvar",
     "render_defaults",
