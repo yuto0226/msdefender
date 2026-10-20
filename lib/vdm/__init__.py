@@ -24,6 +24,7 @@ from .luaq import (
 from .recid import RecIdTail, parse_recid_tail
 from .record import DecodedRecord, decode_record
 from .registry import DEFAULT_REGISTRY, build_registry, get_spec
+from .semantic import SemanticExportResult, export_record_semantics
 from .stream import (
     BlockReason,
     OrphanRecordEvent,
@@ -576,6 +577,7 @@ __all__ = [
     "RpfRoutinePayload",
     "RpfRoutineSection",
     "RuleSemantics",
+    "SemanticExportResult",
     "SemanticIssue",
     "SigtreeEntry",
     "SigtreeParam",
@@ -613,6 +615,7 @@ __all__ = [
     "export_aggregator_semantics",
     "export_lua51",
     "export_record_artifacts",
+    "export_record_semantics",
     "get_spec",
     "interpret_aggregator",
     "iter_threat_events",
