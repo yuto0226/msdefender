@@ -16,6 +16,7 @@ from .types.cleanstore_rule import SPEC as CLEANSTORE_RULE_SPEC
 from .types.common_code import SPEC as COMMON_CODE_SPEC
 from .types.dbvar import SPEC as DBVAR_SPEC
 from .types.defaults import SPEC as DEFAULTS_SPEC
+from .types.delta_blob import SPEC as DELTA_BLOB_SPEC
 from .types.delta_blob_recinfo import SPEC as DELTA_BLOB_RECINFO_SPEC
 from .types.explicitresource import SPEC as EXPLICITRESOURCE_SPEC
 from .types.fop import FOP_SPECS
@@ -87,6 +88,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             CLEANSCRIPT_SPEC,
             DBVAR_SPEC,
             DEFAULTS_SPEC,
+            DELTA_BLOB_SPEC,
             DELTA_BLOB_RECINFO_SPEC,
             EXPLICITRESOURCE_SPEC,
             VREG_SPEC,

@@ -71,6 +71,15 @@ from .defaults import (
     render_defaults,
 )
 from .defaults import SPEC as DEFAULTS_SPEC
+from .delta_blob import (
+    DELTA_BLOB_TYPE,
+    DeltaBlob,
+    DeltaBlobCommand,
+    compute_delta_blob_output_crc32,
+    parse_delta_blob,
+    render_delta_blob,
+)
+from .delta_blob import SPEC as DELTA_BLOB_SPEC
 from .delta_blob_recinfo import (
     DELTA_BLOB_RECINFO_TYPE,
     DeltaBlobRecInfo,
@@ -391,6 +400,8 @@ __all__ = [
     "DEFAULTS_TYPE",
     "DELTA_BLOB_RECINFO_SPEC",
     "DELTA_BLOB_RECINFO_TYPE",
+    "DELTA_BLOB_SPEC",
+    "DELTA_BLOB_TYPE",
     "EXPLICITRESOURCE_SPEC",
     "EXPLICITRESOURCE_TYPE",
     "FOP_EXTENDED_TYPES",
@@ -499,6 +510,8 @@ __all__ = [
     "DbVarPayload",
     "DefaultsPayload",
     "DefaultsSubrecord",
+    "DeltaBlob",
+    "DeltaBlobCommand",
     "DeltaBlobRecInfo",
     "DeltaBlobRecInfoEntry",
     "ExplicitResourcePayload",
@@ -567,6 +580,7 @@ __all__ = [
     "VdllMetaPayload",
     "VersionCheckPayload",
     "VregPayload",
+    "compute_delta_blob_output_crc32",
     "parse_aggregator",
     "parse_appmap",
     "parse_bloom_filter",
@@ -581,6 +595,7 @@ __all__ = [
     "parse_common_code",
     "parse_dbvar",
     "parse_defaults",
+    "parse_delta_blob",
     "parse_delta_blob_recinfo",
     "parse_explicitresource",
     "parse_fop",
@@ -650,6 +665,7 @@ __all__ = [
     "render_common_code",
     "render_dbvar",
     "render_defaults",
+    "render_delta_blob",
     "render_delta_blob_recinfo",
     "render_explicitresource",
     "render_fop",
