@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 EXPLICITRESOURCE_TYPE: Final = 0xD6
 _PATH_PREVIEW_CHARS: Final = 64
@@ -94,17 +102,170 @@ def render_explicitresource(parsed: ExplicitResourcePayload) -> FormatResult:
     )
 
 
+def export_explicitresource_semantics(
+    parsed: ExplicitResourcePayload,
+) -> RuleSemantics:
+    """Export the confirmed path storage and case-insensitive runtime lookup."""
+    try:
+        path_text = parsed.path_raw.decode("utf-16le")
+    except UnicodeDecodeError:
+        path_text = None
+
+    issues = [
+        SemanticIssue(
+            "recid_semantics_unknown",
+            "The stored RecID is produced by createrecidp; its full meaning is "
+            "not exported.",
+        ),
+        SemanticIssue(
+            "final_verdict_unknown",
+            "A matched explicit-resource row does not establish the final "
+            "threat verdict.",
+        ),
+    ]
+    if parsed.tail_raw:
+        issues.append(
+            SemanticIssue(
+                "tail_grammar_unknown",
+                "The receiver passes bytes after the bounded path to createrecidp "
+                "without a confirmed tail grammar.",
+                (("length", len(parsed.tail_raw)),),
+            )
+        )
+    if path_text is None:
+        issues.append(
+            SemanticIssue(
+                "invalid_utf16le_path",
+                "The bounded path bytes are not valid UTF-16LE; no path lookup "
+                "value is inferred.",
+            )
+        )
+    elif "\0" in path_text:
+        issues.append(
+            SemanticIssue(
+                "embedded_nul_path",
+                "The receiver compares NUL-terminated paths; this payload "
+                "contains an embedded NUL.",
+            )
+        )
+
+    supported = path_text is not None and "\0" not in path_text and not parsed.tail_raw
+    return RuleSemantics(
+        status="confirmed_subset" if supported else "unsupported",
+        representation="explicitresource.path_lookup.ir.v1",
+        data=JSONObject(
+            (
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "framing",
+                    JSONArray(
+                        (
+                            JSONObject(
+                                (
+                                    ("kind", "path_len"),
+                                    ("offset", 0),
+                                    ("length", 2),
+                                    ("raw_hex", parsed.raw[:2].hex()),
+                                )
+                            ),
+                            JSONObject(
+                                (
+                                    ("kind", "path_utf16le"),
+                                    ("offset", 2),
+                                    ("length", parsed.path_len),
+                                    ("raw_hex", parsed.path_raw.hex()),
+                                )
+                            ),
+                            JSONObject(
+                                (
+                                    ("kind", "opaque_tail"),
+                                    ("offset", 2 + parsed.path_len),
+                                    ("length", len(parsed.tail_raw)),
+                                    ("raw_hex", parsed.tail_raw.hex()),
+                                )
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "path",
+                    JSONObject(
+                        (
+                            ("encoding", "utf-16le"),
+                            ("text", path_text),
+                            ("raw_hex", parsed.path_raw.hex()),
+                        )
+                    ),
+                ),
+                (
+                    "storage",
+                    JSONObject(
+                        (
+                            ("kind", "explicitresource_row"),
+                            ("row_size", 16),
+                            ("path_storage", "kstore"),
+                            ("recid_source", "createrecidp"),
+                            ("recid_semantics", "unknown"),
+                        )
+                    ),
+                ),
+                (
+                    "opaque_tail",
+                    JSONObject(
+                        (
+                            ("raw_hex", parsed.tail_raw.hex()),
+                            ("length", len(parsed.tail_raw)),
+                        )
+                    ),
+                ),
+                (
+                    "lookup",
+                    JSONObject(
+                        (
+                            ("kind", "path"),
+                            (
+                                "comparison",
+                                "case_insensitive" if supported else "unknown",
+                            ),
+                            (
+                                "result_role",
+                                "matched_storage_row" if supported else "unknown",
+                            ),
+                        )
+                    ),
+                ),
+                ("final_verdict", "unknown"),
+            )
+        ),
+        evidence=(
+            (
+                "explicitresource_record::Load bounds the UTF-16LE path and stores "
+                "it with a RecID"
+            ),
+            (
+                "MpSignatureSubType<explicitresource_record>::Lookup uses _wcsicmp "
+                "on stored and provider paths"
+            ),
+            "mpas.sig/mpav.sig corpus sample recorded in the 0xD6 format analysis",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
     EXPLICITRESOURCE_TYPE,
     "EXPLICITRESOURCE",
     parse_explicitresource,
     render_explicitresource,
+    semantic_exporter=export_explicitresource_semantics,
 )
 
 __all__ = [
     "EXPLICITRESOURCE_TYPE",
     "SPEC",
     "ExplicitResourcePayload",
+    "export_explicitresource_semantics",
     "parse_explicitresource",
     "render_explicitresource",
 ]
