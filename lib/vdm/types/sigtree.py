@@ -2,11 +2,6 @@ from dataclasses import dataclass
 
 from ..core import DisplaySection, FamilySpec, FormatResult
 
-_HANDLER_LOGIC = {
-    3: "any-of",
-    5: "all-of",
-}
-
 _FIELD_FAMILIES = {
     0x30: "unknown",
     0x60: "generic attributes",
@@ -53,12 +48,6 @@ class SigtreePayload:
     record_extra_raw: bytes
     entries: tuple[SigtreeEntry, ...]
     trailing_raw: bytes
-
-
-def _classify_match_logic(handler_index: int) -> str:
-    return _HANDLER_LOGIC.get(
-        handler_index, f"handler-specific (index {handler_index})"
-    )
 
 
 def _take(payload: bytes, cursor: int, size: int, label: str) -> tuple[bytes, int]:
@@ -229,7 +218,11 @@ def render_sigtree(parsed: SigtreePayload) -> FormatResult:
         fields=(
             ("entry_count", str(parsed.entry_count)),
             ("format_level", str(parsed.format_level)),
-            ("match_logic", _classify_match_logic(parsed.handler_index)),
+            (
+                "handler_semantics",
+                f"instance {parsed.handler_index}; reduction unresolved",
+            ),
+            ("entry_parameter_logic", "A and B when both are selected"),
             ("raw_header_2", f"{parsed.raw_header_2:#04x}"),
             ("handler_index", str(parsed.handler_index)),
             ("name_raw", parsed.name_raw.hex(" ") or "(empty)"),
