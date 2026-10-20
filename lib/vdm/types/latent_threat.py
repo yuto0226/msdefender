@@ -40,7 +40,7 @@ def parse_latent_threat(payload: bytes) -> LatentThreat:
 
 
 def render_latent_threat(parsed: LatentThreat) -> FormatResult:
-    """Render both words without assigning unconfirmed ID roles."""
+    """Render raw words and the binary-confirmed runtime role of word 1."""
     return FormatResult(
         sections=(
             DisplaySection(
@@ -48,6 +48,10 @@ def render_latent_threat(parsed: LatentThreat) -> FormatResult:
                 rows=(
                     ("word_0_raw", f"0x{parsed.word_0:08x}"),
                     ("word_1_raw", f"0x{parsed.word_1:08x}"),
+                    (
+                        "word_1_runtime_role",
+                        "secondary threat-index gate in get_threat_match_level",
+                    ),
                 ),
             ),
         )
