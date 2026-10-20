@@ -32,7 +32,8 @@ class FopPayload:
 
     raw: bytes
     type_byte: int
-    flags: int
+    flags: int | None
+    ignored_reason: str | None
     prefix: bytes
     pattern: bytes
     section1: bytes | None
@@ -41,7 +42,7 @@ class FopPayload:
 
 
 def parse_fop(payload: bytes, *, type_byte: int) -> FopPayload:
-    """Parse a strict plain or extended FOP envelope and preserve all fields."""
+    """Mirror the FOP receiver's load/no-op/error disposition losslessly."""
     try:
         FOP_TYPES[type_byte]
     except KeyError as exc:
@@ -52,16 +53,32 @@ def parse_fop(payload: bytes, *, type_byte: int) -> FopPayload:
         if type_byte in FOP_PLAIN_TYPES
         else FOP_EXTENDED_HEADER_SIZE
     )
-    if len(payload) < header_size:
-        raise ValueError(
-            f"truncated FOP header: need {header_size} bytes, have {len(payload)}"
+    if len(payload) <= header_size:
+        return FopPayload(
+            raw=payload,
+            type_byte=type_byte,
+            flags=payload[0] if payload else None,
+            ignored_reason=f"payload size <= {header_size}-byte header",
+            prefix=b"",
+            pattern=b"",
+            section1=None,
+            section2=None,
+            pattern_options=None,
         )
-    if len(payload) == header_size:
-        raise ValueError("invalid FOP header-only payload: no sections are present")
 
     flags = payload[0]
     if flags & 0xFE:
-        raise ValueError(f"invalid FOP flags 0x{flags:02X}: reserved bits must be zero")
+        return FopPayload(
+            raw=payload,
+            type_byte=type_byte,
+            flags=flags,
+            ignored_reason=f"reserved flag bits set (0x{flags & 0xFE:02X})",
+            prefix=b"",
+            pattern=b"",
+            section1=None,
+            section2=None,
+            pattern_options=None,
+        )
 
     prefix_len = payload[1]
     pattern_len = int.from_bytes(payload[2:4], "little")
@@ -77,6 +94,7 @@ def parse_fop(payload: bytes, *, type_byte: int) -> FopPayload:
             raw=payload,
             type_byte=type_byte,
             flags=flags,
+            ignored_reason=None,
             prefix=payload[prefix_start:pattern_start],
             pattern=payload[pattern_start:],
             section1=None,
@@ -111,6 +129,7 @@ def parse_fop(payload: bytes, *, type_byte: int) -> FopPayload:
         raw=payload,
         type_byte=type_byte,
         flags=flags,
+        ignored_reason=None,
         prefix=prefix,
         pattern=pattern,
         section1=section1,
@@ -135,11 +154,21 @@ def render_fop(parsed: FopPayload) -> FormatResult:
     name = FOP_TYPES[parsed.type_byte]
     rows = [
         ("type", f"{name} (0x{parsed.type_byte:02X})"),
-        ("flags", f"0x{parsed.flags:02X}"),
-        ("flag_bit0", str(bool(parsed.flags & 1))),
-        *_section_rows("prefix", parsed.prefix),
-        *_section_rows("pattern", parsed.pattern),
+        ("flags", "not read" if parsed.flags is None else f"0x{parsed.flags:02X}"),
     ]
+    if parsed.ignored_reason is not None:
+        rows.append(("receiver_disposition", f"ignored ({parsed.ignored_reason})"))
+        return FormatResult(sections=(DisplaySection("FOP", rows=tuple(rows)),))
+
+    assert parsed.flags is not None
+    rows.extend(
+        (
+            ("receiver_disposition", "loaded"),
+            ("flag_bit0", str(bool(parsed.flags & 1))),
+            *_section_rows("prefix", parsed.prefix),
+            *_section_rows("pattern", parsed.pattern),
+        )
+    )
     if parsed.pattern_options is not None:
         rows.append(("pattern_options", f"0x{parsed.pattern_options:04X}"))
         assert parsed.section1 is not None and parsed.section2 is not None
