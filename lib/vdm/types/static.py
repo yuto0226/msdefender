@@ -4,7 +4,15 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 from ..recid import RecIdTail, parse_recid_tail
 
 STATIC_TYPE: Final = 0x67
@@ -178,4 +186,314 @@ def render_static(parsed: StaticPayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
-SPEC = FamilySpec(STATIC_TYPE, "STATIC", parse_static, render_static)
+def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def _recid_tail_semantics(tail: RecIdTail | None, offset: int) -> JSONObject | None:
+    if tail is None:
+        return None
+    object_offset = offset + 1
+    trailing_offset = object_offset + len(tail.object_raw)
+    return JSONObject(
+        (
+            ("wire", _wire_field("recid_tail", tail.raw, offset)),
+            ("length_limit", tail.length_limit),
+            (
+                "object",
+                _wire_field("opaque_object", tail.object_raw, object_offset),
+            ),
+            ("object_present", tail.has_object),
+            (
+                "trailing",
+                _wire_field("tail_surplus", tail.trailing_raw, trailing_offset),
+            ),
+            ("producer_meaning", None),
+        )
+    )
+
+
+def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
+    """Export the confirmed STATIC receiver and staged hash-match subset."""
+    issues = [
+        SemanticIssue(
+            "final_match_not_determined",
+            "This record alone cannot determine a match; file bytes and runtime "
+            "conditions are required.",
+        ),
+        SemanticIssue(
+            "allow_larger_gates_incomplete",
+            "Larger-file matches also depend on threat exceptions and "
+            "valid-signature checks.",
+        ),
+    ]
+    mode = parsed.mode
+    if mode is None:
+        return RuleSemantics(
+            status="unsupported",
+            representation="static.match.ir.v1",
+            data=JSONObject(
+                (
+                    ("type", "STATIC"),
+                    ("raw_hex", parsed.raw.hex()),
+                    ("mode_value", parsed.mode_value),
+                    ("hash", None),
+                    (
+                        "opaque_after_header",
+                        _wire_field("opaque", parsed.opaque_raw, HEADER_SIZE),
+                    ),
+                )
+            ),
+            evidence=(
+                "mpengine 1.443.903.0 staticrec_t::Load modes 5-7 assertion path",
+                (
+                    "mpengine 1.443.903.0 StaticHashProvider::CompareValues rejects "
+                    "modes 5-7"
+                ),
+            ),
+            profile="mpengine-1.443.903.0",
+            issues=(
+                SemanticIssue(
+                    "unsupported_hash_mode",
+                    "Modes 5 through 7 are not accepted for complete STATIC hash "
+                    "matching.",
+                    (("mode", parsed.mode_value),),
+                ),
+            ),
+        )
+
+    hash_size = len(parsed.hash_raw)
+    hash_offset = HEADER_SIZE
+    tail_offset = hash_offset + hash_size
+    unresolved = parsed.ignored_flags
+    if unresolved:
+        issues.append(
+            SemanticIssue(
+                "loader_ignored_flag_bits",
+                "These flag bits are ignored by the STATIC loader; no semantic "
+                "names are assigned.",
+                (("value", unresolved),),
+            )
+        )
+    if mode in {StaticHashMode.SHA1_PREFIX4, StaticHashMode.SHA256}:
+        issues.append(
+            SemanticIssue(
+                "mode_not_observed_in_corpus",
+                "This mode is confirmed by current-binary code paths but has no "
+                "mpas.sig or mpav.sig sample.",
+                (("mode", int(mode)),),
+            )
+        )
+    if parsed.allow_larger:
+        issues.append(
+            SemanticIssue(
+                "larger_file_match_is_conditional",
+                "allow_larger permits a size mismatch through an early stage only; "
+                "later conditions still apply.",
+            )
+        )
+    if parsed.recid_tail is not None and parsed.recid_tail.has_object:
+        issues.append(
+            SemanticIssue(
+                "recid_object_meaning_unknown",
+                "The bounded object is passed to createrecidpc, but its producer "
+                "meaning is unknown.",
+            )
+        )
+    if (
+        parsed.recid_tail is not None
+        and parsed.recid_tail.length_limit > len(parsed.recid_tail.raw) - 1
+    ):
+        issues.append(
+            SemanticIssue(
+                "recid_object_truncated",
+                "The RecID object is shorter than its declared length.",
+                (
+                    ("declared_length", parsed.recid_tail.length_limit),
+                    ("available_length", len(parsed.recid_tail.raw) - 1),
+                ),
+            )
+        )
+    if parsed.recid_tail is not None and parsed.recid_tail.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "recid_tail_surplus_uninterpreted",
+                "Bytes beyond the length-limited RecID object are retained without "
+                "semantics.",
+                (("length", len(parsed.recid_tail.trailing_raw)),),
+            )
+        )
+
+    hash_data: JSONObject
+    if mode is StaticHashMode.CRC_0:
+        hash_data = JSONObject(
+            (
+                ("algorithm", "CRC_0"),
+                ("wire", _wire_field("crc_u32le", parsed.hash_raw, hash_offset)),
+                ("value", int.from_bytes(parsed.hash_raw, "little")),
+            )
+        )
+    else:
+        algorithm = {
+            StaticHashMode.MD5: "MD5",
+            StaticHashMode.SHA1: "SHA1",
+            StaticHashMode.SHA1_PREFIX4: "SHA1_prefix4",
+            StaticHashMode.SHA256: "SHA256",
+        }[mode]
+        hash_data = JSONObject(
+            (
+                ("algorithm", algorithm),
+                ("wire", _wire_field("hash_bytes", parsed.hash_raw, hash_offset)),
+                ("value_hex", parsed.hash_raw.hex()),
+            )
+        )
+
+    recid_unsupported = parsed.recid_tail is not None and (
+        parsed.recid_tail.has_object
+        or bool(parsed.recid_tail.trailing_raw)
+        or parsed.recid_tail.length_limit > len(parsed.recid_tail.raw) - 1
+    )
+    return RuleSemantics(
+        status="unsupported" if recid_unsupported else "confirmed_subset",
+        representation="static.match.ir.v1",
+        data=JSONObject(
+            (
+                ("type", "STATIC"),
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "header",
+                    JSONObject(
+                        (
+                            (
+                                "first_page_crc",
+                                JSONObject(
+                                    (
+                                        ("value", parsed.first_page_crc),
+                                        (
+                                            "wire",
+                                            _wire_field(
+                                                "first_4096_crc_u32le",
+                                                parsed.raw[0:4],
+                                                0,
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "tail_page_crc",
+                                JSONObject(
+                                    (
+                                        ("value", parsed.tail_page_crc),
+                                        (
+                                            "wire",
+                                            _wire_field(
+                                                "tail_4096_crc_u32le",
+                                                parsed.raw[4:8],
+                                                4,
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "prefix_crc",
+                                JSONObject(
+                                    (
+                                        ("value", parsed.prefix_crc),
+                                        (
+                                            "wire",
+                                            _wire_field(
+                                                "prefix_crc_u32le",
+                                                parsed.raw[8:12],
+                                                8,
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "file_size",
+                                JSONObject(
+                                    (
+                                        ("value", parsed.file_size),
+                                        (
+                                            "wire",
+                                            _wire_field(
+                                                "file_size_u32le",
+                                                parsed.raw[12:16],
+                                                12,
+                                            ),
+                                        ),
+                                        (
+                                            "comparison",
+                                            "at_least"
+                                            if parsed.allow_larger
+                                            else "exact",
+                                        ),
+                                    )
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "flags",
+                    JSONObject(
+                        (
+                            (
+                                "wire",
+                                _wire_field("flags_u16le", parsed.raw[16:18], 16),
+                            ),
+                            ("allow_larger", parsed.allow_larger),
+                            ("mode", int(mode)),
+                            ("loader_ignored_bits", unresolved),
+                        )
+                    ),
+                ),
+                ("hash", hash_data),
+                (
+                    "match_pipeline",
+                    JSONArray(
+                        (
+                            "first_page_crc_candidate_key",
+                            "prefix_crc_up_to_min(file_size, 65536)",
+                            "tail_crc_of_last_up_to_4096_bytes_zero_padded_when_short",
+                            "file_size_policy",
+                            "mode_specific_hash_validation",
+                        )
+                    ),
+                ),
+                (
+                    "recid_tail",
+                    _recid_tail_semantics(parsed.recid_tail, tail_offset),
+                ),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 staticrec_t::Load mode lengths and hash storage",
+            (
+                "mpengine 1.443.903.0 StaticHashProvider::CompareValues staged "
+                "CRC/size/hash flow"
+            ),
+            "mpengine 1.443.903.0 GetHashes mode-to-algorithm mapping",
+            "mpas.sig/mpav.sig corpus: modes 0-2 observed; modes 3-4 absent",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+SPEC = FamilySpec(
+    STATIC_TYPE,
+    "STATIC",
+    parse_static,
+    render_static,
+    semantic_exporter=export_static_semantics,
+)
