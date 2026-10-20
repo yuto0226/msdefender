@@ -12,14 +12,15 @@ NAME_SIZE: Final = 64
 
 @dataclass(frozen=True, slots=True)
 class GenSfxPayload:
-    """Observed fixed-size GENSFX record with neutral field names."""
+    """GENSFX fields whose offsets have consumer-side evidence."""
 
     raw: bytes
     name_bytes: bytes
-    word_40: int
-    word_44: int
-    word_48: int
-    format_tag: bytes
+    lookup_key: int
+    scan_start: int
+    scan_end: int
+    match_bytes: bytes
+    match_offset_delta: int
 
     @property
     def name(self) -> str:
@@ -37,33 +38,37 @@ def parse_gensfx(payload: bytes) -> GenSfxPayload:
     return GenSfxPayload(
         raw=payload,
         name_bytes=payload[:NAME_SIZE],
-        word_40=int.from_bytes(payload[0x40:0x44], "little"),
-        word_44=int.from_bytes(payload[0x44:0x48], "little"),
-        word_48=int.from_bytes(payload[0x48:0x4C], "little"),
-        format_tag=payload[0x4C:0x54],
+        lookup_key=int.from_bytes(payload[0x40:0x44], "little"),
+        scan_start=int.from_bytes(payload[0x44:0x48], "little"),
+        scan_end=int.from_bytes(payload[0x48:0x4C], "little"),
+        match_bytes=payload[0x4C:0x50],
+        match_offset_delta=int.from_bytes(payload[0x50:0x54], "little"),
     )
 
 
-def _format_tag(tag: bytes) -> str:
-    printable = tag.rstrip(b"\0")
-    if printable and all(0x20 <= byte <= 0x7E for byte in printable):
-        return f"{printable.decode('ascii')} ({tag.hex(' ')})"
-    return tag.hex(" ")
-
-
 def render_gensfx(parsed: GenSfxPayload) -> FormatResult:
-    """Render confirmed wire fields without assigning unknown DWORD semantics."""
+    """Render scan semantics established by the registered receiver/consumer."""
     return FormatResult(
         sections=(
             DisplaySection(
                 "GENSFX",
                 rows=(
                     ("name", parsed.name or "(empty)"),
-                    ("word_40", f"0x{parsed.word_40:08X}"),
-                    ("word_44", f"0x{parsed.word_44:08X}"),
-                    ("word_48", f"0x{parsed.word_48:08X}"),
-                    ("format_tag", _format_tag(parsed.format_tag)),
-                    ("word_semantics", "unresolved"),
+                    ("lookup_key", f"0x{parsed.lookup_key:08X}"),
+                    ("scan_start", f"0x{parsed.scan_start:08X}"),
+                    ("scan_end", f"0x{parsed.scan_end:08X}"),
+                    ("match_bytes", parsed.match_bytes.hex(" ")),
+                    (
+                        "match_offset_delta",
+                        f"0x{parsed.match_offset_delta:08X}",
+                    ),
+                    (
+                        "semantics_note",
+                        (
+                            "scan interval and 4-byte search pattern confirmed; "
+                            "lookup-key domain and delta purpose unresolved"
+                        ),
+                    ),
                 ),
             ),
         )
