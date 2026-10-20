@@ -247,9 +247,9 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "high byte is the CRC seed; low 24 bits derive an unsigned floating threshold",
         ),
         0x39: VersionCheckPredicate(
-            "partial",
-            "shared CRC/lower-string path; complete state gates and comparison predicate unresolved",
-            "field_04 high byte seeds CRCLowerStringW; low 24 bits feed a floating-point comparison; accepted domain unresolved",
+            "known",
+            "byte(gktab+0xBD9) == 0 and qword(gktab+0x158A8) != 0 and (dword(gktab+0xB20) not in {7, 10} or byte(gktab+0xB38) == 0) and float(CRCLowerStringW(field_04 >> 24, qword(gktab+0x158A8))) >= float(((field_04 & 0xFFFFFF) / 1000.0) * 10000000.0)",
+            "high byte is the CRC seed; low 24 bits derive an unsigned floating threshold",
         ),
         0x84: VersionCheckPredicate(
             "known",
