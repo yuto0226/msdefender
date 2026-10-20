@@ -203,8 +203,13 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         "mpengine 1.443.903.0 FopScanner::Init @ 0x1805F0120",
         "mpengine 1.443.903.0 FopScanner::AddNewPatternCommon @ 0x18046F9AC",
         "mpengine 1.443.903.0 FopScanner::AddToResults @ 0x1802BC7BC",
+        "mpengine 1.443.903.0 BMGetPatternFlags @ 0x1800FEBF4",
+        "mpengine 1.443.903.0 BMMatchPEMapper @ 0x1803D5E44",
         "mpengine 1.443.903.0 FopScanner::ScanContext::GetChar @ 0x180250E5C",
         "mpengine 1.443.903.0 FopScanner::Scan @ 0x18040AF48",
+        "mpengine 1.443.903.0 x86_fop_processor::GetCharAtAddr @ 0x180250F70",
+        "mpengine 1.443.903.0 x64_fop_processor::GetCharAtAddr @ 0x180250500",
+        "mpengine 1.443.903.0 vb_fop_processor::GetCharAtAddr @ 0x180555210",
     )
     if parsed.ignored_reason is not None:
         return RuleSemantics(
@@ -252,6 +257,7 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         ),
     ]
     status = "confirmed_subset"
+    representation = "fop.trie_matcher_subset.ir.v2"
     if parsed.pattern_options is not None:
         assert parsed.section1 is not None and parsed.section2 is not None
         data_items.extend(
@@ -259,20 +265,41 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                 ("section1_raw_hex", parsed.section1.hex()),
                 ("section2_raw_hex", parsed.section2.hex()),
                 ("pattern_options_raw", parsed.pattern_options),
+                (
+                    "runtime_effects_observed",
+                    JSONObject(
+                        (
+                            (
+                                "section1",
+                                "BMGetPatternFlags validation; stored kernel object",
+                            ),
+                            (
+                                "section2",
+                                "optional kernel object; updates handle byte table",
+                            ),
+                            ("pattern_options", "copied to trie metadata low word"),
+                            (
+                                "candidate_gate",
+                                "conditional BMMatchPEMapper; false rejects candidate",
+                            ),
+                        )
+                    ),
+                ),
             )
         )
         status = "observed_only"
+        representation = "fop.trie_matcher_subset.ir.v3"
         issues.append(
             SemanticIssue(
                 "extended_fields_uninterpreted",
-                "section1, section2, and pattern_options affect runtime metadata "
-                "and gates; their meaning is unresolved, so extended records are "
-                "not represented as matching-equivalent rules.",
+                "Runtime effects are observed, but field domains, gate applicability, "
+                "and complete subtype/report semantics are unresolved. Extended "
+                "records are not represented as matching-equivalent rules.",
             )
         )
     return RuleSemantics(
         status=status,
-        representation="fop.trie_matcher_subset.ir.v2",
+        representation=representation,
         data=JSONObject(tuple(data_items)),
         evidence=evidence,
         profile="mpengine-1.443.903.0",
