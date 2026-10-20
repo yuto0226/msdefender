@@ -264,6 +264,51 @@ def _name_fields(name: bytes) -> tuple[tuple[str, str], ...]:
     return (("name_bytes", _preview(name)), ("name_preview", repr(name)))
 
 
+def _raw_framing(raw: bytes, fields: tuple[tuple[str, int, int], ...]) -> JSONArray:
+    """Serialize exact wire spans; semantic decoding never replaces raw bytes."""
+    return JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("kind", name),
+                    ("raw_span", JSONObject((("offset", offset), ("length", size)))),
+                    ("raw_hex", raw[offset : offset + size].hex()),
+                )
+            )
+            for name, offset, size in fields
+        )
+    )
+
+
+def _outer(raw: bytes, framing: JSONArray, **fields: object) -> JSONObject:
+    return JSONObject(
+        (("raw_hex", raw.hex()), ("framing", framing)) + tuple(fields.items())
+    )
+
+
+def _tail_issue(family: str, tail: bytes) -> SemanticIssue | None:
+    if not tail:
+        return None
+    return SemanticIssue(
+        f"{family.lower()}_trailing_bytes",
+        "Receiver accepts trailing bytes, but their meaning is unknown; export is fail-closed.",
+        (("length", len(tail)), ("raw_hex", tail.hex())),
+    )
+
+
+def _semantic_layers(
+    parser: str, receiver: str, runtime: str, verdict: str
+) -> JSONObject:
+    return JSONObject(
+        (
+            ("parser", parser),
+            ("receiver", receiver),
+            ("runtime_effect", runtime),
+            ("final_verdict", verdict),
+        )
+    )
+
+
 def _pattern_section(pattern: BmPattern, *, lowcase: bool = False) -> DisplaySection:
     rendered = render_bm_yara(pattern)
     rows = [
@@ -348,6 +393,84 @@ def render_nscript(parsed: NScriptPayload) -> FormatResult:
     )
 
 
+def export_nscript_semantics(parsed: NScriptPayload) -> RuleSemantics:
+    """Export NORMAL receiver facts without inventing script or verdict meaning."""
+    n = len(parsed.name_bytes)
+    count_offset = 1 + n
+    primary_offset = count_offset + 1
+    mode_offset = primary_offset + parsed.count * 4
+    cursor = mode_offset + 1
+    fields: list[tuple[str, int, int]] = [
+        ("name_length", 0, 1),
+        ("name", 1, n),
+        ("count", count_offset, 1),
+        ("primary", primary_offset, parsed.count * 4),
+        ("mode", mode_offset, 1),
+    ]
+    if parsed.mode:
+        fields.extend(
+            (("anchor_crc32", cursor, 4), ("normalized_length", cursor + 4, 4))
+        )
+        cursor += 8
+    secondary_present = parsed.secondary is not None
+    secondary_len = parsed.count * 4 if secondary_present else 0
+    if secondary_present:
+        fields.append(("secondary", cursor, secondary_len))
+        cursor += secondary_len
+    flags_len = 4 if parsed.match_flags_raw is not None else 0
+    if flags_len:
+        fields.append(("match_flags", cursor, flags_len))
+        cursor += flags_len
+    fields.append(("trailing", cursor, len(parsed.trailing)))
+    issues = []
+    if parsed.match_flags_raw is not None:
+        issues.append(
+            SemanticIssue(
+                "nscript_normal_match_flags_unknown",
+                "Receiver stores only the low byte; flag meaning and scan policy are unknown.",
+                (("raw", parsed.match_flags_raw),),
+            )
+        )
+    tail = _tail_issue("NSCRIPT_NORMAL", parsed.trailing)
+    if tail:
+        issues.append(tail)
+    outer = _outer(
+        parsed.raw,
+        _raw_framing(parsed.raw, tuple(fields)),
+        name_length=n,
+        name_raw_hex=parsed.name_bytes.hex(),
+        count=parsed.count,
+        primary=JSONArray(tuple(parsed.primary)),
+        mode=parsed.mode,
+        anchor_crc32=parsed.anchor_crc32,
+        normalized_length=parsed.normalized_length,
+        secondary_present=secondary_present,
+        secondary=JSONArray(tuple(parsed.secondary or ())),
+        match_flags_raw=parsed.match_flags_raw,
+        match_flags_low_byte=(
+            parsed.match_flags if parsed.match_flags_raw is not None else None
+        ),
+        trailing_raw_hex=parsed.trailing.hex(),
+        layers=_semantic_layers(
+            "counted u32 fields and optional groups decoded",
+            "mode 0 entries go to stdCrcArr; nonzero mode adds first entry to stdAppendArr; low match-flags byte is stored",
+            "stdCrcArr/stdAppendArr are read by token/state search routines; full interpreter policy is unknown",
+            "unknown",
+        ),
+    )
+    return RuleSemantics(
+        status="unsupported" if issues else "observed_only",
+        representation="nscript.normal.receiver.v1",
+        data=outer,
+        evidence=(
+            "pushNScriptWorker @ 0x1804A836C receiver layout and writes",
+            "NORMAL consumer dataflow in EndRoutine, SearchStdEndMatches, and AddToken",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 def render_nscript_sp(parsed: NScriptSPPayload) -> FormatResult:
     return FormatResult(
         sections=(
@@ -365,6 +488,54 @@ def render_nscript_sp(parsed: NScriptSPPayload) -> FormatResult:
                 ),
             ),
         )
+    )
+
+
+def export_nscript_sp_semantics(parsed: NScriptSPPayload) -> RuleSemantics:
+    """Export SP signature fields and the limited SearchExact dataflow."""
+    n = len(parsed.name_bytes)
+    base = 1 + n
+    fields = (
+        ("name_length", 0, 1),
+        ("name", 1, n),
+        ("anchor_crc32", base, 4),
+        ("mode_flags", base + 4, 1),
+        ("full_crc32", base + 5, 4),
+        ("normalized_length", base + 9, 4),
+        ("trailing", base + 13, len(parsed.trailing)),
+    )
+    issues = []
+    tail = _tail_issue("NSCRIPT_SP", parsed.trailing)
+    if tail:
+        issues.append(tail)
+    return RuleSemantics(
+        status="unsupported" if issues else "observed_only",
+        representation="nscript.sp.receiver.v1",
+        data=_outer(
+            parsed.raw,
+            _raw_framing(parsed.raw, fields),
+            name_length=n,
+            name_raw_hex=parsed.name_bytes.hex(),
+            anchor_crc32=parsed.anchor_crc32,
+            mode_flags=parsed.mode_flags,
+            mode=parsed.mode,
+            lowfi=parsed.lowfi,
+            full_crc32=parsed.full_crc32,
+            normalized_length=parsed.normalized_length,
+            trailing_raw_hex=parsed.trailing.hex(),
+            layers=_semantic_layers(
+                "fixed SP prefix decoded",
+                "spType appended; mode 1/2 with IRC name may be converted into NORMAL",
+                "SearchExact performs CRC/length/mode candidate checks then PCode validation",
+                "unknown; validation result policy and final report are not fully mapped",
+            ),
+        ),
+        evidence=(
+            "pushSP @ 0x1804A7F90 receiver layout and spType writes",
+            "SearchExact @ 0x1803D5200 candidate and PCode dataflow",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
     )
 
 
@@ -503,9 +674,97 @@ def render_nscript_cure(parsed: NScriptCurePayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
+def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
+    """Export CURE payload bytes while separating receiver storage and scanner use."""
+    fields: list[tuple[str, int, int]] = [("kind", 0, 1), ("name_crc32", 1, 4)]
+    data_offset = 5
+    if parsed.kind not in (3, 4):
+        fields.extend((("span_or_offset", 5, 4), ("data_length", 9, 4)))
+        data_offset = 13
+        fields.append(("data", data_offset, parsed.data_len))
+        data_offset += parsed.data_len
+    fields.append(("trailing", data_offset, len(parsed.trailing)))
+    bm_data = None
+    issues: list[SemanticIssue] = []
+    if parsed.pattern is not None:
+        bm_data, bm_issues = serialize_bm_pattern(parsed.pattern)
+        issues.extend(bm_issues)
+    if parsed.kind not in (1, 2, 3, 4, 5):
+        issues.append(
+            SemanticIssue(
+                "nscript_cure_unknown_kind",
+                "CURE kind has no confirmed receiver or runtime interpretation.",
+                (("kind", parsed.kind),),
+            )
+        )
+    tail = _tail_issue("NSCRIPT_CURE", parsed.trailing)
+    if tail:
+        issues.append(tail)
+    ignored = parsed.kind in (1, 2) and not parsed.accepted_by_receiver
+    if ignored:
+        issues.append(
+            SemanticIssue(
+                "nscript_cure_receiver_ignored",
+                "Receiver returns success without appending this kind 1/2 entry.",
+                (
+                    ("span_or_offset", parsed.span_or_offset),
+                    ("data_length", parsed.data_len),
+                ),
+            )
+        )
+    details = (
+        ("kind", parsed.kind),
+        ("name_crc32", parsed.name_crc32),
+        ("span_or_offset", parsed.span_or_offset),
+        ("data_length", parsed.data_len),
+        ("data_raw_hex", parsed.data.hex()),
+        ("accepted_by_receiver", parsed.accepted_by_receiver),
+        ("bm_pattern", bm_data),
+        ("trailing_raw_hex", parsed.trailing.hex()),
+        (
+            "layers",
+            _semantic_layers(
+                "kind/name CRC and kind-dependent payload decoded",
+                "kind 3/4 append without data; other kinds store data; kind 1/2 may success-and-ignore",
+                "cureArr is searched by nscript_scan; selector may dispatch remove/replace paths",
+                "unknown; kind 5 consumer and cure outcome policy remain unresolved",
+            ),
+        ),
+    )
+    return RuleSemantics(
+        status="ignored" if ignored else "unsupported" if issues else "observed_only",
+        representation="nscript.cure.receiver.v1",
+        data=_outer(
+            parsed.raw, _raw_framing(parsed.raw, tuple(fields)), **dict(details)
+        ),
+        evidence=(
+            "pushCure @ 0x180470AC0 receiver layout and cureType writes",
+            "nscript_scan @ 0x18011BE20 reads cureArr and enters cure search/apply branches",
+        ),
+        profile=(
+            f"mpengine-{parsed.pattern.profile}"
+            if parsed.pattern
+            else "mpengine-1.443.903.0"
+        ),
+        issues=tuple(issues),
+    )
+
+
 NSCRIPT_SPECS = (
-    FamilySpec(0x27, "NSCRIPT_NORMAL", parse_nscript, render_nscript),
-    FamilySpec(0x28, "NSCRIPT_SP", parse_nscript_sp, render_nscript_sp),
+    FamilySpec(
+        0x27,
+        "NSCRIPT_NORMAL",
+        parse_nscript,
+        render_nscript,
+        semantic_exporter=export_nscript_semantics,
+    ),
+    FamilySpec(
+        0x28,
+        "NSCRIPT_SP",
+        parse_nscript_sp,
+        render_nscript_sp,
+        semantic_exporter=export_nscript_sp_semantics,
+    ),
     FamilySpec(
         0x29,
         "NSCRIPT_BRUTE",
@@ -513,5 +772,11 @@ NSCRIPT_SPECS = (
         render_nscript_brute,
         semantic_exporter=export_nscript_brute_semantics,
     ),
-    FamilySpec(0x2C, "NSCRIPT_CURE", parse_nscript_cure, render_nscript_cure),
+    FamilySpec(
+        0x2C,
+        "NSCRIPT_CURE",
+        parse_nscript_cure,
+        render_nscript_cure,
+        semantic_exporter=export_nscript_cure_semantics,
+    ),
 )
