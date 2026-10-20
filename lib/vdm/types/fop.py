@@ -198,17 +198,18 @@ def render_fop(parsed: FopPayload) -> FormatResult:
 
 
 def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
-    """Export the observed engine route and bytes without inventing rule meaning."""
+    """Export the confirmed wire/route/matcher subset without verdict claims."""
     evidence = (
         "mpengine 1.443.903.0 FopScanner::Init @ 0x1805F0120",
         "mpengine 1.443.903.0 FopScanner::AddNewPatternCommon @ 0x18046F9AC",
-        "mpengine 1.443.903.0 FopSearch @ 0x180522D28",
+        "mpengine 1.443.903.0 FopScanner::AddToResults @ 0x1802BC7BC",
+        "mpengine 1.443.903.0 FopScanner::ScanContext::GetChar @ 0x180250E5C",
         "mpengine 1.443.903.0 FopScanner::Scan @ 0x18040AF48",
     )
     if parsed.ignored_reason is not None:
         return RuleSemantics(
             status="ignored",
-            representation="fop.engine_pattern.v1",
+            representation="fop.trie_matcher_subset.ir.v2",
             data=JSONObject(
                 (
                     ("raw_hex", parsed.raw.hex()),
@@ -224,20 +225,33 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
     data_items: list[tuple[str, SemanticJSONValue]] = [
         ("raw_hex", parsed.raw.hex()),
         ("type_byte", parsed.type_byte),
+        ("semantic_scope", "wire_route_and_core_trie_matcher_shape"),
         ("route", _FOP_ROUTES[parsed.type_byte]),
         ("prefix_hex", parsed.prefix.hex()),
         ("pattern_hex", parsed.pattern.hex()),
         ("flag_bit0_raw", bool(parsed.flags & 1)),
-        ("family_report_path_observed", "MpAggregateAttributeEx (conditional)"),
+        ("matcher", "processor_GetCharAtAddr_output_equals_trie_pattern_bytes"),
+        ("engine_processor_required", True),
     ]
     issues = [
         SemanticIssue(
-            "engine_context_required",
-            "FopSearch uses masked decoded-instruction comparison; matching still "
-            "requires the engine decoder and cannot be evaluated from stored bytes "
-            "alone.",
-        )
+            "engine_processor_required",
+            "The scanner trie is evaluated through the type-specific engine "
+            "processor's GetCharAtAddr path; this export does not implement that "
+            "processor.",
+        ),
+        SemanticIssue(
+            "final_verdict_unknown",
+            "This subset describes receiver routing and core trie matching only; "
+            "result selection and final detection/report policy are not modeled.",
+        ),
+        SemanticIssue(
+            "flag_bit0_semantics_unknown",
+            "flag bit 0 is propagated into trie/result metadata, but its complete "
+            "matching and reporting semantics are unresolved.",
+        ),
     ]
+    status = "confirmed_subset"
     if parsed.pattern_options is not None:
         assert parsed.section1 is not None and parsed.section2 is not None
         data_items.extend(
@@ -247,16 +261,18 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                 ("pattern_options_raw", parsed.pattern_options),
             )
         )
+        status = "observed_only"
         issues.append(
             SemanticIssue(
                 "extended_fields_uninterpreted",
-                "section1, section2, and pattern_options are retained as raw "
-                "observations; their matching/report effects are not assigned.",
+                "section1, section2, and pattern_options affect runtime metadata "
+                "and gates; their meaning is unresolved, so extended records are "
+                "not represented as matching-equivalent rules.",
             )
         )
     return RuleSemantics(
-        status="observed_only",
-        representation="fop.engine_pattern.v1",
+        status=status,
+        representation="fop.trie_matcher_subset.ir.v2",
         data=JSONObject(tuple(data_items)),
         evidence=evidence,
         profile="mpengine-1.443.903.0",
