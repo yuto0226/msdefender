@@ -5,7 +5,16 @@ import json
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import Artifact, ArtifactExport, DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    Artifact,
+    ArtifactExport,
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 JSINIT_TYPE: Final = 0xCA
 MAX_RECEIVER_SIZE: Final = 0xFFFFFFFF
@@ -63,10 +72,90 @@ def render_jsinit(parsed: JsInitPayload) -> FormatResult:
 
 
 def export_jsinit(parsed: JsInitPayload) -> ArtifactExport:
-    """Export the exact receiver input as a directly usable JavaScript artifact."""
+    """Export the exact receiver bytes without claiming syntax validity."""
     return ArtifactExport(
         "ready",
         artifacts=(Artifact("init.js", "javascript_source", parsed.raw),),
+    )
+
+
+def export_jsinit_semantics(parsed: JsInitPayload) -> RuleSemantics:
+    """Separate confirmed receiver bytes from JavaScript and verdict claims."""
+    return RuleSemantics(
+        status="observed_only",
+        representation="jsinit.receiver_and_runtime.v1",
+        data=JSONObject(
+            (
+                ("record_type", JSINIT_TYPE),
+                (
+                    "receiver_framing",
+                    JSONObject(
+                        (
+                            ("kind", "opaque_length_bounded_byte_string"),
+                            ("payload_length", len(parsed.raw)),
+                            ("payload_bytes_hex", parsed.raw.hex()),
+                            ("receiver_internal_terminator", "NUL after copied bytes"),
+                            ("appended_terminator_in_payload", False),
+                        )
+                    ),
+                ),
+                (
+                    "javascript_artifact",
+                    JSONObject(
+                        (
+                            ("classification", "candidate_emulation_input"),
+                            ("bytes_hex", parsed.raw.hex()),
+                            ("encoding", "unknown"),
+                            ("syntax_validated", False),
+                        )
+                    ),
+                ),
+                (
+                    "init_runtime_consumer",
+                    JSONObject(
+                        (
+                            ("consumer", "nscript::runJSEmulation"),
+                            ("runtime_use", "JS emulation input"),
+                            ("payload_to_scan_target_mapping", "unknown"),
+                            ("detection_verdict", "unknown"),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            (
+                "mpengine 1.443.903.0 pushJsInit copies payload bytes and appends "
+                "an internal NUL terminator"
+            ),
+            (
+                "mpengine 1.443.903.0 nscript::runJSEmulation reads strJSInit and "
+                "nJSInitSize"
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "javascript_encoding_unknown",
+                "The receiver copies bytes without validating or identifying "
+                "their text encoding.",
+            ),
+            SemanticIssue(
+                "javascript_grammar_unvalidated",
+                "The record is an input to JavaScript emulation, but this export "
+                "does not parse or validate JavaScript source grammar.",
+            ),
+            SemanticIssue(
+                "scan_target_mapping_unknown",
+                "The relationship between JSINIT bytes and the UFS scan target "
+                "is not established.",
+            ),
+            SemanticIssue(
+                "detection_verdict_unknown",
+                "Runtime emulation evidence does not establish a detection "
+                "verdict or report mapping.",
+            ),
+        ),
     )
 
 
@@ -76,4 +165,5 @@ SPEC = FamilySpec(
     parse_jsinit,
     render_jsinit,
     exporter=export_jsinit,
+    semantic_exporter=export_jsinit_semantics,
 )
