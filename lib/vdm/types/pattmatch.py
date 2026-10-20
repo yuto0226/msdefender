@@ -155,7 +155,9 @@ def _decode_length_stream(raw: bytes) -> tuple[tuple[int, ...], int, str | None]
                 return tuple(decoded), cursor * 2 + phase, "truncated_length_operand"
             decoded.append(256 * (opcode & 1) + 16 * high + low)
             continue
-        return tuple(decoded), cursor * 2 + phase, "unsupported_nibble_opcode"
+        # Runtime decodelen returns zero for both 0xE and 0xF. full_match
+        # treats that return as the end of the encoded length sequence.
+        return tuple(decoded), cursor * 2 + phase, None
 
 
 def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
