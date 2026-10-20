@@ -44,6 +44,7 @@ from .types.pestatic import SPEC as PESTATIC_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
 from .types.removal_policy import REMOVAL_POLICY_SPECS
 from .types.revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
+from .types.rpf_routine import SPEC as RPF_ROUTINE_SPEC
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.snidex import SNIDEX_SPECS
 from .types.static import SPEC as STATIC_SPEC
@@ -65,6 +66,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             REGKEY_SPEC,
             *REMOVAL_POLICY_SPECS,
             REVOKED_CERTIFICATE_SPEC,
+            RPF_ROUTINE_SPEC,
             *AGGREGATOR_SPECS,
             APPMAP_SPEC,
             BLOOM_FILTER_SPEC,

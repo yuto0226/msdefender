@@ -232,6 +232,15 @@ from .revoked_certificate import (
     parse_revoked_certificate,
     render_revoked_certificate,
 )
+from .rpf_routine import (
+    RPF_ROUTINE_TYPE,
+    RpfRoutineEntry,
+    RpfRoutinePayload,
+    RpfRoutineSection,
+    parse_rpf_routine,
+    render_rpf_routine,
+)
+from .rpf_routine import SPEC as RPF_ROUTINE_SPEC
 from .sigtree import (
     SIGTREE_BM_SPEC,
     SIGTREE_EXT_SPEC,
@@ -389,6 +398,8 @@ __all__ = [
     "REMOVAL_POLICY_SPECS",
     "REMOVAL_POLICY_TYPE",
     "REVOKED_CERTIFICATE_SPEC",
+    "RPF_ROUTINE_SPEC",
+    "RPF_ROUTINE_TYPE",
     "SIGTREE_BM_SPEC",
     "SIGTREE_EXT_SPEC",
     "SIGTREE_SPEC",
@@ -468,6 +479,9 @@ __all__ = [
     "RemovalPolicy",
     "RemovalPolicyByName",
     "RevokedCertificate",
+    "RpfRoutineEntry",
+    "RpfRoutinePayload",
+    "RpfRoutineSection",
     "SigtreeEntry",
     "SigtreeParam",
     "SigtreePayload",
@@ -534,6 +548,7 @@ __all__ = [
     "parse_removal_policy",
     "parse_removal_policy_by_name",
     "parse_revoked_certificate",
+    "parse_rpf_routine",
     "parse_sigtree",
     "parse_snidex",
     "parse_static",
@@ -595,6 +610,7 @@ __all__ = [
     "render_removal_policy",
     "render_removal_policy_by_name",
     "render_revoked_certificate",
+    "render_rpf_routine",
     "render_sigtree",
     "render_snidex",
     "render_static",
