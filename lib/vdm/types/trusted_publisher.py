@@ -212,13 +212,23 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
     elif (
         type_name is not None
         and parsed.mode == "string"
-        and parsed.key_text is not None
         and parsed.key_type not in {1, 4}
     ):
-        normalized_key = hashlib.sha1(
-            bytes((parsed.key_type,)) + parsed.key_text.encode("utf-8")
-        ).digest()
-        normalization = "sha1(type_byte || utf8(text))"
+        material_end = len(parsed.key_material_raw)
+        for offset in range(0, len(parsed.key_material_raw) - 1, 2):
+            if parsed.key_material_raw[offset : offset + 2] == b"\0\0":
+                material_end = offset
+                break
+        material_text_raw = parsed.key_material_raw[:material_end]
+        try:
+            material_text = material_text_raw.decode("utf-16le")
+        except UnicodeDecodeError:
+            normalization = "wide_GetKey_conversion_fallback"
+        else:
+            normalized_key = hashlib.sha1(
+                bytes((parsed.key_type,)) + material_text.encode("utf-8")
+            ).digest()
+            normalization = "sha1(type_byte || utf8(material_text))"
     elif parsed.mode == "string" and parsed.key_type in {1, 4}:
         normalization = "hex_decode_then_binary_GetKey"
     else:
