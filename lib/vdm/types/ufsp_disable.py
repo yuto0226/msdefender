@@ -1,4 +1,4 @@
-"""Corpus-validated DWORD view for UFSP_DISABLE (0x88)."""
+"""Engine-validated parser for UFSP_DISABLE (0x88)."""
 
 from dataclasses import dataclass
 from typing import Final
@@ -11,36 +11,40 @@ PAYLOAD_SIZE: Final = 4
 
 @dataclass(frozen=True, slots=True)
 class UfspDisablePayload:
-    """Observed single little-endian value; its engine effect is unresolved."""
+    """Plugin ID removed from the registered-plugin collection."""
 
     raw: bytes
-    value: int
+    plugin_id: int
+    trailing_raw: bytes
 
 
 def parse_ufsp_disable(payload: bytes) -> UfspDisablePayload:
-    """Parse the four-byte layout shared by all supplied corpus records."""
-    if len(payload) != PAYLOAD_SIZE:
+    """Parse the engine template's DWORD and preserve accepted suffix bytes."""
+    if len(payload) < PAYLOAD_SIZE:
         raise ValueError(
-            f"UFSP_DISABLE corpus layout requires {PAYLOAD_SIZE} bytes, "
+            f"truncated UFSP_DISABLE plugin ID: need {PAYLOAD_SIZE} bytes, "
             f"have {len(payload)}"
         )
     return UfspDisablePayload(
         raw=payload,
-        value=int.from_bytes(payload, "little"),
+        plugin_id=int.from_bytes(payload[:PAYLOAD_SIZE], "little"),
+        trailing_raw=payload[PAYLOAD_SIZE:],
     )
 
 
 def render_ufsp_disable(parsed: UfspDisablePayload) -> FormatResult:
-    """Render the wire value while keeping its selector semantics unresolved."""
+    """Render the exact-ID removal semantics confirmed in the engine."""
+    rows = [
+        ("plugin_id", f"0x{parsed.plugin_id:08X}"),
+        ("effect", "remove exact ID from registered plugins"),
+    ]
+    if parsed.trailing_raw:
+        rows.append(("trailing_raw", parsed.trailing_raw.hex(" ")))
     return FormatResult(
         sections=(
             DisplaySection(
                 "UFSP_DISABLE",
-                rows=(
-                    ("value", f"0x{parsed.value:08X}"),
-                    ("value_semantics", "unresolved"),
-                    ("validation_profile", "current corpus: exactly 4 bytes"),
-                ),
+                rows=tuple(rows),
             ),
         )
     )
