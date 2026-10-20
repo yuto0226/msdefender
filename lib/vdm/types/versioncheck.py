@@ -24,6 +24,11 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
         0x00: VersionCheckPredicate(
             "known", "always true; field_04 unused", "not read"
         ),
+        0x02: VersionCheckPredicate(
+            "known",
+            "dword(dword_1810766B0) <= field_04",
+            "full uint32_t unsigned comparison",
+        ),
         0x31: VersionCheckPredicate(
             "known",
             "bool(gktab+0xB43) == bool(field_04)",
@@ -83,9 +88,42 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "qword(gktab+0x15968) > field_04",
             "zero-extended uint32_t vs unsigned uint64_t",
         ),
+        0x0E: VersionCheckPredicate(
+            "known", "dword(gktab+0xB28) == field_04", "full uint32_t equality"
+        ),
+        0x13: VersionCheckPredicate(
+            "known",
+            "dword(gktab+0xB64) <= field_04",
+            "full uint32_t unsigned comparison",
+        ),
+        0x29: VersionCheckPredicate(
+            "known", "g_CustomSetId == field_04", "full uint32_t equality"
+        ),
+        0x2E: VersionCheckPredicate(
+            "known",
+            "byte(gktab+0xB3E) == bool(field_04)",
+            "uint32_t truthiness compared with raw uint8_t state",
+        ),
+        0x2F: VersionCheckPredicate(
+            "known",
+            "byte(gktab+0xB41) == bool(field_04)",
+            "uint32_t truthiness compared with raw uint8_t state",
+        ),
+        0x3B: VersionCheckPredicate(
+            "known", "dword(gktab+0xB74) != field_04", "full uint32_t inequality"
+        ),
+        0x83: VersionCheckPredicate(
+            "known",
+            "version_state(gktab) != field_04",
+            (
+                "full uint32_t inequality; state is gktab+0xBBC if nonzero, "
+                "else +0xBA8 if nonzero, else 5 (0 if gktab is null)"
+            ),
+        ),
         0x77: VersionCheckPredicate("partial"),
         0x38: VersionCheckPredicate("partial"),
         0x2C: VersionCheckPredicate("partial"),
+        0x05: VersionCheckPredicate("partial"),
     }
 )
 
