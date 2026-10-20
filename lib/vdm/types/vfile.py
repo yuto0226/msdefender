@@ -1,4 +1,4 @@
-"""Lossless corpus-profile parser for VFILE (0x83) and VFILEEX (0xB2)."""
+"""Lossless receiver-framing view for VFILE (0x83) and VFILEEX (0xB2)."""
 
 from dataclasses import dataclass
 from typing import Final
@@ -7,10 +7,10 @@ from ..core import DisplaySection, FamilySpec, FormatResult
 
 VFILE_TYPE: Final = 0x83
 VFILEEX_TYPE: Final = 0xB2
-_INNER_HEADER_WORD: Final = 0x20
-_REPEATED_REGION_SIZE: Final = 24
-_VFILE_PATH_OFFSET: Final = 0x2C
-_VFILEEX_PATH_OFFSET: Final = 0x30
+_ENTRY_STRIDE: Final = 592
+_ENTRY_PREFIX_SIZE: Final = 44
+_ENTRY_PATH_FIELD_SIZE: Final = 0x208
+_MAX_ENTRY_COUNT: Final = 0x6EB3E4
 _PATH_PREVIEW_CHARS: Final = 80
 _RAW_PREVIEW_BYTES: Final = 24
 _TAIL_PREVIEW_BYTES: Final = 16
@@ -18,104 +18,110 @@ _TAIL_PREVIEW_BYTES: Final = 16
 
 @dataclass(frozen=True, slots=True)
 class VFilePayload:
-    """Corpus-observed shared field view; no inner blob semantics are inferred."""
+    """Receiver-bounded field view; unconfirmed fields remain raw observations."""
 
     raw: bytes
     signature_type: int
-    outer_prefix: int | None
-    inner_header_word: int
-    repeated_raw: bytes
-    repeated_words: tuple[int, int, int]
-    header_words: tuple[int, int, int, int]
-    path_offset: int
-    path_raw: bytes
-    path_terminator: bytes
+    entry_count: int
+    entries_raw: bytes
+    entry_prefix_raw: bytes | None
+    path_offset: int | None
+    path_raw: bytes | None
+    path_terminator: bytes | None
+    path_terminated: bool | None
     tail_raw: bytes
-    corpus_profile: str
 
     @property
-    def path(self) -> str:
-        """Decode UTF-16LE while retaining unpaired surrogate code units."""
+    def path(self) -> str | None:
+        """Decode the first entry's bounded UTF-16LE NUL-terminated candidate."""
+        if not self.path_terminated or self.path_raw is None:
+            return None
         return self.path_raw.decode("utf-16le", errors="surrogatepass")
 
 
 def _parse(payload: bytes, signature_type: int) -> VFilePayload:
     if signature_type == VFILE_TYPE:
-        outer_prefix = None
-        inner_offset = 0
-        path_offset = _VFILE_PATH_OFFSET
+        prefix_size = 0
+        entry_count = 1
     elif signature_type == VFILEEX_TYPE:
         if len(payload) < 4:
             raise ValueError(
-                "VFILE corpus profile: truncated VFILEEX outer prefix; need 4 bytes"
+                "VFILE receiver framing: truncated VFILEEX entry-count prefix; "
+                "need 4 bytes"
             )
-        outer_prefix = int.from_bytes(payload[:4], "little")
-        inner_offset = 4
-        path_offset = _VFILEEX_PATH_OFFSET
+        prefix_size = 4
+        entry_count = int.from_bytes(payload[:4], "little")
     else:
         raise ValueError(f"unsupported VFILE signature type: {signature_type:#x}")
 
-    if len(payload) < path_offset + 2:
+    if entry_count > _MAX_ENTRY_COUNT:
         raise ValueError(
-            "VFILE corpus profile: truncated header/path start; "
-            f"need at least {path_offset + 2} bytes, have {len(payload)}"
+            "VFILE receiver framing: entry count exceeds receiver limit "
+            f"({_MAX_ENTRY_COUNT:#x})"
         )
 
-    inner_header_word = int.from_bytes(
-        payload[inner_offset : inner_offset + 4], "little"
-    )
-    repeated_start = inner_offset + 4
-    repeated_end = repeated_start + _REPEATED_REGION_SIZE
-    repeated_raw = payload[repeated_start:repeated_end]
-    header_start = inner_offset + 28
-    header_words = tuple(
-        int.from_bytes(payload[offset : offset + 4], "little")
-        for offset in range(header_start, header_start + 16, 4)
-    )
-
-    terminator_at = next(
-        (
-            offset
-            for offset in range(path_offset, len(payload) - 1, 2)
-            if payload[offset : offset + 2] == b"\0\0"
-        ),
-        None,
-    )
-    if terminator_at is None:
+    entries_size = _ENTRY_STRIDE * entry_count
+    tail_offset = prefix_size + entries_size
+    if len(payload) <= tail_offset:
         raise ValueError(
-            "VFILE corpus profile: UTF-16LE path has no aligned NUL terminator"
+            "VFILE receiver framing: receiver requires bytes beyond the entry "
+            f"region ending at {tail_offset}; have {len(payload)}"
         )
-    path_raw = payload[path_offset:terminator_at]
-    terminator_end = terminator_at + 2
-    tail_raw = payload[terminator_end:]
-    repeated_words = tuple(
-        int.from_bytes(repeated_raw[offset : offset + 8], "little")
-        for offset in (0, 8, 16)
-    )
+
+    entries_raw = payload[prefix_size:tail_offset]
+    first_entry = entries_raw[:_ENTRY_STRIDE] if entry_count else None
+    if first_entry is None:
+        entry_prefix_raw = None
+        path_offset = None
+        path_raw = None
+        path_terminator = None
+        path_terminated = None
+    else:
+        entry_prefix_raw = first_entry[:_ENTRY_PREFIX_SIZE]
+        path_offset = prefix_size + _ENTRY_PREFIX_SIZE
+        terminator_at = next(
+            (
+                offset
+                for offset in range(0, _ENTRY_PATH_FIELD_SIZE, 2)
+                if first_entry[
+                    _ENTRY_PREFIX_SIZE + offset : _ENTRY_PREFIX_SIZE + offset + 2
+                ]
+                == b"\0\0"
+            ),
+            None,
+        )
+        path_terminated = terminator_at is not None
+        path_raw = (
+            first_entry[_ENTRY_PREFIX_SIZE : _ENTRY_PREFIX_SIZE + terminator_at]
+            if path_terminated
+            else first_entry[
+                _ENTRY_PREFIX_SIZE : _ENTRY_PREFIX_SIZE + _ENTRY_PATH_FIELD_SIZE
+            ]
+        )
+        path_terminator = b"\0\0" if path_terminated else b""
+    tail_raw = payload[tail_offset:]
 
     return VFilePayload(
         raw=payload,
         signature_type=signature_type,
-        outer_prefix=outer_prefix,
-        inner_header_word=inner_header_word,
-        repeated_raw=repeated_raw,
-        repeated_words=repeated_words,
-        header_words=header_words,
+        entry_count=entry_count,
+        entries_raw=entries_raw,
+        entry_prefix_raw=entry_prefix_raw,
         path_offset=path_offset,
         path_raw=path_raw,
-        path_terminator=payload[terminator_at:terminator_end],
+        path_terminator=path_terminator,
+        path_terminated=path_terminated,
         tail_raw=tail_raw,
-        corpus_profile="observed VFILE/VFILEEX shared layout",
     )
 
 
 def parse_vfile(payload: bytes) -> VFilePayload:
-    """Parse the observed 0x83 corpus profile, without validating engine schema."""
+    """Parse the observed 0x83 receiver framing, not a complete engine schema."""
     return _parse(payload, VFILE_TYPE)
 
 
 def parse_vfileex(payload: bytes) -> VFilePayload:
-    """Parse the observed 0xB2 corpus profile with its variable u32 prefix."""
+    """Parse the observed 0xB2 receiver framing with a u32 entry-count prefix."""
     return _parse(payload, VFILEEX_TYPE)
 
 
@@ -127,43 +133,63 @@ def _hex_preview(data: bytes, limit: int) -> str:
 
 
 def render_vfile(parsed: VFilePayload) -> FormatResult:
-    """Render corpus observations with fixed bounds for every raw/string preview."""
+    """Render receiver-framing observations with bounded raw/string previews."""
     path = parsed.path
-    path_preview = ascii(path[:_PATH_PREVIEW_CHARS])
-    if len(path) > _PATH_PREVIEW_CHARS:
+    path_preview = (
+        "(no entries)"
+        if parsed.entry_count == 0
+        else "(no aligned NUL within bounded 520-byte field)"
+        if path is None
+        else ascii(path[:_PATH_PREVIEW_CHARS])
+    )
+    if path is not None and len(path) > _PATH_PREVIEW_CHARS:
         path_preview += f" … (+{len(path) - _PATH_PREVIEW_CHARS} more chars)"
 
     fields = [
-        ("profile", parsed.corpus_profile),
+        ("profile", "engine-confirmed VFILE/VFILEEX receiver framing"),
         ("signature_type", f"0x{parsed.signature_type:02X}"),
         ("payload_size", f"{len(parsed.raw)} B"),
-        ("inner_header_word", f"0x{parsed.inner_header_word:08X}"),
-        ("path_offset", f"0x{parsed.path_offset:X}"),
-        ("path_chars", str(len(path))),
-        ("path_raw_size", f"{len(parsed.path_raw)} B"),
+        ("entry_count", str(parsed.entry_count)),
+        ("entry_region_size", f"{len(parsed.entries_raw)} B"),
         ("tail_size", f"{len(parsed.tail_raw)} B"),
     ]
-    if parsed.outer_prefix is not None:
-        fields.insert(2, ("outer_prefix", f"0x{parsed.outer_prefix:08X}"))
+    section_rows = []
+    if parsed.entry_count:
+        fields.extend(
+            (
+                ("path_candidate_offset", f"0x{parsed.path_offset:X}"),
+                ("path_chars", str(len(path)) if path is not None else "unknown"),
+                ("path_raw_size", f"{len(parsed.path_raw)} B"),
+                (
+                    "path_terminated_within_520B",
+                    str(parsed.path_terminated),
+                ),
+            )
+        )
+        section_rows.extend(
+            (
+                ("path_candidate", path_preview),
+                ("path_raw_preview", _hex_preview(parsed.path_raw, _RAW_PREVIEW_BYTES)),
+                (
+                    "path_terminator_candidate",
+                    parsed.path_terminator.hex(" ").upper()
+                    if parsed.path_terminator is not None
+                    else "",
+                ),
+                (
+                    "entry_prefix_preview",
+                    _hex_preview(parsed.entry_prefix_raw, _RAW_PREVIEW_BYTES),
+                ),
+            )
+        )
 
-    section_rows = [
-        ("path", path_preview),
-        ("path_raw_preview", _hex_preview(parsed.path_raw, _RAW_PREVIEW_BYTES)),
-        ("path_terminator", parsed.path_terminator.hex(" ").upper()),
-        (
-            "repeated_24b_preview",
-            _hex_preview(parsed.repeated_raw, _RAW_PREVIEW_BYTES),
-        ),
-        (
-            "header_words_u32le",
-            ", ".join(f"0x{word:08X}" for word in parsed.header_words),
-        ),
-        ("tail_raw_preview", _hex_preview(parsed.tail_raw, _TAIL_PREVIEW_BYTES)),
-    ]
+    section_rows.append(
+        ("tail_raw_preview", _hex_preview(parsed.tail_raw, _TAIL_PREVIEW_BYTES))
+    )
     return FormatResult(
         fields=tuple(fields),
         sections=(
-            DisplaySection("VFILE-like payload (corpus profile)", tuple(section_rows)),
+            DisplaySection("VFILE receiver-framed payload", tuple(section_rows)),
         ),
     )
 
