@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 FTRIE_POS_TYPE: Final = 0xCD
 _DWORD_SIZE: Final = 4
@@ -128,7 +136,112 @@ def render_ftrie_pos(parsed: FTriePosPayload) -> FormatResult:
     )
 
 
-SPEC = FamilySpec(FTRIE_POS_TYPE, "FTRIE_POS", parse_ftrie_pos, render_ftrie_pos)
+def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def export_ftrie_pos_semantics(parsed: FTriePosPayload) -> RuleSemantics:
+    """Export the six-slot set update and its exact DWORD wire encoding."""
+    framing = JSONArray(
+        (
+            _wire_field("set_id", parsed.raw[0:1], 0),
+            _wire_field("bank", parsed.raw[1:2], 1),
+            _wire_field("reserved", parsed.reserved_raw, 2),
+            _wire_field("values", parsed.values_raw, 4),
+        )
+    )
+    issues = [
+        SemanticIssue(
+            "reserved_bytes_uninterpreted",
+            "The receiver retains no meaning for the two reserved header bytes.",
+            (("raw_hex", parsed.reserved_raw.hex()),),
+        )
+    ]
+    if parsed.engine_noop:
+        effect = JSONObject(
+            (
+                ("type", "receiver_noop"),
+                ("reason", "set_id_outside_0_2"),
+            )
+        )
+        issues.append(
+            SemanticIssue(
+                "receiver_ignored",
+                "set_id values at least 3 are accepted without reading the tail.",
+                (("set_id", parsed.set_id),),
+            )
+        )
+        status = "ignored"
+    else:
+        effect = JSONObject(
+            (
+                ("type", "install_dword_set_if_slot_empty"),
+                ("slot_index", parsed.slot_index),
+                ("empty_values_effect", "no_set_created"),
+                ("occupied_slot_effect", "keep_existing_set"),
+                (
+                    "values",
+                    JSONObject(
+                        (
+                            ("encoding", "little_endian_u32"),
+                            ("count", len(parsed.values or ())),
+                            ("raw_hex", parsed.values_raw.hex()),
+                        )
+                    ),
+                ),
+                (
+                    "runtime_consumer",
+                    JSONObject(
+                        (
+                            ("type", "four_byte_window_membership"),
+                            ("case_variants", "lowercase_and_uppercase_tables"),
+                        )
+                    ),
+                ),
+            )
+        )
+        issues.append(
+            SemanticIssue(
+                "slot_update_is_order_dependent",
+                "A previously populated slot causes this record to be ignored.",
+                (("slot_index", parsed.slot_index),),
+            )
+        )
+        status = "confirmed_subset"
+
+    return RuleSemantics(
+        status=status,
+        representation="ftrie_pos.state_update.ir.v1",
+        data=JSONObject(
+            (
+                ("raw_hex", parsed.raw.hex()),
+                ("framing", framing),
+                ("set_id", parsed.set_id),
+                ("bank", parsed.bank),
+                ("effect", effect),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 FTBestPos::ftrie_push and findBestPos data flow",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+SPEC = FamilySpec(
+    FTRIE_POS_TYPE,
+    "FTRIE_POS",
+    parse_ftrie_pos,
+    render_ftrie_pos,
+    semantic_exporter=export_ftrie_pos_semantics,
+)
 FTRIE_POS_SPEC = SPEC
 
 
@@ -137,6 +250,7 @@ __all__ = [
     "FTRIE_POS_TYPE",
     "SPEC",
     "FTriePosPayload",
+    "export_ftrie_pos_semantics",
     "parse_ftrie_pos",
     "render_ftrie_pos",
 ]
