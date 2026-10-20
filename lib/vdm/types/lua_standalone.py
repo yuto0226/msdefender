@@ -14,6 +14,10 @@ from ..core import (
     DisplaySection,
     FamilySpec,
     FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
 )
 from ..lua51 import export_lua51
 from ..luaq import LuaQChunk, LuaQPrototype, parse_luaq
@@ -559,10 +563,166 @@ def render_lua_standalone(parsed: LuaStandalonePayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
+def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemantics:
+    """Export confirmed record framing without claiming Lua runtime behavior."""
+    metadata_items = tuple(
+        JSONObject(
+            (
+                ("key_raw_hex", field.key_raw.hex()),
+                ("key", field.key),
+                ("effective_key", field.effective_key),
+                ("value_raw_hex", field.value_raw.hex()),
+                ("value_decoded_hex", field.value_decoded.hex()),
+                ("ob_encoded", field.encoded),
+            )
+        )
+        for field in parsed.metadata
+    )
+    known_keys = {
+        "Flags",
+        "Includes",
+        "MpAttributes",
+        "ProcessAttributes",
+        "TimeStamp",
+    }
+    unknown_keys = tuple(
+        sorted(
+            {
+                field.effective_key or field.key or field.key_raw.hex()
+                for field in parsed.metadata
+                if field.effective_key not in known_keys
+            }
+        )
+    )
+
+    if parsed.receiver_ignored:
+        return RuleSemantics(
+            status="ignored",
+            representation="luastandalone.receiver_framing.v1",
+            data=JSONObject(
+                (
+                    ("signature_type", LUASTANDALONE_TYPE),
+                    ("category", parsed.category),
+                    ("receiver_behavior", "body_ignored"),
+                    ("body_raw_hex", parsed.ignored_body_raw.hex()),
+                )
+            ),
+            evidence=("mpengine 1.443.903.0 LuaStandalone::AddScript",),
+            profile="mpengine-1.443.903.0",
+        )
+
+    if parsed.script_form == "raw_lua" and parsed.lua_chunk is not None:
+        try:
+            export_lua51(parsed.lua_chunk)
+        except ValueError:
+            artifact_decode = "unsupported_lua51_chunk_export"
+        else:
+            artifact_decode = "lua51_chunk_export_supported"
+    elif parsed.script_form == "encoded":
+        artifact_decode = "unsupported_encoded_luaq_decode"
+    elif parsed.category_policy is not None and parsed.category_policy & 0x10:
+        artifact_decode = "deferred_by_category_policy"
+    else:
+        artifact_decode = "unavailable"
+
+    issues = [
+        SemanticIssue(
+            "runtime_effect_unresolved",
+            "Lua artifact decoding does not establish script registration, "
+            "interpreter compatibility, or execution effects.",
+        )
+    ]
+    if unknown_keys:
+        issues.append(
+            SemanticIssue(
+                "unknown_metadata_key",
+                "Unknown metadata keys are retained raw; their consumer effects "
+                "are unresolved.",
+                (("keys", JSONArray(unknown_keys)),),
+            )
+        )
+    if parsed.metadata_unparsed_raw:
+        issues.append(
+            SemanticIssue(
+                "unparsed_metadata_tail",
+                "Unparsed metadata bytes are retained without assigning semantics.",
+                (("raw_hex", parsed.metadata_unparsed_raw.hex()),),
+            )
+        )
+    if parsed.script_form == "encoded":
+        issues.append(
+            SemanticIssue(
+                "encoded_script_decode_unavailable",
+                "The encoded marker is recognized, but its LuaQ decoding effect "
+                "is not established.",
+            )
+        )
+    if parsed.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "trailing_bytes_ignored",
+                "Bytes after script_len are preserved; the receiver does not "
+                "consume them.",
+                (("raw_hex", parsed.trailing_raw.hex()),),
+            )
+        )
+
+    unsupported = bool(
+        unknown_keys
+        or parsed.metadata_unparsed_raw
+        or parsed.script_form == "encoded"
+        or parsed.trailing_raw
+        or artifact_decode in {"unsupported_lua51_chunk_export", "unavailable"}
+    )
+    return RuleSemantics(
+        status="unsupported" if unsupported else "observed_only",
+        representation="luastandalone.receiver_and_luaq.v1",
+        data=JSONObject(
+            (
+                ("signature_type", LUASTANDALONE_TYPE),
+                ("raw_hex", parsed.raw.hex()),
+                ("category", parsed.category),
+                ("category_name", parsed.category_name),
+                ("category_policy_raw", parsed.category_policy),
+                ("name_raw_hex", parsed.name_raw.hex()),
+                ("name_effective_raw_hex", parsed.name_effective_raw.hex()),
+                ("metadata_raw_hex", parsed.metadata_raw.hex()),
+                ("metadata", JSONArray(metadata_items)),
+                ("metadata_unparsed_raw_hex", parsed.metadata_unparsed_raw.hex()),
+                ("script_form", parsed.script_form),
+                ("script_raw_hex", parsed.script.hex()),
+                ("script_sha256", hashlib.sha256(parsed.script).hexdigest()),
+                ("artifact_decode", artifact_decode),
+                (
+                    "luaq_consumed",
+                    parsed.lua_chunk.consumed if parsed.lua_chunk is not None else None,
+                ),
+                (
+                    "luaq_trailing_raw_hex",
+                    parsed.lua_chunk.trailing_raw.hex()
+                    if parsed.lua_chunk is not None
+                    else None,
+                ),
+                ("record_trailing_raw_hex", parsed.trailing_raw.hex()),
+                ("runtime_registration", "unknown"),
+                ("runtime_execution_effect", "unknown"),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 LuaStandalone::AddScript",
+            "mpengine 1.443.903.0 ProcessedLuaScript::Process",
+            "mpengine 1.443.903.0 ProcessedLuaScript::ProcessFunction",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
     LUASTANDALONE_TYPE,
     "LUASTANDALONE",
     parse_lua_standalone,
     render_lua_standalone,
     exporter=export_lua_standalone,
+    semantic_exporter=export_lua_standalone_semantics,
 )
