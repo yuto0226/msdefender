@@ -123,7 +123,10 @@ def _export_semantics(
             "Do not treat pattern_raw as the confirmed matcher input.",
         )
     ]
-    status = "confirmed_subset"
+    # Matcher behavior is confirmed for loaded tsig rows, but the current
+    # binary does not prove that this offline payload becomes that row. Keep
+    # the record-level result observational until the projection is known.
+    status = "observed_only"
     if parsed.suffix:
         status = "unsupported"
         issues.append(
@@ -191,12 +194,14 @@ def _export_semantics(
             ("suffix_offset", suffix_offset),
             ("suffix_raw_hex", parsed.suffix.hex()),
             ("runtime_matcher", matcher),
+            ("runtime_matcher_scope", "detached_profile_evidence"),
+            ("runtime_matcher_association", "unresolved"),
             ("wire_payload_projection", "unresolved"),
         )
     )
     return RuleSemantics(
         status=status,
-        representation="kpat.runtime_matcher_subset.ir.v2",
+        representation="kpat.runtime_matcher_subset.ir.v3",
         data=data,
         evidence=(
             *matcher_evidence,
