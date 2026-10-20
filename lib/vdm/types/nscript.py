@@ -8,8 +8,17 @@ from ..bm import (
     render_byte_fragments,
     validate_bm_framing,
 )
+from ..bm_semantic import serialize_bm_pattern
 from ..bm_yara import render_bm_yara
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 _BYTE_PREVIEW = 64
 _PAIR_PREVIEW = 16
@@ -390,6 +399,74 @@ def render_nscript_brute(parsed: NScriptBrutePayload) -> FormatResult:
     )
 
 
+def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics:
+    """Export lossless BM IR without assigning NSCRIPT verdict semantics."""
+    pattern_data, pattern_issues = serialize_bm_pattern(parsed.pattern)
+    name_length = len(parsed.name_bytes)
+    body_offset = 1 + name_length + 1 + 1 + 4 + 4
+    body_end = body_offset + parsed.body_len
+    framing_fields = (
+        ("name_length", 0, 1),
+        ("name", 1, name_length),
+        ("script_type_flags", 1 + name_length, 1),
+        ("direction", 2 + name_length, 1),
+        ("position", 3 + name_length, 4),
+        ("body_length", 7 + name_length, 4),
+        ("body", body_offset, parsed.body_len),
+        ("trailing", body_end, len(parsed.trailing)),
+    )
+    framing = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("kind", name),
+                    ("raw_span", JSONObject((("offset", offset), ("length", length)))),
+                    ("raw_hex", parsed.raw[offset : offset + length].hex()),
+                )
+            )
+            for name, offset, length in framing_fields
+        )
+    )
+    outer = JSONObject(
+        (
+            ("raw_hex", parsed.raw.hex()),
+            ("framing", framing),
+            ("name_length", name_length),
+            ("name_raw_hex", parsed.name_bytes.hex()),
+            ("script_type_flags", parsed.script_type_flags),
+            ("script_type_raw", parsed.script_type_raw),
+            ("runtime_script_type", parsed.runtime_script_type),
+            ("lowfi", parsed.lowfi),
+            ("direction_raw", parsed.direction_raw),
+            ("position_raw", parsed.position_raw),
+            ("body_length", parsed.body_len),
+            ("trailing_raw_hex", parsed.trailing.hex()),
+        )
+    )
+    return RuleSemantics(
+        status="observed_only",
+        representation="bm.pattern.ir.v1",
+        data=JSONObject(pattern_data.items + (("outer", outer),)),
+        evidence=(
+            "NSCRIPT_BRUTE wire framing and decoded fields for mpengine 1.443.903.0",
+        ),
+        profile=f"mpengine-{parsed.pattern.profile}",
+        issues=(
+            SemanticIssue(
+                "nscript_brute_outer_semantics_unknown",
+                "NSCRIPT_BRUTE routing, direction, position, and metadata are "
+                "retained without assigning detection or verdict semantics.",
+                (
+                    ("runtime_script_type", parsed.runtime_script_type),
+                    ("direction_raw", parsed.direction_raw),
+                    ("position_raw", parsed.position_raw),
+                ),
+            ),
+            *pattern_issues,
+        ),
+    )
+
+
 def render_nscript_cure(parsed: NScriptCurePayload) -> FormatResult:
     rows = [
         ("kind", str(parsed.kind)),
@@ -429,6 +506,12 @@ def render_nscript_cure(parsed: NScriptCurePayload) -> FormatResult:
 NSCRIPT_SPECS = (
     FamilySpec(0x27, "NSCRIPT_NORMAL", parse_nscript, render_nscript),
     FamilySpec(0x28, "NSCRIPT_SP", parse_nscript_sp, render_nscript_sp),
-    FamilySpec(0x29, "NSCRIPT_BRUTE", parse_nscript_brute, render_nscript_brute),
+    FamilySpec(
+        0x29,
+        "NSCRIPT_BRUTE",
+        parse_nscript_brute,
+        render_nscript_brute,
+        semantic_exporter=export_nscript_brute_semantics,
+    ),
     FamilySpec(0x2C, "NSCRIPT_CURE", parse_nscript_cure, render_nscript_cure),
 )
