@@ -261,6 +261,8 @@ from .trusted_publisher import (
     parse_trusted_publisher,
     render_trusted_publisher,
 )
+from .unplib import SPEC as UNPLIB_SPEC
+from .unplib import UNPLIB_TYPE, UnpLibPayload, parse_unplib, render_unplib
 from .vdll_code import (
     VDLL_CODE_SPECS,
     VDLL_CODE_TYPES,
@@ -361,6 +363,8 @@ __all__ = [
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
     "TRUSTED_PUBLISHER_SPEC",
+    "UNPLIB_SPEC",
+    "UNPLIB_TYPE",
     "VDLL_CODE_SPECS",
     "VDLL_CODE_TYPES",
     "VDLL_META_SPECS",
@@ -427,6 +431,7 @@ __all__ = [
     "ThreatEnd",
     "ThreatMetadata",
     "TrustedPublisher",
+    "UnpLibPayload",
     "VdllCodePayload",
     "VdllMetaPayload",
     "VersionCheckPayload",
@@ -482,6 +487,7 @@ __all__ = [
     "parse_threat_begin",
     "parse_threat_end",
     "parse_trusted_publisher",
+    "parse_unplib",
     "parse_vdll_code",
     "parse_vdll_meta",
     "parse_versioncheck",
@@ -536,6 +542,7 @@ __all__ = [
     "render_threat_begin",
     "render_threat_end",
     "render_trusted_publisher",
+    "render_unplib",
     "render_vdll_code",
     "render_vdll_meta",
     "render_versioncheck",
