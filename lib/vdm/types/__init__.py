@@ -56,6 +56,16 @@ from .common_code import SPEC as COMMON_CODE_SPEC
 from .common_code import CommonCodePayload, parse_common_code, render_common_code
 from .dbvar import DBVAR_TYPE, DbVarPayload, parse_dbvar, render_dbvar
 from .dbvar import SPEC as DBVAR_SPEC
+from .delta_blob_recinfo import (
+    DELTA_BLOB_RECINFO_TYPE,
+    DeltaBlobRecInfo,
+    DeltaBlobRecInfoEntry,
+    parse_delta_blob_recinfo,
+    render_delta_blob_recinfo,
+)
+from .delta_blob_recinfo import (
+    SPEC as DELTA_BLOB_RECINFO_SPEC,
+)
 from .fop import (
     FOP_EXTENDED_TYPES,
     FOP_PLAIN_TYPES,
@@ -280,6 +290,8 @@ __all__ = [
     "COMMON_CODE_SPEC",
     "DBVAR_SPEC",
     "DBVAR_TYPE",
+    "DELTA_BLOB_RECINFO_SPEC",
+    "DELTA_BLOB_RECINFO_TYPE",
     "FOP_EXTENDED_TYPES",
     "FOP_PLAIN_TYPES",
     "FOP_SPECS",
@@ -356,6 +368,8 @@ __all__ = [
     "CleanScriptPayload",
     "CommonCodePayload",
     "DbVarPayload",
+    "DeltaBlobRecInfo",
+    "DeltaBlobRecInfoEntry",
     "FopPayload",
     "FpathPayload",
     "FriendlyFileSha256",
@@ -414,6 +428,7 @@ __all__ = [
     "parse_cleanscript",
     "parse_common_code",
     "parse_dbvar",
+    "parse_delta_blob_recinfo",
     "parse_fop",
     "parse_fpath",
     "parse_friendlyfile_sha256",
@@ -466,6 +481,7 @@ __all__ = [
     "render_cleanscript",
     "render_common_code",
     "render_dbvar",
+    "render_delta_blob_recinfo",
     "render_fop",
     "render_fpath",
     "render_friendlyfile_sha256",
