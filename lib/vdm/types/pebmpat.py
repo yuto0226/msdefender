@@ -47,17 +47,17 @@ def parse_pebmpat(payload: bytes) -> PEBMPat:
     pattern = None
     if flags & ~1:
         receiver_result = "no_op.unsupported_flags"
-    elif pattern_len <= 4:
-        receiver_result = "no_op.pattern_length_le_4"
+    elif len(payload) <= 4:
+        receiver_result = "no_op.payload_length_le_4"
     else:
         sentinel = pattern_raw.find(b"\x90", 0, min(8, len(pattern_raw)))
         if 0 <= sentinel < 4:
-            receiver_result = "no_op.first_90_before_offset_4"
+            receiver_result = "error.first_90_before_offset_4"
         else:
             try:
                 pattern = validate_bm_framing(pattern_raw, label="PEBMPAT")
             except ValueError as exc:
-                receiver_result = f"no_op.{exc}"
+                receiver_result = f"error.{exc}"
             else:
                 receiver_result = "added_candidate"
     return PEBMPat(payload, flags, name, pattern_raw, pattern, receiver_result)
@@ -140,13 +140,22 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             )
         )
     else:
-        issues.append(
-            SemanticIssue(
-                "receiver_no_op",
-                "The receiver does not add this pattern candidate; raw bytes are retained.",
-                (("receiver_result", parsed.receiver_result),),
+        if parsed.receiver_result.startswith("no_op."):
+            issues.append(
+                SemanticIssue(
+                    "receiver_no_op",
+                    "The receiver accepts this record without adding a pattern candidate; raw bytes are retained.",
+                    (("receiver_result", parsed.receiver_result),),
+                )
             )
-        )
+        else:
+            issues.append(
+                SemanticIssue(
+                    "receiver_rejected",
+                    "The receiver rejects this record and does not add a pattern candidate; raw bytes are retained.",
+                    (("receiver_result", parsed.receiver_result),),
+                )
+            )
     data = JSONObject(
         (
             ("raw_hex", parsed.raw.hex()),
@@ -161,7 +170,9 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         )
     )
     return RuleSemantics(
-        status="ignored" if parsed.pattern is None else "unsupported",
+        status=(
+            "ignored" if parsed.receiver_result.startswith("no_op.") else "unsupported"
+        ),
         representation="pebmpat.pattern.ir.v1",
         data=data,
         evidence=(
