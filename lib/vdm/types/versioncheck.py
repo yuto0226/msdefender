@@ -166,6 +166,11 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "field_04 is not read by the selector path",
         ),
         0x77: VersionCheckPredicate("partial"),
+        0x78: VersionCheckPredicate(
+            "known",
+            "(gktab == nullptr ? 0 : (dword(gktab+0x15964) & 1)) == bool(field_04)",
+            "low bit of uint32_t state (or zero when gktab is null) compared with uint32_t truthiness",
+        ),
         0x38: VersionCheckPredicate("partial"),
         0x2C: VersionCheckPredicate("partial"),
         0x05: VersionCheckPredicate("partial"),
