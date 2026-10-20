@@ -256,7 +256,11 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "always false; unsupported selector path",
             "field_04 is not read by the selector path",
         ),
-        0x77: VersionCheckPredicate("partial"),
+        0x77: VersionCheckPredicate(
+            "known",
+            "field_04 == 1 or dword(gktab+0xB20) in {7, 10, 21, 23}",
+            "full uint32_t value; direct equality with 1 before the unsigned state lookup and bit-test reduction",
+        ),
         0x78: VersionCheckPredicate(
             "known",
             "(gktab == nullptr ? 0 : (dword(gktab+0x15964) & 1)) == bool(field_04)",
@@ -345,7 +349,11 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
         0x72: VersionCheckPredicate(
             "known", "dword(gktab+0xB74) == field_04", "full uint32_t equality"
         ),
-        0x76: VersionCheckPredicate("partial"),
+        0x76: VersionCheckPredicate(
+            "known",
+            "field_04 == 0 or dword(gktab+0xB20) in {7, 10, 21, 23}",
+            "full uint32_t value; direct equality with 0 before the unsigned state lookup and bit-test reduction",
+        ),
         0x85: VersionCheckPredicate(
             "known",
             "version_state(gktab) != field_04",
