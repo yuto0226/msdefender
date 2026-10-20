@@ -2,6 +2,17 @@ from dataclasses import dataclass
 
 from ..core import FamilySpec, FormatResult
 
+_DETECTION_FLAG_BITS = (
+    (0x01, "low", 0x00000080),
+    (0x02, "low", 0x00000100),
+    (0x04, "low", 0x00000200),
+    (0x08, "low", 0x00000400),
+    (0x10, "low", 0x00000800),
+    (0x20, "low", 0x00400000),
+    (0x40, "low", 0x00800000),
+    (0x80, "high", 0x00000010),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class BMInfo:
@@ -14,7 +25,29 @@ class BMInfo:
     fidelity_raw: bytes
     actions_raw: bytes
     action_tokens: tuple[str, ...]
-    unknown_tail: bytes
+    trailing_raw: bytes
+
+    @property
+    def receiver_accepted(self) -> bool:
+        return self.friendly_filter_mask < 0x1000
+
+    @property
+    def recid_object_raw(self) -> bytes | None:
+        """Opaque payload+2 span interned only on the nonempty-blob path."""
+        candidate = self.raw[2:]
+        return candidate if self.blob_len and candidate and candidate[0] else None
+
+    @property
+    def detection_flags(self) -> tuple[int, int]:
+        low = 0
+        high = 0
+        for mask, half, value in _DETECTION_FLAG_BITS:
+            if self.friendly_filter_mask & mask:
+                if half == "low":
+                    low |= value
+                else:
+                    high |= value
+        return low, high
 
 
 def parse_bm_info(payload: bytes) -> BMInfo:
@@ -69,17 +102,38 @@ def parse_bm_info(payload: bytes) -> BMInfo:
         fidelity_raw=fidelity_raw,
         actions_raw=actions_raw,
         action_tokens=action_tokens,
-        unknown_tail=payload[cursor:],
+        trailing_raw=payload[cursor:],
     )
 
 
 def render_bm_info(info: BMInfo) -> FormatResult:
     """Render known fields while retaining byte-exact raw representations."""
+    detection_low, detection_high = info.detection_flags
     return FormatResult(
         fields=(
             ("blob_len", str(info.blob_len)),
             ("blob_raw", info.blob.hex(" ") or "(empty)"),
+            (
+                "recid_object_span",
+                (
+                    f"{len(info.recid_object_raw)} B from payload+2 (opaque)"
+                    if info.recid_object_raw is not None
+                    else "not created"
+                ),
+            ),
             ("friendly_filter_mask", f"{info.friendly_filter_mask:#06x}"),
+            (
+                "receiver_status",
+                "accepted" if info.receiver_accepted else "rejected: mask >= 0x1000",
+            ),
+            (
+                "detection_flags",
+                f"low32=0x{detection_low:08x}, high32=0x{detection_high:08x}",
+            ),
+            (
+                "unresolved_mask_bits",
+                f"0x{info.friendly_filter_mask & 0x0F00:04x}",
+            ),
             ("fidelity_len", str(len(info.fidelity_raw))),
             ("fidelity_raw", info.fidelity_raw.hex(" ")),
             ("fidelity", info.fidelity_raw[:-1].decode("latin-1")),
@@ -89,7 +143,16 @@ def render_bm_info(info: BMInfo) -> FormatResult:
                 "action_tokens",
                 " | ".join(info.action_tokens) or "(empty)",
             ),
-            ("unknown_tail_raw", info.unknown_tail.hex(" ") or "(empty)"),
+            ("trailing_raw", info.trailing_raw.hex(" ") or "(empty)"),
+            (
+                "trailing_behavior",
+                "accepted; included in full-payload CRC/SHA-1"
+                + (
+                    " and RecID object span"
+                    if info.recid_object_raw is not None
+                    else ""
+                ),
+            ),
         )
     )
 
