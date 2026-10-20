@@ -2,7 +2,12 @@
 
 from dataclasses import dataclass
 
-from ..bm import BmPattern, decode_bm_pattern, render_byte_fragments
+from ..bm import (
+    BmPattern,
+    decode_bm_pattern,
+    render_byte_fragments,
+    validate_bm_framing,
+)
 from ..bm_yara import render_bm_yara
 from ..core import DisplaySection, FamilySpec, FormatResult
 
@@ -182,38 +187,8 @@ def parse_nscript_sp(payload: bytes) -> NScriptSPPayload:
 
 
 def _validate_brute_body(body: bytes) -> BmPattern:
-    """Reuse BM framing on every END-delimited segment, with forward progress.
-
-    The receiver validates through internal ENDs. The first decoder result is
-    retained as the conservative matching view, including bytes_after_end.
-    """
-    if not body.endswith(b"\x90\x00"):
-        raise ValueError("NSCRIPT BRUTE body must end with 90 00")
-    first = pattern = decode_bm_pattern(body)
-    offset = 0
-    while True:
-        issue = pattern.issue
-        # The receiver checks the physical 90 00 suffix, then descriptor
-        # framing to exhaustion. A final opcode may consume that suffix as
-        # operands; retain missing_END as a semantic issue in that case.
-        if (
-            issue is not None
-            and issue.code == "missing_END"
-            and pattern.consumed == len(pattern.raw)
-            and pattern.tokens
-            and pattern.tokens[-1].kind == "OPCODE"
-        ):
-            return first
-        if issue is not None and issue.code != "bytes_after_end":
-            raise ValueError(
-                f"invalid NSCRIPT BRUTE BM body: {issue.code} at {offset + issue.offset}"
-            )
-        if not pattern.ended or pattern.consumed <= 0:
-            raise ValueError("invalid NSCRIPT BRUTE BM body: decoder made no progress")
-        offset += pattern.consumed
-        if not pattern.remaining_raw:
-            return first
-        pattern = decode_bm_pattern(pattern.remaining_raw)
+    """Validate all NSCRIPT BRUTE segments and retain the first BM view."""
+    return validate_bm_framing(body, label="NSCRIPT BRUTE")
 
 
 def parse_nscript_brute(payload: bytes) -> NScriptBrutePayload:

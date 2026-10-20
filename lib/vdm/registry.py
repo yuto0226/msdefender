@@ -5,6 +5,7 @@ from typing import Any
 from .core import FamilySpec
 from .types.aggregator import AGGREGATOR_SPECS
 from .types.bm_info import SPEC as BM_INFO_SPEC
+from .types.brute import SPEC as BRUTE_SPEC
 from .types.ck import CK_SPECS
 from .types.common_code import SPEC as COMMON_CODE_SPEC
 from .types.fop import FOP_SPECS
@@ -47,6 +48,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
             BM_INFO_SPEC,
+            BRUTE_SPEC,
             *CK_SPECS,
             FRIENDLYFILE_SHA256_SPEC,
             SIGTREE_BM_SPEC,

@@ -269,6 +269,38 @@ def decode_bm_pattern(data: bytes, *, profile: str = _PROFILE) -> BmPattern:
     return BmPattern(raw, tuple(tokens), offset, ended, issue, raw[offset:], profile)
 
 
+def validate_bm_framing(body: bytes, *, label: str = "BM") -> BmPattern:
+    """Validate receiver-style END-delimited framing across a physical body.
+
+    The first decoded segment is retained as the conservative semantic view;
+    bytes after internal END tokens are still checked for valid framing.
+    """
+    if not body.endswith(b"\x90\x00"):
+        raise ValueError(f"{label} body must end with 90 00")
+    first = pattern = decode_bm_pattern(body)
+    offset = 0
+    while True:
+        issue = pattern.issue
+        if (
+            issue is not None
+            and issue.code == "missing_END"
+            and pattern.consumed == len(pattern.raw)
+            and pattern.tokens
+            and pattern.tokens[-1].kind == "OPCODE"
+        ):
+            return first
+        if issue is not None and issue.code != "bytes_after_end":
+            raise ValueError(
+                f"invalid {label} BM body: {issue.code} at {offset + issue.offset}"
+            )
+        if not pattern.ended or pattern.consumed <= 0:
+            raise ValueError(f"invalid {label} BM body: decoder made no progress")
+        offset += pattern.consumed
+        if not pattern.remaining_raw:
+            return first
+        pattern = decode_bm_pattern(pattern.remaining_raw)
+
+
 _RANGE_OPERATIONS = {
     0x0B: ("RANGE_REPEAT", "g_NLRange"),
     0x0C: ("RANGE_SEARCH", "g_NLRange"),

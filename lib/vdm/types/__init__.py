@@ -5,6 +5,8 @@ from .aggregator import (
     render_aggregator,
 )
 from .bm_info import SPEC, BMInfo, parse_bm_info, render_bm_info
+from .brute import SPEC as BRUTE_SPEC
+from .brute import BrutePayload, parse_brute, render_brute
 from .ck import (
     CK_SPECS,
     CKOLDREC_TYPE,
@@ -148,6 +150,7 @@ from .vreg import VREG_TYPE, VregPayload, parse_vreg, render_vreg
 
 __all__ = [
     "AGGREGATOR_SPECS",
+    "BRUTE_SPEC",
     "CKOLDREC_TYPE",
     "CKSIMPLEREC_TYPE",
     "CK_SPECS",
@@ -190,6 +193,7 @@ __all__ = [
     "VREG_TYPE",
     "AggregatorPayload",
     "BMInfo",
+    "BrutePayload",
     "CkOldPayload",
     "CkSimplePayload",
     "CommonCodePayload",
@@ -228,6 +232,7 @@ __all__ = [
     "VregPayload",
     "parse_aggregator",
     "parse_bm_info",
+    "parse_brute",
     "parse_ckoldrec",
     "parse_cksimplerec",
     "parse_common_code",
@@ -259,6 +264,7 @@ __all__ = [
     "parse_vreg",
     "render_aggregator",
     "render_bm_info",
+    "render_brute",
     "render_ckoldrec",
     "render_cksimplerec",
     "render_common_code",
