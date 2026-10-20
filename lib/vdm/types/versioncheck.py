@@ -336,6 +336,11 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "version_state(gktab) != field_04",
             "full uint32_t inequality; state is gktab+0xBBC if nonzero, else +0xBA8 if nonzero, else 5 (0 if gktab is null)",
         ),
+        0x89: VersionCheckPredicate(
+            "known",
+            "byte(gktab+0xB5C) == bool(field_04)",
+            "uint32_t truthiness compared with raw uint8_t state",
+        ),
         0x01: VersionCheckPredicate(
             "known",
             "dword(dword_1810766B0) >= field_04",
@@ -363,6 +368,11 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "raw uint8_t state compared with uint32_t truthiness (0 or 1)",
         ),
         0x36: VersionCheckPredicate("partial"),
+        0x37: VersionCheckPredicate(
+            "partial",
+            "state-gated CRCLowerStringW path; complete selector-dependent gate unresolved",
+            "field_04 high byte seeds CRC; low 24 bits derive a floating threshold divided by 1000",
+        ),
         0x4C: VersionCheckPredicate(
             "known", "dword(gktab+0xB80) != field_04", "full uint32_t inequality"
         ),
