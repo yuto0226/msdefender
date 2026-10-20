@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 from ..recid import RecIdTail, parse_recid_tail
 
 PESTATIC_TYPE: Final = 0x87
@@ -81,4 +89,167 @@ def render_pestatic(parsed: PeStaticPayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
-SPEC = FamilySpec(PESTATIC_TYPE, "PESTATIC", parse_pestatic, render_pestatic)
+def _raw_field(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def _crc_stage(
+    order: int,
+    kind: str,
+    algorithm: str,
+    expected: int,
+    field_offset: int,
+    input_length: int,
+) -> JSONObject:
+    return JSONObject(
+        (
+            ("order", order),
+            ("kind", kind),
+            ("source_start", "provider_selected_start"),
+            ("input_length", input_length),
+            ("algorithm", algorithm),
+            ("algorithm_parameters", "opaque"),
+            ("expected", expected),
+            (
+                "expected_raw_span",
+                JSONObject((("offset", field_offset), ("length", 4))),
+            ),
+        )
+    )
+
+
+def _alias_data(tail: RecIdTail | None) -> JSONObject | None:
+    if tail is None:
+        return None
+    object_offset = BASE_SIZE + 1
+    trailing_offset = object_offset + len(tail.object_raw)
+    return JSONObject(
+        (
+            (
+                "raw_span",
+                JSONObject((("offset", BASE_SIZE), ("length", len(tail.raw)))),
+            ),
+            ("raw_hex", tail.raw.hex()),
+            ("length_limit", tail.length_limit),
+            (
+                "length_limit_raw_span",
+                JSONObject((("offset", BASE_SIZE), ("length", 1))),
+            ),
+            ("effective_object_length", len(tail.object_raw)),
+            ("has_object", tail.has_object),
+            ("object_raw_hex", tail.object_raw.hex()),
+            (
+                "object_raw_span",
+                JSONObject(
+                    (("offset", object_offset), ("length", len(tail.object_raw)))
+                ),
+            ),
+            ("trailing_raw_hex", tail.trailing_raw.hex()),
+            (
+                "trailing_raw_span",
+                JSONObject(
+                    (("offset", trailing_offset), ("length", len(tail.trailing_raw)))
+                ),
+            ),
+        )
+    )
+
+
+def export_pestatic_semantics(parsed: PeStaticPayload) -> RuleSemantics:
+    """Export the verified staged fingerprint candidate, not a final verdict."""
+    tail_raw = parsed.recid_tail.raw if parsed.recid_tail is not None else b""
+    framing = JSONArray(
+        (
+            _raw_field("crc_first_64", parsed.raw[0:4], 0),
+            _raw_field("crc_first_512", parsed.raw[4:8], 4),
+            _raw_field("content_crc", parsed.raw[8:12], 8),
+            _raw_field("content_size", parsed.raw[12:16], 12),
+            _raw_field("recid_alias_tail", tail_raw, BASE_SIZE),
+        )
+    )
+    stages = JSONArray(
+        (
+            _crc_stage(
+                0,
+                "prefix_64_candidate",
+                "mpengine.CRC_1",
+                parsed.crc_first_64,
+                0,
+                64,
+            ),
+            _crc_stage(
+                1,
+                "prefix_512_candidate",
+                "mpengine.CRC_1",
+                parsed.crc_first_512,
+                4,
+                512,
+            ),
+            _crc_stage(
+                2,
+                "content_candidate",
+                "mpengine.CRC_0",
+                parsed.content_crc,
+                8,
+                parsed.content_size,
+            ),
+        )
+    )
+    issues = [
+        SemanticIssue(
+            "crc_algorithm_parameters_opaque",
+            "CRC_0 and CRC_1 identify mpengine routines; their portable parameters "
+            "are not confirmed.",
+        )
+    ]
+    status = "confirmed_subset"
+    if parsed.recid_tail is not None and parsed.recid_tail.trailing_raw:
+        status = "unsupported"
+        issues.append(
+            SemanticIssue(
+                "recid_trailing_bytes_uninterpreted",
+                "Bytes after the bounded RecID alias are retained without semantics.",
+                (("length", len(parsed.recid_tail.trailing_raw)),),
+            )
+        )
+
+    data = JSONObject(
+        (
+            ("raw_hex", parsed.raw.hex()),
+            ("framing", framing),
+            ("type", "staged_pe_fingerprint_candidate"),
+            ("source_start", "provider_selected_start"),
+            ("stages", stages),
+            ("content_size", parsed.content_size),
+            ("recid_alias", _alias_data(parsed.recid_tail)),
+            ("final_verdict", "not_represented"),
+        )
+    )
+    return RuleSemantics(
+        status=status,
+        representation="pestatic.staged_fingerprint.ir.v1",
+        data=data,
+        evidence=(
+            (
+                "mpengine 1.443.903.0 PESTATIC RecordPush, Lookup, and "
+                "PeStaticHashProvider::CompareValues data flow"
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+SPEC = FamilySpec(
+    PESTATIC_TYPE,
+    "PESTATIC",
+    parse_pestatic,
+    render_pestatic,
+    semantic_exporter=export_pestatic_semantics,
+)
