@@ -122,7 +122,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     issues = [
         SemanticIssue(
             "runtime_region_unknown",
-            "PEMapper offsets and scan_limit do not establish a portable file/RVA region.",
+            "Static flow establishes a PEMapper guest-address window, but not its runtime backing bytes or file/RVA translation.",
         ),
         SemanticIssue(
             "final_detection_policy_unknown",
@@ -136,7 +136,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         issues.append(
             SemanticIssue(
                 "bm_operand_semantics_incomplete",
-                "BM framing is validated, but operand and mapper-dependent behavior are not portable.",
+                "PEMapper window flow is documented; BM opcode operands and reader-state effects remain only partially modeled.",
             )
         )
     else:
@@ -166,6 +166,25 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             ("pattern_length", len(parsed.pattern_raw)),
             ("pattern_raw_hex", parsed.pattern_raw.hex()),
             ("receiver_result", parsed.receiver_result),
+            (
+                "mapping_strategy",
+                JSONObject(
+                    (
+                        ("coordinate", "PEMapper guest address passed to __mmap_ex"),
+                        ("primary_request_length", "prefix + 2048"),
+                        ("primary_request_start", "scan_va - prefix"),
+                        ("bm_match_length_argument", 2048),
+                        ("bm_match_start_argument", "mapped_pointer + prefix"),
+                        ("bm_start_argument_interpretation", None),
+                        (
+                            "fallback_requests",
+                            "(scan_va, 2048), then (scan_va, 1); the fallback uses the mapped length",
+                        ),
+                        ("runtime_bytes_observed", False),
+                        ("file_or_rva_translation", None),
+                    )
+                ),
+            ),
             ("bm_pattern", pattern_data),
         )
     )
