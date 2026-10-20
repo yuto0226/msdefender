@@ -48,6 +48,7 @@ from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.snidex import SNIDEX_SPECS
 from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
+from .types.threat_update_status import SPEC as THREAT_UPDATE_STATUS_SPEC
 from .types.titanflt import SPEC as TITANFLT_SPEC
 from .types.trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
 from .types.ufsp_disable import SPEC as UFSP_DISABLE_SPEC
@@ -110,6 +111,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             *FPATH_SPECS,
             *FOP_SPECS,
             *THREAT_SPECS,
+            THREAT_UPDATE_STATUS_SPEC,
             TITANFLT_SPEC,
             *HSTR_SPECS,
             *NID_SPECS,

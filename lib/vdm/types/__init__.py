@@ -271,6 +271,13 @@ from .threat import (
     render_threat_end,
     threat_category_name,
 )
+from .threat_update_status import SPEC as THREAT_UPDATE_STATUS_SPEC
+from .threat_update_status import (
+    THREAT_UPDATE_STATUS_TYPE,
+    ThreatUpdateStatusPayload,
+    parse_threat_update_status,
+    render_threat_update_status,
+)
 from .titanflt import SPEC as TITANFLT_SPEC
 from .titanflt import TITANFLT_TYPE, TitanFltPayload, parse_titanflt, render_titanflt
 from .trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
@@ -393,6 +400,8 @@ __all__ = [
     "SPEC",
     "THREAT_CATEGORIES",
     "THREAT_SPECS",
+    "THREAT_UPDATE_STATUS_SPEC",
+    "THREAT_UPDATE_STATUS_TYPE",
     "TITANFLT_SPEC",
     "TITANFLT_TYPE",
     "TRUSTED_PUBLISHER_SPEC",
@@ -468,6 +477,7 @@ __all__ = [
     "ThreatBegin",
     "ThreatEnd",
     "ThreatMetadata",
+    "ThreatUpdateStatusPayload",
     "TitanFltPayload",
     "TrustedPublisher",
     "UfspDisablePayload",
@@ -529,6 +539,7 @@ __all__ = [
     "parse_static",
     "parse_threat_begin",
     "parse_threat_end",
+    "parse_threat_update_status",
     "parse_titanflt",
     "parse_trusted_publisher",
     "parse_ufsp_disable",
@@ -589,6 +600,7 @@ __all__ = [
     "render_static",
     "render_threat_begin",
     "render_threat_end",
+    "render_threat_update_status",
     "render_titanflt",
     "render_trusted_publisher",
     "render_ufsp_disable",
