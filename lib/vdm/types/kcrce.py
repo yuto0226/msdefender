@@ -85,6 +85,7 @@ def render_kcrce(parsed: KcrcePayload) -> FormatResult:
         DisplaySection(
             "Match Parameters",
             rows=(
+                ("callback_domain", "scanner-supplied; not encoded in this record"),
                 ("hash_length", f"{parsed.hash_length} B"),
                 (
                     "callback_relative_offset",
