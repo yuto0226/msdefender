@@ -66,6 +66,13 @@ from .delta_blob_recinfo import (
 from .delta_blob_recinfo import (
     SPEC as DELTA_BLOB_RECINFO_SPEC,
 )
+from .explicitresource import (
+    EXPLICITRESOURCE_TYPE,
+    ExplicitResourcePayload,
+    parse_explicitresource,
+    render_explicitresource,
+)
+from .explicitresource import SPEC as EXPLICITRESOURCE_SPEC
 from .fop import (
     FOP_EXTENDED_TYPES,
     FOP_PLAIN_TYPES,
@@ -303,6 +310,8 @@ __all__ = [
     "DBVAR_TYPE",
     "DELTA_BLOB_RECINFO_SPEC",
     "DELTA_BLOB_RECINFO_TYPE",
+    "EXPLICITRESOURCE_SPEC",
+    "EXPLICITRESOURCE_TYPE",
     "FOP_EXTENDED_TYPES",
     "FOP_PLAIN_TYPES",
     "FOP_SPECS",
@@ -387,6 +396,7 @@ __all__ = [
     "DbVarPayload",
     "DeltaBlobRecInfo",
     "DeltaBlobRecInfoEntry",
+    "ExplicitResourcePayload",
     "FTriePosPayload",
     "FopPayload",
     "FpathPayload",
@@ -449,6 +459,7 @@ __all__ = [
     "parse_common_code",
     "parse_dbvar",
     "parse_delta_blob_recinfo",
+    "parse_explicitresource",
     "parse_fop",
     "parse_fpath",
     "parse_friendlyfile_sha256",
@@ -505,6 +516,7 @@ __all__ = [
     "render_common_code",
     "render_dbvar",
     "render_delta_blob_recinfo",
+    "render_explicitresource",
     "render_fop",
     "render_fpath",
     "render_friendlyfile_sha256",
