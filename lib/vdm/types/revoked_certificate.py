@@ -165,18 +165,18 @@ def _record_identity_rows(tail: RecIdTail) -> tuple[tuple[str, str], ...]:
 
 def render_revoked_certificate(parsed: RevokedCertificate) -> FormatResult:
     if parsed.filetime == 0:
-        timestamp_rows = [("not_before", "none (FILETIME 0)")]
+        timestamp_rows = [("timestamp_filetime", "0 (no lower-bound effect)")]
     else:
-        timestamp_rows = [("filetime", f"0x{parsed.filetime:016x}")]
+        timestamp_rows = [("timestamp_filetime", f"0x{parsed.filetime:016x}")]
         if parsed.timestamp_utc is not None:
             timestamp_rows.append(
                 (
-                    "not_before_utc",
+                    "timestamp_utc",
                     parsed.timestamp_utc.isoformat().replace("+00:00", "Z"),
                 )
             )
         else:
-            timestamp_rows.append(("not_before_utc", "out of range"))
+            timestamp_rows.append(("timestamp_utc", "out of range"))
         if parsed.timestamp_error is not None:
             timestamp_rows.append(("timestamp_note", parsed.timestamp_error))
 
