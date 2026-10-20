@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 NDAT_TYPE: Final = 0xA9
 PREVIEW_SIZE: Final = 16
@@ -90,4 +97,93 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
     )
 
 
-NDAT_SPEC = FamilySpec(NDAT_TYPE, "NDAT", parse_ndat, render_ndat)
+def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
+    """Export confirmed NDAT framing and callback dispatch without guessing use."""
+    callback_target = "LogSkipNdatCallback" if parsed.callback_index == 5 else None
+    issues = [
+        SemanticIssue(
+            "ndat_callback_business_semantics_unknown",
+            "Callback dispatch is established, but the callback index's "
+            "business meaning is not a final-detection result.",
+            details=(("callback_index", parsed.callback_index),),
+        )
+    ]
+    if parsed.record_id_suffix_raw is not None:
+        issues.append(
+            SemanticIssue(
+                "record_name_encoding_unknown",
+                "The NUL-terminated bytes are passed to createrecidz as a name, "
+                "but their text encoding is not established.",
+            )
+        )
+    if parsed.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "trailing_bytes_uninterpreted",
+                "Bytes following the first record-name terminator are retained "
+                "without confirmed receiver semantics.",
+                details=(("length", len(parsed.trailing_raw)),),
+            )
+        )
+    status = (
+        "unsupported"
+        if parsed.trailing_raw
+        else "confirmed_subset"
+        if callback_target is not None
+        else "observed_only"
+    )
+    return RuleSemantics(
+        status=status,
+        representation="ndat.counted_data_callback_suffix.v1",
+        data=JSONObject(
+            (
+                ("type", "NDAT"),
+                ("raw_hex", parsed.raw.hex()),
+                ("data_length", parsed.data_length),
+                ("data_raw_hex", parsed.data_raw.hex()),
+                (
+                    "callback",
+                    JSONObject(
+                        (
+                            ("index", parsed.callback_index),
+                            ("index_hex", f"0x{parsed.callback_index:02x}"),
+                            ("dispatch_target", callback_target),
+                            ("dispatch_mechanism_confirmed", True),
+                            ("dispatch_target_confirmed", callback_target is not None),
+                            ("business_semantics", "unknown"),
+                            ("is_final_detection", False),
+                        )
+                    ),
+                ),
+                (
+                    "record_name_raw_hex",
+                    parsed.record_id_suffix_raw.hex()
+                    if parsed.record_id_suffix_raw is not None
+                    else None,
+                ),
+                ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                (
+                    "record_name_role",
+                    "absent"
+                    if parsed.record_id_suffix_raw is None
+                    else "nul_terminated_name_for_createrecidz",
+                ),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 ReceiveNewTemplate NDAT descriptors",
+            "mpengine 1.443.903.0 NdatPostCallback dispatches by callback index",
+            "mpengine 1.443.903.0 LogSkip::Initialize registers index 5",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+NDAT_SPEC = FamilySpec(
+    NDAT_TYPE,
+    "NDAT",
+    parse_ndat,
+    render_ndat,
+    semantic_exporter=export_ndat_semantics,
+)
