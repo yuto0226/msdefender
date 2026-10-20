@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 from ..recid import RecIdTail, parse_recid_tail
 
 KCRCE_TYPE: Final = 0x80
@@ -125,4 +133,186 @@ def render_kcrce(parsed: KcrcePayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
-SPEC = FamilySpec(KCRCE_TYPE, "KCRCE", parse_kcrce, render_kcrce)
+def _raw_span(offset: int, length: int) -> JSONObject:
+    return JSONObject((("offset", offset), ("length", length)))
+
+
+def _raw_frame(kind: str, offset: int, raw: bytes) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", _raw_span(offset, len(raw))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
+    """Export the confirmed KCRCE comparison pipeline, not a final verdict."""
+    tail = parsed.recid_tail
+    tail_raw = b"" if tail is None else tail.raw
+    framing = JSONArray(
+        (
+            _raw_frame("fastcrc", 0, parsed.raw[0:4]),
+            _raw_frame("crc1", 4, parsed.raw[4:8]),
+            _raw_frame("crc2", 8, parsed.raw[8:12]),
+            _raw_frame("length_flags", 12, parsed.raw[12:16]),
+            _raw_frame("recid_tail", BASE_SIZE, tail_raw),
+        )
+    )
+    issues = [
+        SemanticIssue(
+            "callback_family_not_encoded",
+            "The scanner supplies the callback family that interprets the packed "
+            "range; the record does not identify that family.",
+        ),
+        SemanticIssue(
+            "outer_verdict_unknown",
+            "A KCRCE lookup result does not by itself define the final scan report.",
+        ),
+    ]
+    unsupported = bool(parsed.unresolved_flags)
+    if parsed.unresolved_flags:
+        issues.append(
+            SemanticIssue(
+                "unresolved_flags_present",
+                "Unresolved length_flags bits are retained without assigning behavior.",
+                (("mask", parsed.unresolved_flags),),
+            )
+        )
+    if tail is not None:
+        if tail.length_limit > len(tail.raw) - 1:
+            unsupported = True
+            issues.append(
+                SemanticIssue(
+                    "recid_tail_truncated",
+                    "The RecID tail is shorter than its declared bounded length.",
+                    (
+                        ("declared_length", tail.length_limit),
+                        ("available_length", len(tail.raw) - 1),
+                    ),
+                )
+            )
+        if tail.trailing_raw:
+            unsupported = True
+            issues.append(
+                SemanticIssue(
+                    "recid_tail_trailing_bytes_uninterpreted",
+                    "Bytes after the bounded RecID object are retained "
+                    "without semantics.",
+                    (("length", len(tail.trailing_raw)),),
+                )
+            )
+
+    return RuleSemantics(
+        status="unsupported" if unsupported else "confirmed_subset",
+        representation="kcrce.match_pipeline.ir.v1",
+        data=JSONObject(
+            (
+                ("type", "kcrce_match_pipeline"),
+                ("raw_hex", parsed.raw.hex()),
+                ("framing", framing),
+                (
+                    "matching_pipeline",
+                    JSONArray(
+                        (
+                            JSONObject(
+                                (
+                                    ("stage", 0),
+                                    ("field", "crc1"),
+                                    ("expected", parsed.crc1),
+                                    ("source", "callback_mode_1"),
+                                    ("comparison", "exact"),
+                                    ("index_role", "primary_equal_range"),
+                                )
+                            ),
+                            JSONObject(
+                                (
+                                    ("stage", 1),
+                                    ("field", "fastcrc"),
+                                    ("expected", parsed.fastcrc),
+                                    ("source", "provider_key_or_callback_mode_0"),
+                                    (
+                                        "comparison",
+                                        "exact_if_provider_key_or_flag_0x40000000",
+                                    ),
+                                )
+                            ),
+                            JSONObject(
+                                (
+                                    ("stage", 2),
+                                    ("field", "crc2"),
+                                    ("expected", parsed.crc2),
+                                    ("source", "callback_mode_2"),
+                                    ("comparison", "exact"),
+                                )
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "callback",
+                    JSONObject(
+                        (
+                            ("family_source", "scanner_supplied"),
+                            ("family_encoded_in_record", False),
+                            ("range_interpretation", "callback_specific"),
+                        )
+                    ),
+                ),
+                (
+                    "packed_range",
+                    JSONObject(
+                        (
+                            ("raw_low28", parsed.length_flags & 0x0FFFFFFF),
+                            ("low16", parsed.hash_length),
+                            ("bits16_27", parsed.callback_relative_offset),
+                        )
+                    ),
+                ),
+                (
+                    "flags",
+                    JSONObject(
+                        (
+                            ("raw", parsed.length_flags),
+                            ("unresolved_mask", parsed.unresolved_flags),
+                            (
+                                "require_fastcrc_when_provider_key_missing",
+                                parsed.require_fastcrc_when_provider_key_missing,
+                            ),
+                            (
+                                "suppress_weak_fastcrc_fallback",
+                                parsed.suppress_weak_fastcrc_fallback,
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "crc2_mismatch_fallback",
+                    JSONObject(
+                        (
+                            ("enabled_when_flag_0x80000000_clear", True),
+                            ("requires_fastcrc_exact", True),
+                            ("attribute_records_excluded", True),
+                            ("result_policy", "not_represented"),
+                        )
+                    ),
+                ),
+                ("recid_tail_raw_hex", tail_raw.hex()),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 KCRCE RecordPush, CompareValues, and Lookup data flow",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+SPEC = FamilySpec(
+    KCRCE_TYPE,
+    "KCRCE",
+    parse_kcrce,
+    render_kcrce,
+    semantic_exporter=export_kcrce_semantics,
+)
