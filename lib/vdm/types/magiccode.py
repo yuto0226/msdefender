@@ -2,7 +2,15 @@
 
 from dataclasses import dataclass
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 _BYTE_PREVIEW = 64
 _TEXT_PREVIEW = 256
@@ -78,6 +86,8 @@ def render_magiccode(parsed: MagicCodePayload) -> FormatResult:
     rows = (
         ("semantic_status", "corpus profile; engine receiver acceptance unresolved"),
         ("profile", "u8-length field, u32-length field, u16-length field"),
+        ("registered_storage_stride", "32 bytes (current engine registration)"),
+        ("confirmed_lookup_consumer", "GetMagicCodeSignatures: fixed UpxEP prefix"),
         ("field_00_length", str(len(parsed.field_00_raw))),
         ("field_00_text", _text_preview(parsed.field_00_c_string)),
         ("field_00_raw", _hex_preview(parsed.field_00_raw)),
@@ -92,4 +102,92 @@ def render_magiccode(parsed: MagicCodePayload) -> FormatResult:
     return FormatResult(sections=(DisplaySection("MAGICCODE", rows=rows),))
 
 
-SPEC = FamilySpec(0xC0, "MAGICCODE", parse_magiccode, render_magiccode)
+def export_magiccode_semantics(parsed: MagicCodePayload) -> RuleSemantics:
+    """Export observed framing separately from the confirmed runtime consumer."""
+    fields = (
+        ("field_00", parsed.field_00_raw),
+        ("field_01", parsed.field_01_raw),
+        ("field_02", parsed.field_02_raw),
+        ("trailing", parsed.trailing_raw),
+    )
+    return RuleSemantics(
+        status="observed_only",
+        representation="magiccode.corpus_manifest.ir.v1",
+        data=JSONObject(
+            (
+                ("type", "MAGICCODE"),
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "corpus_manifest",
+                    JSONObject(
+                        (
+                            ("profile", "u8-length, u32le-length, u16le-length"),
+                            (
+                                "fields",
+                                JSONArray(
+                                    tuple(
+                                        JSONObject(
+                                            (
+                                                ("name", name),
+                                                ("length", len(raw)),
+                                                ("raw_hex", raw.hex()),
+                                            )
+                                        )
+                                        for name, raw in fields
+                                    )
+                                ),
+                            ),
+                            (
+                                "field_00_text_preview",
+                                _text_preview(parsed.field_00_c_string),
+                            ),
+                            (
+                                "field_02_text_preview",
+                                _text_preview(parsed.field_02_c_string),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "confirmed_engine_consumer",
+                    JSONObject(
+                        (
+                            ("engine_version", "1.443.903.0"),
+                            ("registration", "32-byte records; 8 descriptor words"),
+                            ("registered_stride", 32),
+                            ("lookup_function", "GetMagicCodeSignatures"),
+                            ("lookup_key", "UpxEP"),
+                            ("lookup_behavior", "fixed-prefix range lookup"),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "mpas.sig contains 9 MAGICCODE records; mpav.sig contains none",
+            "magiccode_init_module registers 32-byte storage and MagicCodeSort",
+            "GetMagicCodeSignatures performs a fixed UpxEP prefix range lookup",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "receiver_grammar_unresolved",
+                "The u8/u32/u16 field framing is a corpus profile; the C0-specific "
+                "receiver acceptance grammar is not identified.",
+            ),
+            SemanticIssue(
+                "registered_record_field_semantics_unknown",
+                "The registered 32-byte MagicCode storage fields have no confirmed "
+                "field-level semantics.",
+            ),
+        ),
+    )
+
+
+SPEC = FamilySpec(
+    0xC0,
+    "MAGICCODE",
+    parse_magiccode,
+    render_magiccode,
+    semantic_exporter=export_magiccode_semantics,
+)
