@@ -24,7 +24,11 @@ from lib.debug import (
     ok,
     warn,
 )
-from lib.vdm import decode_record, export_record_artifacts
+from lib.vdm import (
+    decode_record,
+    export_record_artifacts,
+    export_record_semantics,
+)
 from lib.vdm.catalog import type_name
 from lib.vdm.stream import (
     OrphanRecordEvent,
@@ -93,6 +97,7 @@ def _manifest(
     reason: str | None,
     source_name: str,
     exports: list[dict[str, object]],
+    records: list[dict[str, object]],
 ) -> dict[str, object]:
     begin = block.begin
     category_name = threat_category_name(begin.category)
@@ -101,7 +106,7 @@ def _manifest(
     end_record = block.end_record
     termination_reason = reason or "normal"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": source_name,
         "threat": {
             "threat_id": begin.threat_id,
@@ -161,10 +166,7 @@ def _manifest(
             "complete": termination_reason == "normal" and end_record is not None,
             "termination_reason": termination_reason,
         },
-        "records": [
-            _record_manifest(record, index)
-            for index, record in enumerate(block.records, start=1)
-        ],
+        "records": records,
         "exports": exports,
     }
 
@@ -187,8 +189,25 @@ def _write_block(
     threat_dir = _threat_dir(out_dir, block)
     (threat_dir / "raw.sig").write_bytes(block.to_bytes())
     exports: list[dict[str, object]] = []
+    records: list[dict[str, object]] = []
     for index, wire_record in enumerate(block.records, start=1):
         decoded = decode_record(wire_record.type_byte, wire_record.payload)
+        record_entry = _record_manifest(wire_record, index)
+        semantic_result = export_record_semantics(decoded)
+        if semantic_result is not None:
+            if semantic_result.status == "ready":
+                assert semantic_result.semantics is not None
+                record_entry["semantic_export"] = {
+                    "status": "ready",
+                    "semantics": semantic_result.semantics.to_json(),
+                }
+            else:
+                assert semantic_result.error is not None
+                record_entry["semantic_export"] = {
+                    "status": "failed",
+                    "error": semantic_result.error,
+                }
+        records.append(record_entry)
         result = export_record_artifacts(decoded)
         if result is None:
             continue
@@ -242,7 +261,7 @@ def _write_block(
     temp_path = threat_dir / ".manifest.json.tmp"
     payload = (
         json.dumps(
-            _manifest(block, reason, source_name, exports),
+            _manifest(block, reason, source_name, exports, records),
             ensure_ascii=False,
             indent=2,
         )
