@@ -2,7 +2,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-from ..core import FamilySpec, FormatResult
+from ..core import (
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 THREAT_CATEGORIES = MappingProxyType(
     {
@@ -301,16 +308,194 @@ def render_threat_end(threat: ThreatEnd) -> FormatResult:
     return FormatResult(fields=tuple(fields))
 
 
+def _raw_span(offset: int, raw: bytes) -> JSONObject:
+    return JSONObject(
+        (("offset", offset), ("length", len(raw)), ("raw_hex", raw.hex()))
+    )
+
+
+def export_threat_begin_semantics(threat: ThreatBegin) -> RuleSemantics:
+    """Export THREAT_BEGIN as an association anchor and metadata record."""
+    category_name = threat_category_name(threat.category)
+    issues = [
+        SemanticIssue(
+            "threat_container_not_detection_predicate",
+            "THREAT_BEGIN identifies and groups a threat namespace; it does not "
+            "describe a scan-time detection predicate or verdict.",
+        ),
+        SemanticIssue(
+            "extension_entry_semantics_unknown",
+            "The ext_entries values are preserved as raw numeric entries; their "
+            "individual platform or flag meanings are unresolved.",
+            (("count", len(threat.ext_entries)),),
+        ),
+        SemanticIssue(
+            "post_name_word_semantics_unknown",
+            "The receiver skips post_name_zero without using it as a condition.",
+            (("raw_value", threat.post_name_zero),),
+        ),
+    ]
+    if threat.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "trailing_bytes_uninterpreted",
+                "Bytes after the confirmed optional metadata are retained without "
+                "receiver semantics.",
+                (("length", len(threat.trailing_raw)),),
+            )
+        )
+    metadata = None
+    if threat.metadata is not None:
+        metadata = JSONObject(
+            (
+                ("short_description_id", threat.metadata.short_description_id),
+                ("threat_advice_id", threat.metadata.threat_advice_id),
+                ("severity", threat.metadata.severity),
+                ("action", threat.metadata.action),
+                ("wire_size", threat.metadata_wire_size),
+            )
+        )
+    return RuleSemantics(
+        status="unsupported" if threat.trailing_raw else "confirmed_subset",
+        representation="threat-association.anchor.v1",
+        data=JSONObject(
+            (
+                ("record_type", "THREAT_BEGIN"),
+                ("container_role", "establishes_active_threat_association"),
+                ("raw_hex", threat.raw.hex()),
+                (
+                    "threat_id",
+                    JSONObject(
+                        (
+                            ("value", threat.threat_id),
+                            ("wire", _raw_span(0, threat.raw[:4])),
+                            ("sentinel_kind", MAGIC_THREAT_IDS.get(threat.threat_id)),
+                        )
+                    ),
+                ),
+                (
+                    "category",
+                    JSONObject(
+                        (
+                            ("value", threat.category),
+                            ("name", category_name),
+                            ("wire", _raw_span(8, threat.raw[8:10])),
+                        )
+                    ),
+                ),
+                (
+                    "name",
+                    JSONObject(
+                        (
+                            ("display_decoded_utf8_lossy", threat.name),
+                            ("raw_hex", threat.name_raw.hex()),
+                            ("display_bytes_hex", threat.display_name_raw.hex()),
+                            ("marker_hex", threat.marker_raw.hex()),
+                        )
+                    ),
+                ),
+                (
+                    "dependencies",
+                    JSONObject(
+                        (
+                            ("count", threat.dep_count),
+                            ("threat_ids", JSONArray(threat.dependencies)),
+                        )
+                    ),
+                ),
+                (
+                    "extension_entries",
+                    JSONObject(
+                        (
+                            ("count", threat.ext_count),
+                            ("raw_values", JSONArray(threat.ext_entries)),
+                        )
+                    ),
+                ),
+                ("post_name_zero", threat.post_name_zero),
+                ("metadata", metadata),
+                ("trailing_raw_hex", threat.trailing_raw.hex()),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 threat_info_receiver @ 0x1809EB590",
+            "mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
+    """Export the observed 0x5D cache marker without inventing group semantics."""
+    return RuleSemantics(
+        status="unsupported" if threat.trailing_raw else "observed_only",
+        representation="threat-end.cache-marker-observation.v1",
+        data=JSONObject(
+            (
+                ("record_type", "THREAT_END"),
+                ("container_role", None),
+                ("raw_hex", threat.raw.hex()),
+                (
+                    "observed_value",
+                    JSONObject(
+                        (
+                            ("value", threat.value),
+                            ("wire", _raw_span(0, threat.raw[:4])),
+                            (
+                                "cache_writer_storage",
+                                "dword_181289CB8 when payload size is four",
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "cache_writer_behavior",
+                    "nonzero value may be deferred and replayed as type 0x5D",
+                ),
+                ("trailing_raw_hex", threat.trailing_raw.hex()),
+            )
+        ),
+        evidence=("mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8",),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "threat_end_value_semantics_unknown",
+                "No inspected current-binary path proves that this value is a "
+                "threat ID, checksum, namespace, or group terminator.",
+            ),
+            SemanticIssue(
+                "threat_container_not_detection_predicate",
+                "Type 0x5D does not describe a scan-time detection predicate or "
+                "verdict; a threat-group closing role is not established.",
+            ),
+            *(
+                (
+                    SemanticIssue(
+                        "trailing_bytes_uninterpreted",
+                        "Only the first DWORD has an observed cache-writer role.",
+                        (("length", len(threat.trailing_raw)),),
+                    ),
+                )
+                if threat.trailing_raw
+                else ()
+            ),
+        ),
+    )
+
+
 THREAT_BEGIN_SPEC = FamilySpec(
     THREAT_BEGIN_TYPE,
     "THREAT_BEGIN",
     parse_threat_begin,
     render_threat_begin,
+    semantic_exporter=export_threat_begin_semantics,
 )
 THREAT_END_SPEC = FamilySpec(
     THREAT_END_TYPE,
     "THREAT_END",
     parse_threat_end,
     render_threat_end,
+    semantic_exporter=export_threat_end_semantics,
 )
 THREAT_SPECS = (THREAT_BEGIN_SPEC, THREAT_END_SPEC)
