@@ -132,6 +132,16 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
                     "adjacent DELTA_BLOB record observed; exact linkage unresolved",
                 ),
                 (
+                    "engine_disposition",
+                    JSONObject(
+                        (
+                            ("mode0_gate_true", "skipped_after_framing"),
+                            ("mode1", "DispatchRecord"),
+                            ("receiver_registration", "unconfirmed"),
+                        )
+                    ),
+                ),
+                (
                     "detection_relevance",
                     "metadata observation; no detection predicate established",
                 ),
@@ -139,7 +149,11 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
         ),
         evidence=(
             "mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8",
-            "The alternate-mode 0x74 skip branch does not inspect payload fields",
+            (
+                "DispatchRecords mode 0 with byte_1811FAE08 set skips type 0x74 "
+                "after outer framing; mode 1 calls DispatchRecord"
+            ),
+            "DispatchRecord @ 0x1800FAF18 selects runtime gktab template/handler slots",
         ),
         profile="mpengine-1.443.903.0",
         issues=(
@@ -163,6 +177,14 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
                 (
                     "No evidence establishes that this metadata record is a "
                     "scan-time detection predicate or verdict."
+                ),
+            ),
+            SemanticIssue(
+                "runtime_receiver_unconfirmed",
+                (
+                    "Static IDA data does not establish the initialized 0x74 "
+                    "template or handler slot; the type is not proven globally "
+                    "ignored."
                 ),
             ),
         ),
