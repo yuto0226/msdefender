@@ -123,19 +123,19 @@ def _manifest(
             "wire_present": wire_metadata is not None,
             "wire": (
                 {
-                    "meta_a": wire_metadata.meta_a,
-                    "meta_b": wire_metadata.meta_b,
-                    "sub_category": wire_metadata.sub_category,
-                    "format_version": wire_metadata.format_version,
+                    "short_description_id": wire_metadata.short_description_id,
+                    "threat_advice_id": wire_metadata.threat_advice_id,
+                    "severity": wire_metadata.severity,
+                    "action": wire_metadata.action,
                 }
                 if wire_metadata is not None
                 else None
             ),
             "effective": {
-                "meta_a": effective.meta_a,
-                "meta_b": effective.meta_b,
-                "sub_category": effective.sub_category,
-                "format_version": effective.format_version,
+                "short_description_id": effective.short_description_id,
+                "threat_advice_id": effective.threat_advice_id,
+                "severity": effective.severity,
+                "action": effective.action,
             },
         },
         "framing": {

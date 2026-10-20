@@ -66,10 +66,15 @@ THREAT_END_TYPE: Final = 0x5D
 
 @dataclass(frozen=True, slots=True)
 class ThreatMetadata:
-    meta_a: int
-    meta_b: int
-    sub_category: int
-    format_version: int
+    """Receiver-built tail named by the engine getters that read it.
+
+    Wire tail offsets +0..+5 map to metadata-object offsets +4..+9.
+    """
+
+    short_description_id: int
+    threat_advice_id: int
+    severity: int
+    action: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +99,9 @@ class ThreatBegin:
     @property
     def effective_metadata(self) -> ThreatMetadata:
         """Return engine defaults for omitted or partially supplied metadata."""
-        return self.metadata or ThreatMetadata(1, 3, 0, 0)
+        # Receiver defaults are two bytes at metadata-object +4/+5. The engine
+        # getters read them together as a little-endian short-description ID.
+        return self.metadata or ThreatMetadata(0x0301, 0, 0, 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,19 +177,19 @@ def parse_threat_begin(payload: bytes) -> ThreatBegin:
     metadata_wire_size = 0
     if remaining == 2:
         metadata = ThreatMetadata(
-            meta_a=payload[cursor],
-            meta_b=payload[cursor + 1],
-            sub_category=0,
-            format_version=0,
+            short_description_id=int.from_bytes(payload[cursor : cursor + 2], "little"),
+            threat_advice_id=0,
+            severity=0,
+            action=0,
         )
         metadata_wire_size = 2
         cursor += 2
     elif remaining >= 6:
         metadata = ThreatMetadata(
-            meta_a=payload[cursor],
-            meta_b=payload[cursor + 1],
-            sub_category=int.from_bytes(payload[cursor + 2 : cursor + 4], "little"),
-            format_version=int.from_bytes(payload[cursor + 4 : cursor + 6], "little"),
+            short_description_id=int.from_bytes(payload[cursor : cursor + 2], "little"),
+            threat_advice_id=int.from_bytes(payload[cursor + 2 : cursor + 4], "little"),
+            severity=payload[cursor + 4],
+            action=payload[cursor + 5],
         )
         metadata_wire_size = 6
         cursor += 6
@@ -237,7 +244,7 @@ def render_threat_begin(threat: ThreatBegin) -> FormatResult:
         threat_id_display += f"  [{magic}]"
     fields = [
         ("threat_id", threat_id_display),
-        ("category", category_display),
+        ("header_category", category_display),
         ("dep_count", str(threat.dep_count)),
         (
             "dependency_ids",
@@ -262,9 +269,9 @@ def render_threat_begin(threat: ThreatBegin) -> FormatResult:
                     else "wire_metadata_partial (2 bytes; remaining words defaulted)"
                 ),
                 (
-                    f"meta_a={metadata.meta_a}, meta_b={metadata.meta_b}, "
-                    f"sub_category={metadata.sub_category:#06x}, "
-                    f"format_version={metadata.format_version:#06x}"
+                    f"short_description_id={metadata.short_description_id:#06x}, "
+                    f"threat_advice_id={metadata.threat_advice_id:#06x}, "
+                    f"severity={metadata.severity:#04x}, action={metadata.action:#04x}"
                 ),
             )
         )
@@ -274,9 +281,9 @@ def render_threat_begin(threat: ThreatBegin) -> FormatResult:
             (
                 "effective_metadata (wire tail absent)",
                 (
-                    f"meta_a={metadata.meta_a}, meta_b={metadata.meta_b}, "
-                    f"sub_category={metadata.sub_category:#06x}, "
-                    f"format_version={metadata.format_version:#06x}"
+                    f"short_description_id={metadata.short_description_id:#06x}, "
+                    f"threat_advice_id={metadata.threat_advice_id:#06x}, "
+                    f"severity={metadata.severity:#04x}, action={metadata.action:#04x}"
                 ),
             )
         )
