@@ -20,6 +20,8 @@ from .ck import (
 )
 from .common_code import SPEC as COMMON_CODE_SPEC
 from .common_code import CommonCodePayload, parse_common_code, render_common_code
+from .dbvar import DBVAR_TYPE, DbVarPayload, parse_dbvar, render_dbvar
+from .dbvar import SPEC as DBVAR_SPEC
 from .fop import (
     FOP_EXTENDED_TYPES,
     FOP_PLAIN_TYPES,
@@ -157,6 +159,8 @@ __all__ = [
     "CKSIMPLEREC_TYPE",
     "CK_SPECS",
     "COMMON_CODE_SPEC",
+    "DBVAR_SPEC",
+    "DBVAR_TYPE",
     "FOP_EXTENDED_TYPES",
     "FOP_PLAIN_TYPES",
     "FOP_SPECS",
@@ -200,6 +204,7 @@ __all__ = [
     "CkOldPayload",
     "CkSimplePayload",
     "CommonCodePayload",
+    "DbVarPayload",
     "FopPayload",
     "FpathPayload",
     "FriendlyFileSha256",
@@ -240,6 +245,7 @@ __all__ = [
     "parse_ckoldrec",
     "parse_cksimplerec",
     "parse_common_code",
+    "parse_dbvar",
     "parse_fop",
     "parse_fpath",
     "parse_friendlyfile_sha256",
@@ -273,6 +279,7 @@ __all__ = [
     "render_ckoldrec",
     "render_cksimplerec",
     "render_common_code",
+    "render_dbvar",
     "render_fop",
     "render_fpath",
     "render_friendlyfile_sha256",
