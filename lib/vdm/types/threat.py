@@ -85,6 +85,7 @@ class ThreatBegin:
     dependencies: tuple[int, ...]
     ext_entries: tuple[int, ...]
     metadata: ThreatMetadata | None
+    metadata_wire_size: int
     marker_raw: bytes
     display_name_raw: bytes
     name: str
@@ -92,7 +93,7 @@ class ThreatBegin:
 
     @property
     def effective_metadata(self) -> ThreatMetadata:
-        """Return engine defaults when the wire metadata tail is absent."""
+        """Return engine defaults for omitted or partially supplied metadata."""
         return self.metadata or ThreatMetadata(1, 3, 0, 0)
 
 
@@ -115,6 +116,10 @@ def parse_threat_begin(payload: bytes) -> ThreatBegin:
     threat_id = int.from_bytes(payload[0:4], "little")
     dep_count = int.from_bytes(payload[4:6], "little")
     ext_count = int.from_bytes(payload[6:8], "little")
+    if not 1 <= ext_count <= 507:
+        raise ValueError(
+            f"THREAT_BEGIN ext_count outside engine receiver range: {ext_count}"
+        )
     category = int.from_bytes(payload[8:10], "little")
     name_len = int.from_bytes(payload[10:12], "little")
     name_end = 0x0C + name_len
@@ -157,18 +162,29 @@ def parse_threat_begin(payload: bytes) -> ThreatBegin:
     cursor += ext_size
 
     remaining = len(payload) - cursor
-    if 0 < remaining < 6:
+    if 0 < remaining < 6 and remaining != 2:
         raise ValueError(
             f"truncated THREAT_BEGIN metadata tail: need 6 bytes, have {remaining}"
         )
     metadata = None
-    if remaining >= 6:
+    metadata_wire_size = 0
+    if remaining == 2:
+        metadata = ThreatMetadata(
+            meta_a=payload[cursor],
+            meta_b=payload[cursor + 1],
+            sub_category=0,
+            format_version=0,
+        )
+        metadata_wire_size = 2
+        cursor += 2
+    elif remaining >= 6:
         metadata = ThreatMetadata(
             meta_a=payload[cursor],
             meta_b=payload[cursor + 1],
             sub_category=int.from_bytes(payload[cursor + 2 : cursor + 4], "little"),
             format_version=int.from_bytes(payload[cursor + 4 : cursor + 6], "little"),
         )
+        metadata_wire_size = 6
         cursor += 6
 
     marker_len = 0
@@ -195,6 +211,7 @@ def parse_threat_begin(payload: bytes) -> ThreatBegin:
         dependencies=dependencies,
         ext_entries=ext_entries,
         metadata=metadata,
+        metadata_wire_size=metadata_wire_size,
         marker_raw=marker_raw,
         display_name_raw=display_name_raw,
         name=name,
@@ -239,7 +256,11 @@ def render_threat_begin(threat: ThreatBegin) -> FormatResult:
         metadata = threat.metadata
         fields.append(
             (
-                "wire_metadata",
+                (
+                    "wire_metadata"
+                    if threat.metadata_wire_size == 6
+                    else "wire_metadata_partial (2 bytes; remaining words defaulted)"
+                ),
                 (
                     f"meta_a={metadata.meta_a}, meta_b={metadata.meta_b}, "
                     f"sub_category={metadata.sub_category:#06x}, "
