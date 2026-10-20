@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 IL2_PATTERN_TYPE: Final = 0xA6
 _HEADER_SIZE: Final = 28
@@ -121,6 +129,104 @@ def render_il2_pattern(parsed: IL2Pattern) -> FormatResult:
     return FormatResult(sections=(DisplaySection("IL2_PATTERN", rows=rows),))
 
 
+def export_il2_pattern_semantics(parsed: IL2Pattern) -> RuleSemantics:
+    """Export receiver and storage semantics without decoding IL operands."""
+    issues: list[SemanticIssue] = [
+        SemanticIssue(
+            "il_operand_meaning_unknown",
+            "The receiver routes the arrays to distinct IL storage fields, but "
+            "the meaning of individual operand values is unresolved.",
+        ),
+        SemanticIssue(
+            "runtime_verdict_unknown",
+            "The IL interpreter consumes loaded data, but wire operands have "
+            "not been mapped to interpreter handlers or final verdicts.",
+        ),
+        SemanticIssue(
+            "corpus_observation_not_distribution",
+            "The local corpus count is an observation for this profile and "
+            "does not establish broader database coverage.",
+            (("mpas_record_count", 140), ("mpav_record_count", 0)),
+        ),
+    ]
+    if parsed.trailing:
+        issues.append(
+            SemanticIssue(
+                "receiver_ignored_trailing_bytes",
+                "The receiver copies only the count-bounded arrays and accepts "
+                "remaining payload bytes without storing them.",
+                (("trailing_raw_hex", parsed.trailing.hex()),),
+            )
+        )
+
+    hash_word0, hash_word1 = parsed.lookup_hash_words
+    data = JSONObject(
+        (
+            ("raw_hex", parsed.raw.hex()),
+            ("v1_count_observed", parsed.v1_count),
+            ("tag_count_observed", parsed.tag_count),
+            ("receiver_count_limits", JSONObject((("v1", 0xFFF), ("tag", 0xFF)))),
+            ("unknown_04_raw_hex", parsed.unknown_04.hex()),
+            ("lookup_key_raw_hex", parsed.lookup_key.hex()),
+            ("lookup_hash_words", JSONArray((hash_word0, hash_word1))),
+            (
+                "lookup",
+                "bucket selected from first two DWORDs; full 20-byte key compared",
+            ),
+            ("v1_operands_raw", JSONArray(parsed.v1_operands)),
+            ("v1_storage_role", "passed to IL_v2_stor::add_v1_operands"),
+            (
+                "tag_operands_raw",
+                JSONArray(
+                    tuple(
+                        JSONArray((first, second))
+                        for first, second in parsed.tag_operands
+                    )
+                ),
+            ),
+            ("tag_storage_role", "passed to IL_v2_stor::add_operands"),
+            ("trailing_raw_hex", parsed.trailing.hex()),
+            ("trailing_disposition", "accepted_and_ignored_by_receiver"),
+            ("runtime_consumer", "IL interpreter; operand-to-handler mapping unknown"),
+            ("final_verdict", "unknown"),
+        )
+    )
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="il2_pattern.receiver_storage.v1",
+        data=data,
+        evidence=(
+            (
+                "WIRE PARSER: parse_il2_pattern retains the entire payload and "
+                "frames count_A U32 values and count_B pairs of DWORDs."
+            ),
+            (
+                "RECEIVER: IL_pattern_receiver accepts the count limits and copies "
+                "the header and bounded arrays; trailing bytes are not copied."
+            ),
+            (
+                "STORAGE: try_breakloop routes array_A to "
+                "IL_v2_stor::add_v1_operands and array_B to add_operands, then "
+                "passes both to IL_container::load_IL."
+            ),
+            (
+                "RUNTIME CONSUMER: run_IL_emulator has a large dispatch, but the "
+                "wire operands are not mapped to handlers; verdict stays unknown."
+            ),
+            (
+                "CORPUS: local mpas.sig contains 140 0xA6 records and mpav.sig "
+                "contains none; this is profile-local observation only."
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
-    IL2_PATTERN_TYPE, "IL2_PATTERN", parse_il2_pattern, render_il2_pattern
+    IL2_PATTERN_TYPE,
+    "IL2_PATTERN",
+    parse_il2_pattern,
+    render_il2_pattern,
+    semantic_exporter=export_il2_pattern_semantics,
 )
