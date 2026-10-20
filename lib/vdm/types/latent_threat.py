@@ -12,11 +12,11 @@ WORD_SIZE: Final = 4
 
 @dataclass(frozen=True, slots=True)
 class LatentThreat:
-    """A lookup threat ID and its associated threat ID, as stored on wire."""
+    """Two raw 32-bit words whose precise domain is not established."""
 
     raw: bytes
-    lookup_threat_id: int
-    related_threat_id: int
+    word_0: int
+    word_1: int
 
 
 def parse_latent_threat(payload: bytes) -> LatentThreat:
@@ -34,20 +34,20 @@ def parse_latent_threat(payload: bytes) -> LatentThreat:
 
     return LatentThreat(
         raw=payload,
-        lookup_threat_id=int.from_bytes(payload[0:WORD_SIZE], "little"),
-        related_threat_id=int.from_bytes(payload[WORD_SIZE:PAYLOAD_SIZE], "little"),
+        word_0=int.from_bytes(payload[0:WORD_SIZE], "little"),
+        word_1=int.from_bytes(payload[WORD_SIZE:PAYLOAD_SIZE], "little"),
     )
 
 
 def render_latent_threat(parsed: LatentThreat) -> FormatResult:
-    """Render the confirmed threat-ID roles."""
+    """Render both words without assigning unconfirmed ID roles."""
     return FormatResult(
         sections=(
             DisplaySection(
                 "LATENT_THREAT",
                 rows=(
-                    ("lookup_threat_id", f"0x{parsed.lookup_threat_id:08x}"),
-                    ("related_threat_id", f"0x{parsed.related_threat_id:08x}"),
+                    ("word_0_raw", f"0x{parsed.word_0:08x}"),
+                    ("word_1_raw", f"0x{parsed.word_1:08x}"),
                 ),
             ),
         )
