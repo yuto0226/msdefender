@@ -13,7 +13,7 @@ _NAME_PREVIEW_SIZE: Final = 256
 
 @dataclass(frozen=True, slots=True)
 class PattMatchPayload:
-    """Observed PATTMATCH fields, retaining raw metadata and opaque code bytes."""
+    """PATTMATCH metadata, opcode key, and encoded chunk stream."""
 
     raw: bytes
     expected_crc: int
@@ -21,9 +21,21 @@ class PattMatchPayload:
     requested_callback_size: int
     metadata_high16: int
     name_raw: bytes
-    name: str
-    code_prefix: bytes
-    code_body_raw: bytes
+    opcode_key: bytes
+    nibble_stream_raw: bytes
+
+    @property
+    def name_text(self) -> str | None:
+        """Return a display-only UTF-8 view without asserting engine encoding."""
+        try:
+            text = self.name_raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        return (
+            text
+            if text and all(character.isprintable() for character in text)
+            else None
+        )
 
 
 def parse_pattmatch(payload: bytes) -> PattMatchPayload:
@@ -56,9 +68,8 @@ def parse_pattmatch(payload: bytes) -> PattMatchPayload:
         requested_callback_size=metadata_raw & 0xFFFF,
         metadata_high16=metadata_raw >> 16,
         name_raw=payload[8:name_end],
-        name=payload[8:name_end].decode("utf-8", errors="replace"),
-        code_prefix=code_blob[:_CODE_PREFIX_SIZE],
-        code_body_raw=code_blob[_CODE_PREFIX_SIZE:],
+        opcode_key=code_blob[:_CODE_PREFIX_SIZE],
+        nibble_stream_raw=code_blob[_CODE_PREFIX_SIZE:],
     )
 
 
@@ -75,14 +86,23 @@ def render_pattmatch(parsed: PattMatchPayload) -> FormatResult:
         ("requested_callback_size", str(parsed.requested_callback_size)),
         ("metadata_high16_raw", f"0x{parsed.metadata_high16:04X}"),
         ("name_length", str(len(parsed.name_raw))),
-        ("name", repr(parsed.name[:_NAME_PREVIEW_SIZE])),
+        (
+            "name_text_preview",
+            repr(parsed.name_text[:_NAME_PREVIEW_SIZE])
+            if parsed.name_text is not None
+            else "unavailable",
+        ),
         ("name_raw", _preview(parsed.name_raw)),
-        ("code_prefix_length", str(len(parsed.code_prefix))),
-        ("code_prefix", _preview(parsed.code_prefix)),
-        ("code_body_length", str(len(parsed.code_body_raw))),
-        ("code_body_preview", _preview(parsed.code_body_raw)),
+        ("opcode_key_length", str(len(parsed.opcode_key))),
+        ("opcode_key", _preview(parsed.opcode_key)),
+        ("nibble_stream_length", str(len(parsed.nibble_stream_raw))),
+        ("nibble_stream_preview", _preview(parsed.nibble_stream_raw)),
         ("terminal_marker", "90 00"),
-        ("interpretation", "opaque code bytes; matching semantics unresolved"),
+        (
+            "matching",
+            "8 opcode-byte prefilter; decoded chunk lengths feed CRC_0 comparison",
+        ),
+        ("operand_semantics", "nibble length codec details unresolved"),
     )
     return FormatResult(sections=(DisplaySection("PATTMATCH", rows=rows),))
 
