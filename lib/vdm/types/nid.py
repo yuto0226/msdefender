@@ -4,7 +4,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 NID_TYPE: Final = 0x55
 SNID_TYPE: Final = 0x7E
@@ -145,6 +153,111 @@ def render_nid(parsed: NidPayload) -> FormatResult:
     )
 
 
+def _raw_field(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            (
+                "raw_span",
+                JSONObject((("offset", offset), ("length", len(raw)))),
+            ),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
+    """Export the receiver-confirmed exact lookup tuple and lossless framing."""
+    key_width = _KEY_WIDTHS[parsed.type_byte]
+    identity_offset = key_width + 1
+    identity_length = len(parsed.recid_input_raw) - len(parsed.ignored_trailing_raw)
+    identity_raw = parsed.recid_input_raw[:identity_length]
+
+    framing = JSONArray(
+        (
+            _raw_field("key", parsed.key_raw, 0),
+            _raw_field("metadata", parsed.raw[key_width : key_width + 1], key_width),
+            _raw_field("record_identity", identity_raw, identity_offset),
+            _raw_field(
+                "receiver_ignored_trailing",
+                parsed.ignored_trailing_raw,
+                identity_offset + identity_length,
+            ),
+        )
+    )
+    issues: list[SemanticIssue] = [
+        SemanticIssue(
+            "key_derivation_unknown",
+            "The lookup key is retained as exact bytes without assigning a hash "
+            "or derivation algorithm.",
+        ),
+        SemanticIssue(
+            "outer_verdict_unknown",
+            "A successful table lookup is not exported as a final detection verdict.",
+        ),
+    ]
+    unsupported = False
+    if parsed.identity_kind == "raw":
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "unknown_identity_kind",
+                "The record identity bytes have no confirmed receiver semantics.",
+            )
+        )
+    if parsed.ignored_trailing_raw:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "receiver_ignored_trailing",
+                "Bytes after the bounded record identity are ignored by the receiver.",
+                (("length", len(parsed.ignored_trailing_raw)),),
+            )
+        )
+
+    return RuleSemantics(
+        status="unsupported" if unsupported else "confirmed_subset",
+        representation="nid.exact_lookup.ir.v1",
+        data=JSONObject(
+            (
+                ("raw_hex", parsed.raw.hex()),
+                ("framing", framing),
+                ("type_byte", parsed.type_byte),
+                ("family", _FAMILY_NAMES[parsed.type_byte]),
+                ("key_width", key_width),
+                (
+                    "lookup",
+                    JSONObject(
+                        (
+                            ("kind", "exact"),
+                            ("key_raw_hex", parsed.key_raw.hex()),
+                            ("metadata_raw", parsed.metadata_raw),
+                        )
+                    ),
+                ),
+                (
+                    "record_identity",
+                    JSONObject(
+                        (
+                            ("kind", parsed.identity_kind),
+                            ("raw_hex", identity_raw.hex()),
+                        )
+                    ),
+                ),
+                (
+                    "receiver_ignored_trailing_raw_hex",
+                    parsed.ignored_trailing_raw.hex(),
+                ),
+            )
+        ),
+        evidence=(
+            "NID-family receiver and exact lookup paths in mpengine 1.443.903.0",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 def _parser_for(type_byte: int) -> Callable[[bytes], NidPayload]:
     def parser(payload: bytes) -> NidPayload:
         return parse_nid(payload, type_byte=type_byte)
@@ -153,6 +266,12 @@ def _parser_for(type_byte: int) -> Callable[[bytes], NidPayload]:
 
 
 NID_SPECS = tuple(
-    FamilySpec(type_byte, name, _parser_for(type_byte), render_nid)
+    FamilySpec(
+        type_byte,
+        name,
+        _parser_for(type_byte),
+        render_nid,
+        semantic_exporter=export_nid_semantics,
+    )
     for type_byte, name in _FAMILY_NAMES.items()
 )
