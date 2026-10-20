@@ -2,8 +2,6 @@
 
 from dataclasses import dataclass
 
-from ..bm import BmPattern, validate_bm_framing
-from ..bm_yara import render_bm_yara
 from ..core import DisplaySection, FamilySpec, FormatResult
 
 _PREVIEW = 64
@@ -18,8 +16,6 @@ class KpatPayload:
     pattern_raw: bytes
     name_raw: bytes | None
     suffix: bytes
-    pattern: BmPattern | None = None
-    receiver_result: str | None = None
 
     @property
     def name(self) -> bytes | None:
@@ -56,25 +52,8 @@ def parse_kpat(payload: bytes) -> KpatPayload:
 
 
 def parse_kpatex(payload: bytes) -> KpatPayload:
-    """Parse KPATEX and model the receiver's post-hook BM candidate result."""
-    parsed = parse_kpat(payload)
-    pattern = None
-    try:
-        pattern = validate_bm_framing(parsed.pattern_raw, label="KPATEX")
-    except ValueError as exc:
-        result = f"no_op.{exc}"
-    else:
-        result = "added_candidate"
-    return KpatPayload(
-        parsed.raw,
-        parsed.prefix_size,
-        parsed.key,
-        parsed.pattern_raw,
-        parsed.name_raw,
-        parsed.suffix,
-        pattern,
-        result,
-    )
+    """Parse KPATEX framing without assigning unverified matcher semantics."""
+    return parse_kpat(payload)
 
 
 def _preview(raw: bytes) -> str:
@@ -103,38 +82,7 @@ def _render(parsed: KpatPayload, *, extended: bool) -> FormatResult:
         ("suffix_preview", _preview(parsed.suffix)),
     ]
     if extended:
-        yara = render_bm_yara(parsed.pattern) if parsed.pattern is not None else None
-        rows.extend(
-            (
-                ("receiver_result", parsed.receiver_result or "unknown"),
-                (
-                    "bm_validation",
-                    "available" if parsed.pattern is not None else "not_available",
-                ),
-                (
-                    "bm_issue",
-                    f"{parsed.pattern.issue.code}@{parsed.pattern.issue.offset}"
-                    if parsed.pattern and parsed.pattern.issue
-                    else "none",
-                ),
-            )
-        )
-        if yara is not None:
-            rows.extend(
-                (
-                    ("bm_consumed", str(parsed.pattern.consumed)),
-                    ("bm_remaining_length", str(len(parsed.pattern.remaining_raw))),
-                    ("yara_fidelity", yara.fidelity.value),
-                )
-            )
-            if yara.body:
-                rows.append(("yara_like_preview", yara.body[:_TEXT_PREVIEW]))
-            rows.extend(
-                (f"pattern_issue[{i}]", f"{issue.code}@{issue.offset}")
-                for i, issue in enumerate(yara.diagnostics[:16])
-            )
-            if len(yara.diagnostics) > 16:
-                rows.append(("remaining_issues", str(len(yara.diagnostics) - 16)))
+        rows.append(("pattern_semantics", "unverified; raw bytes retained"))
     return FormatResult(
         sections=(DisplaySection("KPATEX" if extended else "KPAT", rows=tuple(rows)),)
     )
