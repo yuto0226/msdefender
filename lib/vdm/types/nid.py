@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final
+from typing import Final, Literal
 
 from ..core import DisplaySection, FamilySpec, FormatResult
 
@@ -49,9 +49,28 @@ class NidPayload:
     type_byte: int
     key_raw: bytes
     selector: int
-    label_raw: bytes
-    label: str | None
-    trailing_raw: bytes
+    recid_input_raw: bytes
+    identity_kind: Literal["none", "object", "unnamed", "direct"]
+    object_raw: bytes | None
+    ignored_trailing_raw: bytes
+
+    @property
+    def identity_text(self) -> str | None:
+        """Return a display-only text view without asserting a wire encoding."""
+        data = self.object_raw
+        if data is None and self.identity_kind == "direct":
+            data = self.recid_input_raw
+        if data is None:
+            return None
+        if data.endswith(b"\0"):
+            data = data[:-1]
+        if not data or b"\0" in data:
+            return None
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        return text if all(character.isprintable() for character in text) else None
 
 
 def parse_nid(payload: bytes, *, type_byte: int) -> NidPayload:
@@ -68,27 +87,34 @@ def parse_nid(payload: bytes, *, type_byte: int) -> NidPayload:
             f"need {header_size} bytes, have {len(payload)}"
         )
 
-    label_raw = b""
-    label = None
-    trailing_raw = b""
-    if len(payload) > header_size:
-        nul = payload.find(b"\0", header_size)
+    recid_input_raw = payload[header_size:]
+    object_raw: bytes | None = None
+    ignored_trailing_raw = b""
+    if not recid_input_raw:
+        identity_kind: Literal["none", "object", "unnamed", "direct"] = "none"
+    elif type_byte == NID64_TYPE:
+        identity_kind = "direct"
+    elif recid_input_raw[0] == 0:
+        identity_kind = "unnamed"
+        ignored_trailing_raw = recid_input_raw[1:]
+    else:
+        identity_kind = "object"
+        nul = recid_input_raw.find(b"\0")
         if nul < 0:
-            label_raw = payload[header_size:]
+            object_raw = recid_input_raw
         else:
-            label_raw = payload[header_size:nul]
-            trailing_raw = payload[nul + 1 :]
-        if label_raw:
-            label = label_raw.decode("utf-8", errors="replace")
+            object_raw = recid_input_raw[: nul + 1]
+            ignored_trailing_raw = recid_input_raw[nul + 1 :]
 
     return NidPayload(
         raw=payload,
         type_byte=type_byte,
         key_raw=payload[:key_width],
         selector=payload[key_width],
-        label_raw=label_raw,
-        label=label,
-        trailing_raw=trailing_raw,
+        recid_input_raw=recid_input_raw,
+        identity_kind=identity_kind,
+        object_raw=object_raw,
+        ignored_trailing_raw=ignored_trailing_raw,
     )
 
 
@@ -113,26 +139,32 @@ def render_nid(parsed: NidPayload) -> FormatResult:
                 ("selector_match", "exact byte"),
             )
         )
-    if parsed.label is not None:
+    fields.append(("record_identity", parsed.identity_kind))
+    identity_text = parsed.identity_text
+    if identity_text is not None:
         fields.extend(
             (
-                ("label", json.dumps(parsed.label, ensure_ascii=False)),
-                ("label_raw", parsed.label_raw.hex(" ") or "(empty)"),
+                ("identity_text", json.dumps(identity_text, ensure_ascii=False)),
+                ("recid_input_raw", parsed.recid_input_raw.hex(" ")),
             )
         )
         if parsed.type_byte == SNID_TYPE:
             fields.append(
                 (
-                    "label_role",
+                    "identity_role",
                     (
                         "record name; !# prefix routes to attribute aggregation"
-                        if parsed.label.startswith("!#")
+                        if identity_text.startswith("!#")
                         else "record name"
                     ),
                 )
             )
-    if parsed.trailing_raw:
-        fields.append(("trailing_raw", parsed.trailing_raw.hex(" ")))
+    elif parsed.recid_input_raw:
+        fields.append(("recid_input_raw", parsed.recid_input_raw.hex(" ")))
+    if parsed.object_raw is not None:
+        fields.append(("interned_object_length", f"{len(parsed.object_raw)} B"))
+    if parsed.ignored_trailing_raw:
+        fields.append(("receiver_ignored_raw", parsed.ignored_trailing_raw.hex(" ")))
     return FormatResult(
         sections=(DisplaySection("Network Identifier", rows=tuple(fields)),)
     )
