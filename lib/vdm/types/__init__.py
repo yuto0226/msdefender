@@ -18,6 +18,14 @@ from .ck import (
     render_ckoldrec,
     render_cksimplerec,
 )
+from .cleanscript import (
+    SPEC as CLEANSCRIPT_SPEC,
+)
+from .cleanscript import (
+    CleanScriptPayload,
+    parse_cleanscript,
+    render_cleanscript,
+)
 from .common_code import SPEC as COMMON_CODE_SPEC
 from .common_code import CommonCodePayload, parse_common_code, render_common_code
 from .dbvar import DBVAR_TYPE, DbVarPayload, parse_dbvar, render_dbvar
@@ -158,6 +166,7 @@ __all__ = [
     "CKOLDREC_TYPE",
     "CKSIMPLEREC_TYPE",
     "CK_SPECS",
+    "CLEANSCRIPT_SPEC",
     "COMMON_CODE_SPEC",
     "DBVAR_SPEC",
     "DBVAR_TYPE",
@@ -203,6 +212,7 @@ __all__ = [
     "BrutePayload",
     "CkOldPayload",
     "CkSimplePayload",
+    "CleanScriptPayload",
     "CommonCodePayload",
     "DbVarPayload",
     "FopPayload",
@@ -244,6 +254,7 @@ __all__ = [
     "parse_brute",
     "parse_ckoldrec",
     "parse_cksimplerec",
+    "parse_cleanscript",
     "parse_common_code",
     "parse_dbvar",
     "parse_fop",
@@ -278,6 +289,7 @@ __all__ = [
     "render_brute",
     "render_ckoldrec",
     "render_cksimplerec",
+    "render_cleanscript",
     "render_common_code",
     "render_dbvar",
     "render_fop",

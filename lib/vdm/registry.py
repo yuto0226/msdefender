@@ -7,6 +7,7 @@ from .types.aggregator import AGGREGATOR_SPECS
 from .types.bm_info import SPEC as BM_INFO_SPEC
 from .types.brute import SPEC as BRUTE_SPEC
 from .types.ck import CK_SPECS
+from .types.cleanscript import SPEC as CLEANSCRIPT_SPEC
 from .types.common_code import SPEC as COMMON_CODE_SPEC
 from .types.dbvar import SPEC as DBVAR_SPEC
 from .types.fop import FOP_SPECS
@@ -46,6 +47,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             *MACRO_PCODE_SPECS,
             VERSIONCHECK_SPEC,
             COMMON_CODE_SPEC,
+            CLEANSCRIPT_SPEC,
             DBVAR_SPEC,
             VREG_SPEC,
             SIGTREE_SPEC,
