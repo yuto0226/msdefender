@@ -59,6 +59,15 @@ from .hstr import (
     parse_hstr,
     render_hstr,
 )
+from .il2_pattern import (
+    IL2_PATTERN_TYPE,
+    IL2Pattern,
+    parse_il2_pattern,
+    render_il2_pattern,
+)
+from .il2_pattern import (
+    SPEC as IL2_PATTERN_SPEC,
+)
 from .kcrce import KcrcePayload, parse_kcrce, render_kcrce
 from .kpat import (
     KPAT_SPEC,
@@ -211,6 +220,8 @@ __all__ = [
     "FPATH_TYPES",
     "HOSTSENTRY_TYPE",
     "HSTR_SPECS",
+    "IL2_PATTERN_SPEC",
+    "IL2_PATTERN_TYPE",
     "KPATEX_SPEC",
     "KPAT_SPEC",
     "LATENT_THREAT_SPEC",
@@ -263,6 +274,7 @@ __all__ = [
     "HstrFlags",
     "HstrPayload",
     "HstrSubsignature",
+    "IL2Pattern",
     "KcrcePayload",
     "KpatPayload",
     "LatentThreat",
@@ -308,6 +320,7 @@ __all__ = [
     "parse_friendlyfile_sha256",
     "parse_hostsentry",
     "parse_hstr",
+    "parse_il2_pattern",
     "parse_kcrce",
     "parse_kpat",
     "parse_kpatex",
@@ -349,6 +362,7 @@ __all__ = [
     "render_friendlyfile_sha256",
     "render_hostsentry",
     "render_hstr",
+    "render_il2_pattern",
     "render_kcrce",
     "render_kpat",
     "render_kpatex",
