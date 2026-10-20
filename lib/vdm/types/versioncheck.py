@@ -120,6 +120,11 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
                 "else +0xBA8 if nonzero, else 5 (0 if gktab is null)"
             ),
         ),
+        0x84: VersionCheckPredicate(
+            "known",
+            "always false; unsupported selector path",
+            "field_04 is not read by the selector path",
+        ),
         0x77: VersionCheckPredicate("partial"),
         0x38: VersionCheckPredicate("partial"),
         0x2C: VersionCheckPredicate("partial"),
