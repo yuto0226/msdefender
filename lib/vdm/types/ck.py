@@ -284,12 +284,16 @@ def _ck_semantics(
         ),
     ]
     if parsed.flags & ~_KNOWN_FLAGS_MASK:
-        unsupported = True
         issues.append(
             SemanticIssue(
                 "unknown_flag_bits",
-                "CK flag bits outside the sign bit and ck_type are preserved but uninterpreted.",
-                (("unknown_bits", parsed.flags & ~_KNOWN_FLAGS_MASK),),
+                "CK flag bits outside the sign bit and ck_type are preserved; "
+                "the verified receiver, index builder, and scanner path do "
+                "not consume them.",
+                (
+                    ("unknown_bits", parsed.flags & ~_KNOWN_FLAGS_MASK),
+                    ("status_scope", "confirmed CK callback subset"),
+                ),
             )
         )
     if parsed.object_data_raw is not None:
@@ -302,12 +306,15 @@ def _ck_semantics(
             )
         )
     if parsed.remaining_raw:
-        unsupported = True
         issues.append(
             SemanticIssue(
                 "unconsumed_tail",
-                "The receiver leaves these payload bytes unconsumed and their semantics are unknown.",
-                (("length", len(parsed.remaining_raw)),),
+                "The generic receiver accepts these suffix bytes without "
+                "consuming or copying them into the fixed-stride CK entry.",
+                (
+                    ("length", len(parsed.remaining_raw)),
+                    ("status_scope", "confirmed CK callback subset"),
+                ),
             )
         )
 
