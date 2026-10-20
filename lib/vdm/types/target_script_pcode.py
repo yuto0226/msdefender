@@ -15,6 +15,10 @@ from ..core import (
     DisplaySection,
     FamilySpec,
     FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
 )
 
 TARGET_SCRIPT_PCODE_TYPE: Final = 0x90
@@ -463,10 +467,189 @@ def export_target_script_pcode(parsed: TargetScriptPcodePayload) -> ArtifactExpo
     )
 
 
+def _semantic_span(offset: int, length: int) -> JSONObject:
+    return JSONObject((("offset", offset), ("length", length)))
+
+
+def _semantic_match(match: TargetScriptMatch) -> JSONObject:
+    """Expose confirmed prefilter fields alongside their untouched wire bytes."""
+    return JSONObject(
+        (
+            ("base_u32", match.base),
+            ("selector_u8", match.selector_raw),
+            ("value_u8_raw", match.value_raw),
+            ("value_runtime_role", "unknown"),
+            ("raw_hex", match.raw.hex()),
+            ("raw_span", _semantic_span(match.offset, len(match.raw))),
+            (
+                "runtime_role",
+                (
+                    "base and selector participate in the targeted-match prefilter; "
+                    "the complete predicate depends on scan context"
+                ),
+            ),
+        )
+    )
+
+
+def export_target_script_pcode_semantics(
+    parsed: TargetScriptPcodePayload,
+) -> RuleSemantics:
+    """Export consumer-backed targeted checks plus raw, uninterpreted tokens.
+
+    This semantic view is separate from the complete wire artifact manifest:
+    it names only fields whose roles are supported by current-version consumer
+    analysis and preserves compiled-pattern candidates without decoding them.
+    """
+    sections = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("family", section.family),
+                    ("subtype", section.subtype),
+                    ("array_count", section.count),
+                    ("raw_span", _semantic_span(section.offset, len(section.raw))),
+                    ("raw_hex", section.raw.hex()),
+                    (
+                        "token_arrays",
+                        JSONArray(
+                            tuple(
+                                JSONObject(
+                                    (
+                                        ("token_count", array.token_count),
+                                        (
+                                            "raw_span",
+                                            _semantic_span(
+                                                array.offset, len(array.raw)
+                                            ),
+                                        ),
+                                        ("tokens_u32_raw", JSONArray(array.tokens)),
+                                        ("raw_hex", array.raw.hex()),
+                                    )
+                                )
+                                for array in section.token_arrays
+                            )
+                        ),
+                    ),
+                )
+            )
+            for section in parsed.pattern_sections
+        )
+    )
+    entries = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("nid_lookup_key_u32", entry.nid_value),
+                    ("nid_lookup_key_raw_hex", entry.nid_value_raw.hex()),
+                    ("raw_span", _semantic_span(entry.offset, len(entry.raw))),
+                    (
+                        "target_type",
+                        JSONObject(
+                            (
+                                ("value_u8", entry.target_type),
+                                ("comparison", "equals searchTargeted(type)"),
+                            )
+                        ),
+                    ),
+                    (
+                        "context_filter",
+                        JSONObject(
+                            (
+                                ("value_u8", entry.context_filter),
+                                (
+                                    "runtime_behavior",
+                                    (
+                                        "0xFF skips context comparison; otherwise "
+                                        "must equal instance context byte"
+                                    ),
+                                ),
+                            )
+                        ),
+                    ),
+                    (
+                        "outcome_control",
+                        JSONObject(
+                            (
+                                ("value_u8", entry.outcome_control),
+                                (
+                                    "runtime_behavior",
+                                    (
+                                        "0 sets scan result 1 and returns; 1 sets "
+                                        "result 2 and continues; other values enter "
+                                        "RecID/name/CRC path"
+                                    ),
+                                ),
+                            )
+                        ),
+                    ),
+                    (
+                        "matches",
+                        JSONArray(
+                            tuple(_semantic_match(match) for match in entry.matches)
+                        ),
+                    ),
+                    ("raw_hex", entry.raw.hex()),
+                )
+            )
+            for entry in parsed.signature_table.entries
+        )
+    )
+    issues = (
+        SemanticIssue(
+            "compiled_token_semantics_unknown",
+            "Pattern section tokens are preserved as raw u32 values. Their "
+            "compiled u16 representation and detection semantics are not "
+            "established.",
+        ),
+        SemanticIssue(
+            "match_predicate_context_dependent",
+            "Match fields describe a targeted prefilter; the complete predicate "
+            "depends on scanner context and NID lookup state.",
+        ),
+    )
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="target_script_pcode.targeted_checks.v1",
+        profile="mpengine-1.443.903.0",
+        evidence=(
+            "mpengine 1.443.903.0 pushTargeted @ 0x1802CCBE0",
+            "mpengine 1.443.903.0 nscript::searchTargeted @ 0x180108E2C",
+            "mpengine 1.443.903.0 nscript::AddTargetToken @ 0x18010C730",
+        ),
+        issues=issues,
+        data=JSONObject(
+            (
+                ("type_byte", TARGET_SCRIPT_PCODE_TYPE),
+                ("payload_raw_hex", parsed.raw.hex()),
+                ("payload_length", len(parsed.raw)),
+                ("pattern_sections", sections),
+                (
+                    "signature_table",
+                    JSONObject(
+                        (
+                            ("entry_count", parsed.signature_table.entry_count),
+                            (
+                                "raw_span",
+                                _semantic_span(
+                                    parsed.signature_table.offset,
+                                    len(parsed.signature_table.raw),
+                                ),
+                            ),
+                            ("entries", entries),
+                        )
+                    ),
+                ),
+            )
+        ),
+    )
+
+
 SPEC = FamilySpec(
     TARGET_SCRIPT_PCODE_TYPE,
     "TARGET_SCRIPT_PCODE",
     parse_target_script_pcode,
     render_target_script_pcode,
     exporter=export_target_script_pcode,
+    semantic_exporter=export_target_script_pcode_semantics,
 )
