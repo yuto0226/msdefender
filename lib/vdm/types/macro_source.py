@@ -12,7 +12,7 @@ WORD_SIZE: Final = 4
 
 @dataclass(frozen=True, slots=True)
 class MacroSourcePayload:
-    """Decoded macro source name and its packed identifier pairs."""
+    """Raw MACRO_SOURCE fields and normalized safecrc candidate pairs."""
 
     name_bytes: bytes
     name_preview: str
@@ -26,7 +26,7 @@ class MacroSourcePayload:
 
 
 def parse_macro_source(payload: bytes) -> MacroSourcePayload:
-    """Parse MACRO_SOURCE while preserving incomplete optional data as trailing."""
+    """Parse wire fields; retain name bytes and incomplete optional data raw."""
     if not payload:
         raise ValueError("truncated MACRO_SOURCE payload: missing name length")
 
@@ -87,7 +87,7 @@ def render_macro_source(parsed: MacroSourcePayload) -> FormatResult:
     """Render stable summary fields and a bounded preview of identifier pairs."""
     rows = [
         ("name_bytes", parsed.name_bytes.hex(" ")),
-        ("name_preview", repr(parsed.name_preview)),
+        ("name_preview_utf8_lossy_unvalidated", repr(parsed.name_preview)),
         ("packed_header", f"0x{parsed.packed_header:08x}"),
         ("metadata_raw", f"0x{parsed.metadata_raw:x}"),
         ("count", str(parsed.count)),
