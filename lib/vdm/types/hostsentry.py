@@ -4,7 +4,15 @@ import json
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 HOSTSENTRY_TYPE: Final = 0x64
 ADDRESS_NULL_SENTINEL: Final = b"NULL"
@@ -112,4 +120,234 @@ def render_hostsentry(parsed: HostsentryPayload) -> FormatResult:
     )
 
 
-SPEC = FamilySpec(HOSTSENTRY_TYPE, "HOSTSENTRY", parse_hostsentry, render_hostsentry)
+def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def _hosts_domain_suffix(hostname: bytes) -> tuple[int, bytes] | None:
+    """Return GetHostsDomain's confirmed slice start and bytes, if valid."""
+    last_dot = hostname.rfind(b".")
+    if last_dot < 0 or last_dot == len(hostname) - 1:
+        return None
+    previous_dot = hostname.rfind(b".", 0, last_dot)
+    start = previous_dot + 1 if previous_dot >= 0 else 0
+    return start, hostname[start:]
+
+
+def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
+    """Export confirmed insertion/lookup behavior without naming report results."""
+    address_length = len(parsed.address_raw)
+    hostname_length_offset = 1 + address_length
+    hostname_offset = hostname_length_offset + 1
+    trailing_offset = hostname_offset + len(parsed.hostname_raw)
+    address_c_string = parsed.address_c_string
+    hostname_c_string = parsed.hostname_c_string
+    wildcard = parsed.wildcard_hostname
+    hosts_domain = _hosts_domain_suffix(hostname_c_string[2:]) if wildcard else None
+    address_key = (
+        JSONObject((("kind", "constant"), ("value", 0xFFFFFFFF)))
+        if parsed.address_null_sentinel
+        else JSONObject(
+            (
+                ("kind", "crc_lower_string_a"),
+                ("input_hex", address_c_string.hex()),
+            )
+        )
+    )
+    issues = [
+        SemanticIssue(
+            "report_state_semantics_unknown",
+            "The callback report-state byte selects return 0x29 or 0, but its higher-level report meaning is unknown.",
+        ),
+        SemanticIssue(
+            "scan_result_semantics_unknown",
+            "The hosts-file enumerator consumes callback results, but the final SCAN_REPLY meaning is not established.",
+        ),
+        SemanticIssue(
+            "hosts_file_format_and_scope_unknown",
+            "The observed callback path does not establish an operating-system hosts-file format or broader hostname policy.",
+        ),
+    ]
+    if parsed.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "trailing_bytes_meaning_unknown",
+                "Trailing bytes are accepted and included in record identity, but are not parsed as fields.",
+                (("length", len(parsed.trailing_raw)),),
+            )
+        )
+    if wildcard and hosts_domain is None:
+        issues.append(
+            SemanticIssue(
+                "wildcard_domain_key_invalid",
+                "GetHostsDomain rejects a wildcard hostname without a dot or with an empty final label.",
+            )
+        )
+
+    hostname_index = (
+        JSONObject(
+            (
+                ("kind", "wildcard_tree"),
+                ("tree", "qword_18128A710"),
+                ("domain_key_operation", "GetHostsDomain(hostname_after_star_dot)"),
+                ("invalid_domain_key_result", 32770),
+                (
+                    "insertion_result",
+                    "rejected" if hosts_domain is None else "eligible",
+                ),
+                (
+                    "tree_key_hex",
+                    None if hosts_domain is None else hosts_domain[1].hex(),
+                ),
+                (
+                    "stored_mapped_string_hex",
+                    None
+                    if hosts_domain is None
+                    else hostname_c_string[2 : 2 + hosts_domain[0]].hex(),
+                ),
+                ("stored_mapped_string_case", "payload_slice_preserved"),
+                (
+                    "callback_lookup",
+                    "GetHostsDomain(query_hostname), lowercase_for_tree_lookup, then suffix comparison",
+                ),
+                ("callback_suffix_comparison", "_strnicmp"),
+            )
+        )
+        if wildcard
+        else JSONObject(
+            (
+                ("kind", "exact_crc_map"),
+                ("map", "HostsDomain"),
+                ("key_operation", "CRCLowerStringA(hostname_c_string)"),
+            )
+        )
+    )
+    return RuleSemantics(
+        status=(
+            "unsupported"
+            if parsed.trailing_raw or (wildcard and hosts_domain is None)
+            else "confirmed_subset"
+        ),
+        representation="hostsentry.map-lookup.ir.v1",
+        data=JSONObject(
+            (
+                ("type", "HOSTSENTRY"),
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "address",
+                    JSONObject(
+                        (
+                            (
+                                "wire_length",
+                                _wire_field("address_length", parsed.raw[:1], 0),
+                            ),
+                            (
+                                "wire_span",
+                                _wire_field("address_span", parsed.address_raw, 1),
+                            ),
+                            ("c_string_hex", address_c_string.hex()),
+                            ("null_sentinel", parsed.address_null_sentinel),
+                            ("map_key", address_key),
+                        )
+                    ),
+                ),
+                (
+                    "hostname",
+                    JSONObject(
+                        (
+                            (
+                                "wire_length",
+                                _wire_field(
+                                    "hostname_length",
+                                    parsed.raw[hostname_length_offset:hostname_offset],
+                                    hostname_length_offset,
+                                ),
+                            ),
+                            (
+                                "wire_span",
+                                _wire_field(
+                                    "hostname_span",
+                                    parsed.hostname_raw,
+                                    hostname_offset,
+                                ),
+                            ),
+                            ("c_string_hex", hostname_c_string.hex()),
+                            ("classification", "wildcard" if wildcard else "exact"),
+                            ("index", hostname_index),
+                        )
+                    ),
+                ),
+                (
+                    "record_identity",
+                    JSONObject(
+                        (
+                            (
+                                "input",
+                                _wire_field("complete_payload", parsed.raw, 0),
+                            ),
+                            ("consumer", "CRC/SHA helpers and createrecid"),
+                            ("record_id_value", None),
+                        )
+                    ),
+                ),
+                (
+                    "map_value",
+                    JSONObject(
+                        (
+                            ("address_key", address_key),
+                            ("record_id", "created_from_complete_payload"),
+                            (
+                                "wildcard_extra",
+                                "payload_slice_mapped_string" if wildcard else None,
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "hosts_file_consumer",
+                    JSONObject(
+                        (
+                            ("enumerator", "MPEnumHostsEntries"),
+                            ("callback", "hosts_callback"),
+                            (
+                                "callback_match_outputs",
+                                JSONArray(("matched_byte", "record_id")),
+                            ),
+                            ("callback_returns", JSONArray((0, 0x29))),
+                            (
+                                "enumerator_special_branches",
+                                JSONArray((0x29, 0x64)),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "trailing",
+                    _wire_field("trailing", parsed.trailing_raw, trailing_offset),
+                ),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 hosts_push bounded spans, record identity, and map insertion",
+            "mpengine 1.443.903.0 hosts_callback exact/wildcard lookup and result writes",
+            "mpengine 1.443.903.0 MPEnumHostsEntries callback consumption",
+            "mpengine 1.443.903.0 GetHostsDomain hostname slicing behavior",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+SPEC = FamilySpec(
+    HOSTSENTRY_TYPE,
+    "HOSTSENTRY",
+    parse_hostsentry,
+    render_hostsentry,
+    semantic_exporter=export_hostsentry_semantics,
+)
