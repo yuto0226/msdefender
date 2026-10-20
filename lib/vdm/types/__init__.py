@@ -78,6 +78,8 @@ from .kpat import (
     render_kpat,
     render_kpatex,
 )
+from .kvir32 import KVIR32_TYPE, Kvir32Payload, parse_kvir32, render_kvir32
+from .kvir32 import SPEC as KVIR32_SPEC
 from .latent_threat import SPEC as LATENT_THREAT_SPEC
 from .latent_threat import LatentThreat, parse_latent_threat, render_latent_threat
 from .lua_standalone import (
@@ -242,6 +244,8 @@ __all__ = [
     "IL2_PATTERN_TYPE",
     "KPATEX_SPEC",
     "KPAT_SPEC",
+    "KVIR32_SPEC",
+    "KVIR32_TYPE",
     "LATENT_THREAT_SPEC",
     "LUASTANDALONE_SPEC",
     "LUASTANDALONE_TYPE",
@@ -301,6 +305,7 @@ __all__ = [
     "IL2Pattern",
     "KcrcePayload",
     "KpatPayload",
+    "Kvir32Payload",
     "LatentThreat",
     "LuaMetadataField",
     "LuaScriptCategory",
@@ -350,6 +355,7 @@ __all__ = [
     "parse_kcrce",
     "parse_kpat",
     "parse_kpatex",
+    "parse_kvir32",
     "parse_latent_threat",
     "parse_lua_standalone",
     "parse_macro_pcode",
@@ -394,6 +400,7 @@ __all__ = [
     "render_kcrce",
     "render_kpat",
     "render_kpatex",
+    "render_kvir32",
     "render_latent_threat",
     "render_lua_standalone",
     "render_macro_pcode",

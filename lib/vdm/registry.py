@@ -18,6 +18,7 @@ from .types.hstr import HSTR_SPECS
 from .types.il2_pattern import SPEC as IL2_PATTERN_SPEC
 from .types.kcrce import SPEC as KCRCE_SPEC
 from .types.kpat import KPAT_SPEC, KPATEX_SPEC
+from .types.kvir32 import SPEC as KVIR32_SPEC
 from .types.latent_threat import SPEC as LATENT_THREAT_SPEC
 from .types.lua_standalone import SPEC as LUASTANDALONE_SPEC
 from .types.macro_pcode import MACRO_PCODE_SPECS
@@ -60,6 +61,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             VREG_SPEC,
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
+            KVIR32_SPEC,
             *SNIDEX_SPECS,
             BM_INFO_SPEC,
             BRUTE_SPEC,
