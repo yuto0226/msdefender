@@ -3,11 +3,19 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 PEMAIN_LOCATOR_TYPE: Final = 0x86
 PAYLOAD_SIZE: Final = 8
 _TRAILING_PREVIEW_BYTES: Final = 64
+_RELATIVE_OFFSET_LIMIT: Final = 0x3FC
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,9 +79,109 @@ def render_pemain_locator(parsed: PeMainLocatorPayload) -> FormatResult:
     )
 
 
+def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def export_pemain_locator_semantics(parsed: PeMainLocatorPayload) -> RuleSemantics:
+    """Export the confirmed lookup/read subset and retain exact wire spans."""
+    issues = [
+        SemanticIssue(
+            "final_verdict_unknown",
+            "The final verdict or threat result produced after the DWORD read is unknown.",
+        ),
+        SemanticIssue(
+            "consumer_policy_unknown",
+            "The wider consumer policy for this locator, including downstream handling, is unknown.",
+        ),
+    ]
+    if parsed.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "trailing_bytes_unconsumed",
+                "The template receiver consumes two DWORD instructions and leaves trailing bytes unused.",
+                (("length", len(parsed.trailing_raw)),),
+            )
+        )
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="pe_main_locator.lookup.ir.v1",
+        data=JSONObject(
+            (
+                ("type", "exact_key_lookup_with_relative_read"),
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "lookup_key",
+                    JSONObject(
+                        (
+                            ("value", parsed.lookup_key),
+                            ("wire", _wire_field("lookup_key", parsed.raw[:4], 0)),
+                            ("lookup", "exact_bsearch_s_key_match"),
+                        )
+                    ),
+                ),
+                (
+                    "relative_offset",
+                    JSONObject(
+                        (
+                            ("value", parsed.relative_offset),
+                            (
+                                "wire",
+                                _wire_field("relative_offset", parsed.raw[4:8], 4),
+                            ),
+                            ("relative_base", "current_search_offset"),
+                            (
+                                "read_guard",
+                                JSONObject(
+                                    (
+                                        ("operator", "<"),
+                                        ("limit", _RELATIVE_OFFSET_LIMIT),
+                                    )
+                                ),
+                            ),
+                            (
+                                "read",
+                                JSONObject(
+                                    (
+                                        ("type", "u32le"),
+                                        (
+                                            "condition",
+                                            "exact_key_match and relative_offset < limit",
+                                        ),
+                                        (
+                                            "offset_expression",
+                                            "current_search_offset + relative_offset",
+                                        ),
+                                    )
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                ("trailing", _wire_field("trailing", parsed.trailing_raw, 8)),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 init_compiler template registration",
+            "mpengine 1.443.903.0 ComparePeMainLocators exact first-DWORD comparison",
+            "mpengine 1.443.903.0 scan_compiler_worker exact lookup and guarded DWORD read",
+            "mpengine 1.443.903.0 ReceiveNewTemplate consumes two DWORD instructions",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
     PEMAIN_LOCATOR_TYPE,
     "PEMAIN_LOCATOR",
     parse_pemain_locator,
     render_pemain_locator,
+    semantic_exporter=export_pemain_locator_semantics,
 )
