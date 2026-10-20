@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import re
@@ -38,8 +37,9 @@ from lib.vdm.stream import (
 from lib.vdm.types.threat import threat_category_name
 
 if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    for stream in (sys.stdout, sys.stderr):
+        if reconfigure := getattr(stream, "reconfigure", None):
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 def fmt_type(type_byte: int) -> str:

@@ -14,14 +14,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import io
 import sys
 from pathlib import Path
 
 # Force UTF-8 on Windows
 if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    for stream in (sys.stdout, sys.stderr):
+        if reconfigure := getattr(stream, "reconfigure", None):
+            reconfigure(encoding="utf-8", errors="replace")
 
 from lib.debug import (
     ANSI_BOLD,
