@@ -1,4 +1,4 @@
-"""Typed model for MAGICCODE record 0xC0."""
+"""Corpus-profile decoder for the unloadable MAGICCODE record 0xC0."""
 
 from dataclasses import dataclass
 
@@ -11,20 +11,20 @@ _TEXT_PREVIEW = 256
 @dataclass(frozen=True, slots=True)
 class MagicCodePayload:
     raw: bytes
-    name_raw: bytes
-    code: bytes
-    expression_raw: bytes
-    trailing: bytes
+    field_00_raw: bytes
+    field_01_raw: bytes
+    field_02_raw: bytes
+    trailing_raw: bytes
 
     @property
-    def name(self) -> bytes:
-        """Return the runtime C-string view without imposing a wire constraint."""
-        return self.name_raw.split(b"\0", 1)[0]
+    def field_00_c_string(self) -> bytes:
+        """Return a display-only C-string view of the first observed field."""
+        return self.field_00_raw.split(b"\0", 1)[0]
 
     @property
-    def expression(self) -> bytes:
-        """Return the observed C-string view of the evaluator expression."""
-        return self.expression_raw.split(b"\0", 1)[0]
+    def field_02_c_string(self) -> bytes:
+        """Return a display-only C-string view of the third observed field."""
+        return self.field_02_raw.split(b"\0", 1)[0]
 
 
 def _take(payload: bytes, cursor: int, size: int, label: str) -> tuple[bytes, int]:
@@ -35,27 +35,32 @@ def _take(payload: bytes, cursor: int, size: int, label: str) -> tuple[bytes, in
 
 
 def parse_magiccode(payload: bytes) -> MagicCodePayload:
-    """Parse the receiver's four length-prefixed fields and retain its tail."""
+    """Decode the three length-prefixed fields observed in the local corpus.
+
+    This framing is a corpus profile, not the registered engine receiver
+    grammar. Static analysis of that receiver reaches 0xA004 before an entry is
+    built for this type in the documented engine version.
+    """
     if not payload:
-        raise ValueError("truncated MAGICCODE name length")
+        raise ValueError("truncated MAGICCODE field 00 length")
 
-    name_length = payload[0]
-    name_raw, cursor = _take(payload, 1, name_length, "name")
+    field_00_length = payload[0]
+    field_00_raw, cursor = _take(payload, 1, field_00_length, "field 00")
 
-    code_length_raw, cursor = _take(payload, cursor, 4, "code length")
-    code_length = int.from_bytes(code_length_raw, "little")
-    code, cursor = _take(payload, cursor, code_length, "code")
+    field_01_length_raw, cursor = _take(payload, cursor, 4, "field 01 length")
+    field_01_length = int.from_bytes(field_01_length_raw, "little")
+    field_01_raw, cursor = _take(payload, cursor, field_01_length, "field 01")
 
-    expression_length_raw, cursor = _take(payload, cursor, 2, "expression length")
-    expression_length = int.from_bytes(expression_length_raw, "little")
-    expression_raw, cursor = _take(payload, cursor, expression_length, "expression")
+    field_02_length_raw, cursor = _take(payload, cursor, 2, "field 02 length")
+    field_02_length = int.from_bytes(field_02_length_raw, "little")
+    field_02_raw, cursor = _take(payload, cursor, field_02_length, "field 02")
 
     return MagicCodePayload(
         raw=payload,
-        name_raw=name_raw,
-        code=code,
-        expression_raw=expression_raw,
-        trailing=payload[cursor:],
+        field_00_raw=field_00_raw,
+        field_01_raw=field_01_raw,
+        field_02_raw=field_02_raw,
+        trailing_raw=payload[cursor:],
     )
 
 
@@ -70,16 +75,18 @@ def _text_preview(data: bytes) -> str:
 
 def render_magiccode(parsed: MagicCodePayload) -> FormatResult:
     rows = (
-        ("name_length", str(len(parsed.name_raw))),
-        ("name", _text_preview(parsed.name)),
-        ("name_raw", _hex_preview(parsed.name_raw)),
-        ("code_length", str(len(parsed.code))),
-        ("code_preview", _hex_preview(parsed.code)),
-        ("expression_length", str(len(parsed.expression_raw))),
-        ("expression", _text_preview(parsed.expression)),
-        ("expression_raw", _hex_preview(parsed.expression_raw)),
-        ("trailing_length", str(len(parsed.trailing))),
-        ("trailing_preview", _hex_preview(parsed.trailing)),
+        ("semantic_status", "corpus profile; registered receiver returns 0xA004"),
+        ("profile", "u8-length field, u32-length field, u16-length field"),
+        ("field_00_length", str(len(parsed.field_00_raw))),
+        ("field_00_text", _text_preview(parsed.field_00_c_string)),
+        ("field_00_raw", _hex_preview(parsed.field_00_raw)),
+        ("field_01_length", str(len(parsed.field_01_raw))),
+        ("field_01_raw", _hex_preview(parsed.field_01_raw)),
+        ("field_02_length", str(len(parsed.field_02_raw))),
+        ("field_02_text", _text_preview(parsed.field_02_c_string)),
+        ("field_02_raw", _hex_preview(parsed.field_02_raw)),
+        ("trailing_length", str(len(parsed.trailing_raw))),
+        ("trailing_preview", _hex_preview(parsed.trailing_raw)),
     )
     return FormatResult(sections=(DisplaySection("MAGICCODE", rows=rows),))
 
