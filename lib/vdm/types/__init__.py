@@ -118,6 +118,7 @@ from .magiccode import (
     parse_magiccode,
     render_magiccode,
 )
+from .ndat import NDAT_SPEC, NDAT_TYPE, NdatPayload, parse_ndat, render_ndat
 from .nid import NID64_TYPE, NID_SPECS, NidPayload, parse_nid, render_nid
 from .nscript import (
     NSCRIPT_SPECS,
@@ -259,6 +260,8 @@ __all__ = [
     "MACRO_SOURCE_TYPE",
     "MAGICCODE_SPEC",
     "MAGIC_THREAT_IDS",
+    "NDAT_SPEC",
+    "NDAT_TYPE",
     "NID64_TYPE",
     "NID_SPECS",
     "NSCRIPT_SPECS",
@@ -317,6 +320,7 @@ __all__ = [
     "NScriptCurePayload",
     "NScriptPayload",
     "NScriptSPPayload",
+    "NdatPayload",
     "NidPayload",
     "PEBMPat",
     "PattMatchPayload",
@@ -362,6 +366,7 @@ __all__ = [
     "parse_macro_pcode64",
     "parse_macro_source",
     "parse_magiccode",
+    "parse_ndat",
     "parse_nid",
     "parse_nscript",
     "parse_nscript_brute",
@@ -406,6 +411,7 @@ __all__ = [
     "render_macro_pcode",
     "render_macro_source",
     "render_magiccode",
+    "render_ndat",
     "render_nid",
     "render_nscript",
     "render_nscript_brute",

@@ -24,6 +24,7 @@ from .types.lua_standalone import SPEC as LUASTANDALONE_SPEC
 from .types.macro_pcode import MACRO_PCODE_SPECS
 from .types.macro_source import SPEC as MACRO_SOURCE_SPEC
 from .types.magiccode import SPEC as MAGICCODE_SPEC
+from .types.ndat import NDAT_SPEC
 from .types.nid import NID_SPECS
 from .types.nscript import NSCRIPT_SPECS
 from .types.pattmatch import SPEC as PATTMATCH_SPEC
@@ -84,6 +85,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             *THREAT_SPECS,
             *HSTR_SPECS,
             *NID_SPECS,
+            NDAT_SPEC,
             *NSCRIPT_SPECS,
             *VDLL_META_SPECS,
             *VDLL_CODE_SPECS,
