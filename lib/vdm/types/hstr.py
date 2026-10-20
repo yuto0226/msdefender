@@ -83,6 +83,8 @@ class HstrSubsignatureMeaning:
     display_encoding: Literal["ASCII", "UTF16LE", "HEX"]
     display_text: str | None
     flag_names: tuple[str, ...]
+    contextual_bits: tuple[int, ...]
+    contextual_effects: tuple[str, ...]
     unknown_flag_bits: int
     score_add: int | None
 
@@ -123,6 +125,16 @@ _FLAG_NAMES = (
     (0x0100, "EMIT_WIDE_COPY"),
 )
 _KNOWN_FLAG_MASK = sum(mask for mask, _ in _FLAG_NAMES)
+_CONTEXTUAL_FLAG_EFFECTS = (
+    (0x0004, "validator_gate"),
+    (0x0008, "validator_gate"),
+    (0x0010, "validator_gate"),
+    (0x0020, "bm_crc_virtual_type_vector"),
+    (0x0040, "validator_gate"),
+    (0x0080, "bm_match_option_bit_1"),
+    (0x0200, "full_subject_copy_in_search_mode_1"),
+)
+_RECEIVER_FLAG_MASK = 0x03FF
 
 
 def _text_display(data: bytes) -> tuple[Literal["ASCII", "UTF16LE", "HEX"], str | None]:
@@ -147,14 +159,28 @@ def classify_hstr_subsignature(subsig: HstrSubsignature) -> HstrSubsignatureMean
     """Classify display bytes without deriving matcher behavior from their shape."""
     flags = subsig.flags.value if subsig.flags is not None else 0
     names = tuple(name for mask, name in _FLAG_NAMES if flags & mask)
-    unknown = flags & ~_KNOWN_FLAG_MASK
+    receiver_ignored = bool(flags & ~_RECEIVER_FLAG_MASK)
+    if receiver_ignored:
+        contextual_bits = ()
+        contextual_effects = ()
+        unknown = flags & ~_KNOWN_FLAG_MASK
+    else:
+        contextual_bits = tuple(
+            mask for mask, _ in _CONTEXTUAL_FLAG_EFFECTS if flags & mask
+        )
+        contextual_effects = tuple(
+            dict.fromkeys(
+                effect for mask, effect in _CONTEXTUAL_FLAG_EFFECTS if flags & mask
+            )
+        )
+        unknown = flags & ~_RECEIVER_FLAG_MASK
     encoding, text = _text_display(subsig.data)
     # BM bytes stay hex even if every byte happens to be printable.
     if flags & 0x0002:
         kind = "BM_PATTERN"
         encoding, text = "HEX", None
         matching = "UNKNOWN" if unknown else "BM_PATTERN"
-    elif unknown or not subsig.data:
+    elif unknown or contextual_bits or not subsig.data:
         kind, matching = "OPAQUE", "UNKNOWN"
     else:
         kind = "BINARY" if encoding == "HEX" else "LITERAL"
@@ -165,6 +191,8 @@ def classify_hstr_subsignature(subsig: HstrSubsignature) -> HstrSubsignatureMean
         display_encoding=encoding,
         display_text=text,
         flag_names=names,
+        contextual_bits=contextual_bits,
+        contextual_effects=contextual_effects,
         unknown_flag_bits=unknown,
         # The engine adds the raw WORD modulo 2^16 and interprets only the final
         # aggregate as signed. Keep high-bit words out of the monotone AST.
@@ -646,6 +674,8 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
             flags_text = "NOT_PRESENT"
         else:
             names = list(meaning.flag_names)
+            if meaning.contextual_bits:
+                names.append(f"CONTEXT_BITS(0x{sum(meaning.contextual_bits):04X})")
             if meaning.unknown_flag_bits:
                 names.append(f"UNKNOWN_BITS(0x{meaning.unknown_flag_bits:04X})")
             flags_text = "|".join(names) or "NONE"
@@ -790,6 +820,23 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     ),
                 )
             )
+        if meaning.contextual_bits:
+            unsupported = True
+            issues.append(
+                SemanticIssue(
+                    "contextual_subsignature_flags",
+                    (
+                        "Contextual HSTR flags require validator, offset-vector, "
+                        "BM option, or full-subject match context."
+                    ),
+                    (
+                        ("subsignature_index", index),
+                        ("bits", sum(meaning.contextual_bits)),
+                        ("contextual_bits", JSONArray(meaning.contextual_bits)),
+                        ("effects", JSONArray(meaning.contextual_effects)),
+                    ),
+                )
+            )
         if not subsig.data:
             unsupported = True
             issues.append(
@@ -857,7 +904,53 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     ),
                     ("raw_hex", subsig.flags.raw.hex()),
                     ("known_names", JSONArray(meaning.flag_names)),
+                    (
+                        "contextual_bits",
+                        JSONArray(
+                            tuple(
+                                JSONObject(
+                                    (
+                                        ("mask", mask),
+                                        ("name", f"BIT_{mask:04X}"),
+                                        (
+                                            "effects",
+                                            JSONArray(
+                                                tuple(
+                                                    effect
+                                                    for bit, effect in _CONTEXTUAL_FLAG_EFFECTS
+                                                    if bit == mask
+                                                )
+                                            ),
+                                        ),
+                                    )
+                                )
+                                for mask in meaning.contextual_bits
+                            )
+                        ),
+                    ),
+                    ("contextual_effects", JSONArray(meaning.contextual_effects)),
                     ("unknown_bits", meaning.unknown_flag_bits),
+                    (
+                        "bm_option_bit_1_provenance",
+                        JSONObject(
+                            (
+                                (
+                                    "wire_decoded_bit_set",
+                                    bool(subsig.flags.value & 0x80),
+                                ),
+                                (
+                                    "wire_continuation_marker",
+                                    bool(
+                                        subsig.flags.raw and subsig.flags.raw[0] & 0x80
+                                    ),
+                                ),
+                                (
+                                    "runtime_may_also_be_derived_from_bm_pattern",
+                                    bool(subsig.flags.value & 0x0002),
+                                ),
+                            )
+                        ),
+                    ),
                 )
             )
         )
@@ -949,7 +1042,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v1",
+        representation="hstr.matcher-subset.ir.v2",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
