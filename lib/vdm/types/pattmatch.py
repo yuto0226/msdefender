@@ -110,7 +110,7 @@ def render_pattmatch(parsed: PattMatchPayload) -> FormatResult:
             "matching",
             "8 opcode-byte prefilter; decoded chunk lengths feed CRC_0 comparison",
         ),
-        ("operand_semantics", "nibble length codec details unresolved"),
+        ("operand_semantics", "little-nibble-first instruction length codec"),
     )
     return FormatResult(sections=(DisplaySection("PATTMATCH", rows=rows),))
 
@@ -172,15 +172,6 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
         )
     ]
     unsupported = False
-    if parsed.metadata_high16:
-        unsupported = True
-        issues.append(
-            SemanticIssue(
-                "unknown_metadata_high16",
-                "The metadata high word is preserved but has no confirmed meaning.",
-                (("raw_value", parsed.metadata_high16),),
-            )
-        )
     if decode_error is not None:
         unsupported = True
         issues.append(
@@ -200,6 +191,7 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
             ("requested_callback_size", parsed.requested_callback_size),
             ("metadata_high16_raw", parsed.metadata_high16),
             ("metadata_high16_raw_hex", parsed.raw[6:8].hex()),
+            ("metadata_high16_role", "same_key_sort_tiebreak"),
             ("name_raw_hex", parsed.name_raw.hex()),
             (
                 "prefilter",
@@ -249,6 +241,15 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
                 "instruction length codec"
             ),
             "PattProcessor::full_match accumulates candidate bytes with CRC_0",
+            (
+                "patt_pushend sorts rows with s_patt_cmp_full; that comparator "
+                "compares the full metadata DWORD after the 8-byte key"
+            ),
+            (
+                "PattProcessor::full_match scans the same-key run and returns "
+                "the first row whose CRC succeeds; ordering can therefore "
+                "affect selection among multiple successful rows"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
