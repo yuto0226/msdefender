@@ -70,6 +70,35 @@ _REQUIREMENTS = (
     "worker mode bit0 set",
     "capture disabled",
 )
+MAX_YARA_RHS_CHARS = 32 * 1024
+
+# Corpus- and engine-verified fixed byte sets. Keep raw IDs explicit: some
+# aliases share a dispatch table entry but do not have identical evidence.
+_FIXED_REPEAT_BYTES = {
+    0x0D: bytes((0x09, 0x0A, 0x0D, 0x20)),
+    0x26: bytes((0x09, 0x0A, 0x0D, 0x20)),
+    0x0F: bytes((*range(0x30, 0x3A), *range(0xF7, 0x100))),
+    0x28: bytes((*range(0x30, 0x3A), *range(0xF7, 0x100))),
+    0x11: bytes((*range(0x41, 0x5B), *range(0xF8, 0x100))),
+    0x1C: bytes((*range(0x30, 0x3A), *range(0x41, 0x5B), *range(0xF8, 0x100))),
+    0x2E: bytes((*range(0x30, 0x3A), *range(0x41, 0x5B), *range(0xF8, 0x100))),
+    0x1E: bytes(
+        (
+            *range(0x30, 0x3A),
+            *range(0x41, 0x47),
+            *range(0x61, 0x67),
+            *range(0xF8, 0x100),
+        )
+    ),
+    0x30: bytes(
+        (
+            *range(0x30, 0x3A),
+            *range(0x41, 0x47),
+            *range(0x61, 0x67),
+            *range(0xF8, 0x100),
+        )
+    ),
+}
 
 
 def _context_requirements(
@@ -124,6 +153,7 @@ def render_bm_yara(
         issues.append(BmRenderIssue("remaining_raw", pattern.consumed))
 
     parts: list[tuple[str, int, bool, int | None]] = []
+    output_limited = False
     for operation in interpret_bm_pattern(pattern).operations:
         if isinstance(operation, BmLiteral):
             if operation.value:
@@ -162,6 +192,32 @@ def render_bm_yara(
                     choice.hex(" ").upper() for choice in operation.choices
                 )
                 parts.append((f"( {choices} )", operation.offset, False, None))
+        elif (
+            isinstance(operation, BmExtension)
+            and operation.name in ("RANGE_REPEAT", "RANGE_NEGATIVE_REPEAT")
+            and operation.token.raw_id in _FIXED_REPEAT_BYTES
+        ):
+            count = operation.value
+            if count:
+                values = _FIXED_REPEAT_BYTES[operation.token.raw_id]
+                atom = "( " + " | ".join(f"{value:02X}" for value in values) + " )"
+                # Check before multiplication so malformed or extreme counts
+                # cannot allocate an unbounded candidate string.
+                estimated = count * len(atom) + count - 1
+                existing = sum(len(part[0]) for part in parts) + len(parts)
+                if existing + estimated + 4 > MAX_YARA_RHS_CHARS:
+                    output_limited = True
+                    issues.append(
+                        BmRenderIssue(
+                            "unsupported.output_limit",
+                            operation.offset,
+                            operation.token.raw_id,
+                        )
+                    )
+                else:
+                    parts.append(
+                        (" ".join((atom,) * count), operation.offset, False, None)
+                    )
         elif isinstance(operation, BmEnd):
             continue
         else:
@@ -177,9 +233,9 @@ def render_bm_yara(
             issues.append(
                 BmRenderIssue(f"unsupported.{name}", operation.offset, raw_id)
             )
-    if not parts:
+    if not parts and not output_limited:
         issues.append(BmRenderIssue("empty_body", 0))
-    else:
+    elif parts:
         if parts[0][2]:
             issues.append(BmRenderIssue("leading_jump", parts[0][1], parts[0][3]))
         if parts[-1][2]:
@@ -189,6 +245,15 @@ def render_bm_yara(
             None,
             BmYaraFidelity.UNSUPPORTED,
             tuple(issues),
+            (),
+            printable_preview,
+        )
+    projected_length = 4 + sum(len(part[0]) for part in parts) + max(0, len(parts) - 1)
+    if projected_length > MAX_YARA_RHS_CHARS:
+        return BmYaraRender(
+            None,
+            BmYaraFidelity.UNSUPPORTED,
+            (BmRenderIssue("unsupported.output_limit", 0),),
             (),
             printable_preview,
         )
