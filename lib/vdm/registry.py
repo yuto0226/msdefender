@@ -14,6 +14,7 @@ from .types.latent_threat import SPEC as LATENT_THREAT_SPEC
 from .types.lua_standalone import SPEC as LUASTANDALONE_SPEC
 from .types.macro_source import SPEC as MACRO_SOURCE_SPEC
 from .types.nid import NID_SPECS
+from .types.nscript import NSCRIPT_SPECS
 from .types.pestatic import SPEC as PESTATIC_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
 from .types.revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
@@ -51,6 +52,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             *THREAT_SPECS,
             *HSTR_SPECS,
             *NID_SPECS,
+            *NSCRIPT_SPECS,
             *VDLL_META_SPECS,
         )
     }

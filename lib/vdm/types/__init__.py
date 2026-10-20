@@ -42,6 +42,21 @@ from .macro_source import (
 )
 from .macro_source import SPEC as MACRO_SOURCE_SPEC
 from .nid import NID64_TYPE, NID_SPECS, NidPayload, parse_nid, render_nid
+from .nscript import (
+    NSCRIPT_SPECS,
+    NScriptBrutePayload,
+    NScriptCurePayload,
+    NScriptPayload,
+    NScriptSPPayload,
+    parse_nscript,
+    parse_nscript_brute,
+    parse_nscript_cure,
+    parse_nscript_sp,
+    render_nscript,
+    render_nscript_brute,
+    render_nscript_cure,
+    render_nscript_sp,
+)
 from .pestatic import SPEC as PESTATIC_SPEC
 from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
 from .regkey import SPEC as REGKEY_SPEC
@@ -115,6 +130,7 @@ __all__ = [
     "MAGIC_THREAT_IDS",
     "NID64_TYPE",
     "NID_SPECS",
+    "NSCRIPT_SPECS",
     "PESTATIC_SPEC",
     "REGKEY_SPEC",
     "REVOKED_CERTIFICATE_SPEC",
@@ -143,6 +159,10 @@ __all__ = [
     "LuaScriptCategory",
     "LuaStandalonePayload",
     "MacroSourcePayload",
+    "NScriptBrutePayload",
+    "NScriptCurePayload",
+    "NScriptPayload",
+    "NScriptSPPayload",
     "NidPayload",
     "PeStaticPayload",
     "RegKeyPayload",
@@ -170,6 +190,10 @@ __all__ = [
     "parse_lua_standalone",
     "parse_macro_source",
     "parse_nid",
+    "parse_nscript",
+    "parse_nscript_brute",
+    "parse_nscript_cure",
+    "parse_nscript_sp",
     "parse_pestatic",
     "parse_regkey",
     "parse_revoked_certificate",
@@ -192,6 +216,10 @@ __all__ = [
     "render_lua_standalone",
     "render_macro_source",
     "render_nid",
+    "render_nscript",
+    "render_nscript_brute",
+    "render_nscript_cure",
+    "render_nscript_sp",
     "render_pestatic",
     "render_regkey",
     "render_revoked_certificate",
