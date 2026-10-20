@@ -16,28 +16,73 @@ PredicateStatus = Literal["known", "partial", "unknown"]
 class VersionCheckPredicate:
     status: PredicateStatus
     expression: str | None = None
+    field_04_domain: str | None = None
 
 
 VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingProxyType(
     {
-        0x00: VersionCheckPredicate("known", "always true; field_04 unused"),
-        0x31: VersionCheckPredicate("known", "bool(gktab+0xB43) == bool(field_04)"),
-        0x34: VersionCheckPredicate("known", "bool(gktab+0xB47) == bool(field_04)"),
-        0x3C: VersionCheckPredicate("known", "dword(gktab+0x15868) == field_04"),
-        0x3D: VersionCheckPredicate("known", "dword(gktab+0x1586C) == field_04"),
-        0x3E: VersionCheckPredicate("known", "dword(gktab+0x15870) == field_04"),
-        0x3F: VersionCheckPredicate("known", "dword(gktab+0x15874) == field_04"),
-        0x58: VersionCheckPredicate("known", "dword(gktab+0xB9C) > field_04"),
-        0x63: VersionCheckPredicate("known", "qword(gktab+0xBE0) > field_04"),
-        0x64: VersionCheckPredicate("known", "qword(gktab+0xBE0) < field_04"),
-        0x65: VersionCheckPredicate("known", "bool(gktab+0xB48) == bool(field_04)"),
-        0x66: VersionCheckPredicate("known", "dword(gktab+0x15884) == field_04"),
-        0x6A: VersionCheckPredicate(
-            "known", "high_dword(qword(gktab+0x15968)) < field_04"
+        0x00: VersionCheckPredicate(
+            "known", "always true; field_04 unused", "not read"
         ),
-        0x14: VersionCheckPredicate("known", "dword(gktab+0xB64) == field_04"),
-        0x27: VersionCheckPredicate("known", "dword(gktab+0xB90) > field_04"),
-        0x6F: VersionCheckPredicate("known", "qword(gktab+0x15968) > field_04"),
+        0x31: VersionCheckPredicate(
+            "known",
+            "bool(gktab+0xB43) == bool(field_04)",
+            "uint32_t truthiness; zero vs nonzero",
+        ),
+        0x34: VersionCheckPredicate(
+            "known",
+            "bool(gktab+0xB47) == bool(field_04)",
+            "uint32_t truthiness; zero vs nonzero",
+        ),
+        0x3C: VersionCheckPredicate(
+            "known", "dword(gktab+0x15868) == field_04", "full uint32_t equality"
+        ),
+        0x3D: VersionCheckPredicate(
+            "known", "dword(gktab+0x1586C) == field_04", "full uint32_t equality"
+        ),
+        0x3E: VersionCheckPredicate(
+            "known", "dword(gktab+0x15870) == field_04", "full uint32_t equality"
+        ),
+        0x3F: VersionCheckPredicate(
+            "known", "dword(gktab+0x15874) == field_04", "full uint32_t equality"
+        ),
+        0x58: VersionCheckPredicate(
+            "known", "dword(gktab+0xB9C) > field_04", "unsigned uint32_t comparison"
+        ),
+        0x63: VersionCheckPredicate(
+            "known",
+            "qword(gktab+0xBE0) > field_04",
+            "zero-extended uint32_t vs unsigned uint64_t",
+        ),
+        0x64: VersionCheckPredicate(
+            "known",
+            "qword(gktab+0xBE0) < field_04",
+            "zero-extended uint32_t vs unsigned uint64_t",
+        ),
+        0x65: VersionCheckPredicate(
+            "known",
+            "bool(gktab+0xB48) == bool(field_04)",
+            "uint32_t truthiness; zero vs nonzero",
+        ),
+        0x66: VersionCheckPredicate(
+            "known", "dword(gktab+0x15884) == field_04", "full uint32_t equality"
+        ),
+        0x6A: VersionCheckPredicate(
+            "known",
+            "high_dword(qword(gktab+0x15968)) < field_04",
+            "unsigned uint32_t comparison",
+        ),
+        0x14: VersionCheckPredicate(
+            "known", "dword(gktab+0xB64) == field_04", "full uint32_t equality"
+        ),
+        0x27: VersionCheckPredicate(
+            "known", "dword(gktab+0xB90) > field_04", "unsigned uint32_t comparison"
+        ),
+        0x6F: VersionCheckPredicate(
+            "known",
+            "qword(gktab+0x15968) > field_04",
+            "zero-extended uint32_t vs unsigned uint64_t",
+        ),
         0x77: VersionCheckPredicate("partial"),
         0x38: VersionCheckPredicate("partial"),
         0x2C: VersionCheckPredicate("partial"),
@@ -83,14 +128,17 @@ def render_versioncheck(parsed: VersionCheckPayload) -> FormatResult:
             else "unknown"
         )
     )
+    rows = [
+        ("field_00", f"0x{parsed.field_00:08x}"),
+        ("field_04", f"0x{parsed.field_04:08x}"),
+        ("condition", condition),
+    ]
+    if predicate.field_04_domain is not None:
+        rows.append(("field_04_domain", predicate.field_04_domain))
     sections = [
         DisplaySection(
             "Version Check",
-            rows=(
-                ("field_00", f"0x{parsed.field_00:08x}"),
-                ("field_04", f"0x{parsed.field_04:08x}"),
-                ("condition", condition),
-            ),
+            rows=tuple(rows),
         )
     ]
     if parsed.trailing_raw:
