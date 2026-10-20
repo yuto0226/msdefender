@@ -328,9 +328,12 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
         issues.append(
             SemanticIssue(
                 "friendly_filter_mask_bits_incomplete",
-                "Mask bits 8 through 11 have confirmed effects in selected "
-                "consumers, but their formal names and complete cross-consumer "
-                "semantics remain unknown.",
+                "The mask is stored as BmDetectionDetails policy state and bits "
+                "8 through 11 have confirmed local effects in selected "
+                "consumers. Their formal names and complete cross-consumer "
+                "semantics remain unknown, so this policy subset is unsupported. "
+                "The mask bytes also participate in payload identity; that does "
+                "not make the mask identity-only metadata.",
                 (("value", unresolved_mask),),
             )
         )
