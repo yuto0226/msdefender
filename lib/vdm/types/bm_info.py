@@ -20,17 +20,30 @@ _DETECTION_FLAG_BITS = (
     (0x80, "high", 0x00000010),
 )
 
-_HIGH_MASK_OBSERVED_EFFECTS = (
+_POLICY_MASK_OBSERVED_EFFECTS = (
     (
         0x0100,
-        ("ReportDetection:friendly_process_check", "ExpensiveOperation:allow_path"),
+        (
+            "ReportDetection:skip_cache_suppression_gate",
+            "IsExpensiveOperationAllowed:skip_throttle_and_allow",
+        ),
     ),
     (
         0x0200,
-        ("ReportDetection:reset_and_related_pid_gate", "ExpensiveOperation:deny"),
+        (
+            "ReportDetection:related_pid_lookup_and_reset_detection",
+            "IsExpensiveOperationAllowed:deny",
+        ),
     ),
-    (0x0400, ("ReportDetection:suppress_actions_and_set_report_flag",)),
-    (0x0800, ("ReportDetection:set_report_flag",)),
+    (
+        0x0400,
+        (
+            "ReportDetection:pass_true_to_ProcessAdditionalActions",
+            "ReportDetection:suppress_PerformDetectionActions",
+            "ReportDetection:set_descriptor_flag_bit_2",
+        ),
+    ),
+    (0x0800, ("ReportDetection:set_descriptor_flag_bit_3",)),
 )
 
 
@@ -298,18 +311,19 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
     )
     action_entries, action_parse_issues = _parse_action_entries(info.actions_raw)
     low_flags, high_flags = info.detection_flags
-    unresolved_mask = info.friendly_filter_mask & 0x0F00
-    observed_high_mask_effects = JSONArray(
+    policy_mask_bits = info.friendly_filter_mask & 0x0F00
+    observed_policy_mask_effects = JSONArray(
         tuple(
             JSONObject(
                 (
+                    ("policy_bit", f"policy_bit_{bit:#06x}"),
                     ("bit", bit),
                     ("observed_effects", JSONArray(effects)),
                     ("complete_semantics", False),
                 )
             )
-            for bit, effects in _HIGH_MASK_OBSERVED_EFFECTS
-            if unresolved_mask & bit
+            for bit, effects in _POLICY_MASK_OBSERVED_EFFECTS
+            if policy_mask_bits & bit
         )
     )
     issues = [
@@ -324,17 +338,17 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
             "consumers are not.",
         ),
     ]
-    if unresolved_mask:
+    if policy_mask_bits:
         issues.append(
             SemanticIssue(
-                "friendly_filter_mask_bits_incomplete",
-                "The mask is stored as BmDetectionDetails policy state and bits "
-                "8 through 11 have confirmed local effects in selected "
-                "consumers. Their formal names and complete cross-consumer "
-                "semantics remain unknown, so this policy subset is unsupported. "
-                "The mask bytes also participate in payload identity; that does "
-                "not make the mask identity-only metadata.",
-                (("value", unresolved_mask),),
+                "friendly_filter_policy_incomplete",
+                "The mask is stored as BmDetectionDetails policy state. Bits "
+                "8 through 11 have observed direct effects in the listed "
+                "consumers, but their formal names and complete cross-consumer "
+                "policy or verdict semantics remain unknown. The mask bytes "
+                "also participate in payload identity; that does not make the "
+                "mask identity-only metadata.",
+                (("value", policy_mask_bits),),
             )
         )
     if info.blob_len:
@@ -370,7 +384,6 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
         "unsupported"
         if (
             not info.receiver_accepted
-            or unresolved_mask
             or info.blob_len
             or info.trailing_raw
             or fidelity_parse_issues
@@ -423,10 +436,10 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
                                     )
                                 ),
                             ),
-                            ("unresolved_bits_8_11", unresolved_mask),
+                            ("policy_bits_8_11", policy_mask_bits),
                             (
-                                "observed_bits_8_11_effects",
-                                observed_high_mask_effects,
+                                "observed_policy_bits_8_11_effects",
+                                observed_policy_mask_effects,
                             ),
                         )
                     ),
@@ -492,6 +505,14 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
             "mpengine 1.443.903.0 BMDetectionReceiver bounded fields and identity",
             "mpengine 1.443.903.0 ProcessFriendlyFiltering validation and mask storage",
             "mpengine 1.443.903.0 GetDetectionFlags low-eight-bit mapping",
+            (
+                "mpengine 1.443.903.0 SignatureHandler::ReportDetection @ "
+                "0x1802A314C: policy bits 8-11 local branches"
+            ),
+            (
+                "mpengine 1.443.903.0 BmController::IsExpensiveOperationAllowed @ "
+                "0x180B75118: policy bits 8-9 gate"
+            ),
             "mpengine 1.443.903.0 ExtractFidelity and GetFidelityEnhancers",
             "mpengine 1.443.903.0 ProcessDetectionActions and action-list parsing",
         ),
