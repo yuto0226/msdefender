@@ -100,6 +100,15 @@ from .nscript import (
     render_nscript_cure,
     render_nscript_sp,
 )
+from .pattmatch import (
+    PATTMATCH_TYPE,
+    PattMatchPayload,
+    parse_pattmatch,
+    render_pattmatch,
+)
+from .pattmatch import (
+    SPEC as PATTMATCH_SPEC,
+)
 from .pebmpat import SPEC as PEBMPAT_SPEC
 from .pebmpat import PEBMPat, parse_pebmpat, render_pebmpat
 from .pefile_cure import SPEC as PEFILE_CURE_SPEC
@@ -194,6 +203,8 @@ __all__ = [
     "NID64_TYPE",
     "NID_SPECS",
     "NSCRIPT_SPECS",
+    "PATTMATCH_SPEC",
+    "PATTMATCH_TYPE",
     "PEBMPAT_SPEC",
     "PEFILE_CURE_SPEC",
     "PESTATIC_SPEC",
@@ -237,6 +248,7 @@ __all__ = [
     "NScriptSPPayload",
     "NidPayload",
     "PEBMPat",
+    "PattMatchPayload",
     "PeFileCure",
     "PeStaticPayload",
     "RegKeyPayload",
@@ -276,6 +288,7 @@ __all__ = [
     "parse_nscript_brute",
     "parse_nscript_cure",
     "parse_nscript_sp",
+    "parse_pattmatch",
     "parse_pebmpat",
     "parse_pefile_cure",
     "parse_pestatic",
@@ -311,6 +324,7 @@ __all__ = [
     "render_nscript_brute",
     "render_nscript_cure",
     "render_nscript_sp",
+    "render_pattmatch",
     "render_pebmpat",
     "render_pefile_cure",
     "render_pestatic",

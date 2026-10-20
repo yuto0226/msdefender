@@ -21,6 +21,7 @@ from .types.macro_pcode import MACRO_PCODE_SPECS
 from .types.macro_source import SPEC as MACRO_SOURCE_SPEC
 from .types.nid import NID_SPECS
 from .types.nscript import NSCRIPT_SPECS
+from .types.pattmatch import SPEC as PATTMATCH_SPEC
 from .types.pebmpat import SPEC as PEBMPAT_SPEC
 from .types.pefile_cure import SPEC as PEFILE_CURE_SPEC
 from .types.pestatic import SPEC as PESTATIC_SPEC
@@ -62,6 +63,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             KCRCE_SPEC,
             PESTATIC_SPEC,
             PEBMPAT_SPEC,
+            PATTMATCH_SPEC,
             PEFILE_CURE_SPEC,
             *FPATH_SPECS,
             *FOP_SPECS,
