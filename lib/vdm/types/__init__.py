@@ -45,6 +45,12 @@ from .friendlyfile import (
     parse_friendlyfile_sha256,
     render_friendlyfile_sha256,
 )
+from .hostsentry import (
+    HOSTSENTRY_TYPE,
+    HostsentryPayload,
+    parse_hostsentry,
+    render_hostsentry,
+)
 from .hstr import (
     HSTR_SPECS,
     HstrFlags,
@@ -187,6 +193,7 @@ __all__ = [
     "FOP_TYPES",
     "FPATH_SPECS",
     "FPATH_TYPES",
+    "HOSTSENTRY_TYPE",
     "HSTR_SPECS",
     "LATENT_THREAT_SPEC",
     "LUASTANDALONE_SPEC",
@@ -232,6 +239,7 @@ __all__ = [
     "FopPayload",
     "FpathPayload",
     "FriendlyFileSha256",
+    "HostsentryPayload",
     "HstrFlags",
     "HstrPayload",
     "HstrSubsignature",
@@ -276,6 +284,7 @@ __all__ = [
     "parse_fop",
     "parse_fpath",
     "parse_friendlyfile_sha256",
+    "parse_hostsentry",
     "parse_hstr",
     "parse_kcrce",
     "parse_latent_threat",
@@ -313,6 +322,7 @@ __all__ = [
     "render_fop",
     "render_fpath",
     "render_friendlyfile_sha256",
+    "render_hostsentry",
     "render_hstr",
     "render_kcrce",
     "render_latent_threat",
