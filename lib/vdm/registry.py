@@ -19,6 +19,7 @@ from .types.macro_pcode import MACRO_PCODE_SPECS
 from .types.macro_source import SPEC as MACRO_SOURCE_SPEC
 from .types.nid import NID_SPECS
 from .types.nscript import NSCRIPT_SPECS
+from .types.pebmpat import SPEC as PEBMPAT_SPEC
 from .types.pestatic import SPEC as PESTATIC_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
 from .types.revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
@@ -55,6 +56,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             STATIC_SPEC,
             KCRCE_SPEC,
             PESTATIC_SPEC,
+            PEBMPAT_SPEC,
             *FPATH_SPECS,
             *FOP_SPECS,
             *THREAT_SPECS,
