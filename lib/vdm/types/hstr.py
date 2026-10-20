@@ -53,6 +53,14 @@ class HstrPayload:
     tail_word1: int | None
     trailing_raw: bytes
 
+    @property
+    def receiver_ignored(self) -> bool:
+        """Whether HSTR ingest returns success without registering this record."""
+        return any(
+            subsig.flags is not None and subsig.flags.value & ~0x03FF
+            for subsig in self.subsignatures
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class HstrSubsignatureMeaning:
@@ -640,6 +648,14 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
     return FormatResult(
         fields=(
             ("family", _FAMILY_NAMES[parsed.type_byte]),
+            (
+                "loader_disposition",
+                (
+                    "skipped: subsignature flags exceed 0x03FF"
+                    if parsed.receiver_ignored
+                    else "passed HSTR flag prevalidation"
+                ),
+            ),
             ("name", json.dumps(parsed.name_raw.decode("latin-1"), ensure_ascii=False)),
             ("name_raw", parsed.name_raw.hex(" ").upper() or "(empty)"),
             ("subsig_count", str(len(parsed.subsignatures))),
