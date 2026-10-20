@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 FPATH_TYPES: Final = MappingProxyType(
     {
@@ -147,6 +154,173 @@ def render_fpath(parsed: FpathPayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
+def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
+    """Export the receiver-confirmed path storage subset, preserving opaque bytes."""
+    type_name = FPATH_TYPES[parsed.type_byte]
+    is_asep = parsed.type_byte in {0x71, 0x75}
+    path_offset = HEADER_SIZE
+    path_end = path_offset + len(parsed.path_region_raw)
+    pipe_suffix = (
+        b""
+        if parsed.pipe_offset is None
+        else parsed.path_region_raw[parsed.pipe_offset :]
+    )
+    issues = [
+        SemanticIssue(
+            "path_match_and_verdict_unknown",
+            "This receiver analysis does not establish path matching or final verdict semantics.",
+        ),
+        SemanticIssue(
+            "csidl_mapping_result_unknown",
+            "The CSIDL value is passed to CSIDL_2_ix; the resulting runtime index is not encoded here.",
+        ),
+    ]
+    if parsed.pipe_offset is not None:
+        issues.append(
+            SemanticIssue(
+                "pcode_boundary_payload_not_exported",
+                "FILEPATH uses the first pipe as the stored-path boundary; the "
+                "following PCode/RecID input is preserved but not interpreted.",
+                (
+                    ("offset", path_offset + parsed.pipe_offset),
+                    ("length", len(pipe_suffix)),
+                ),
+            )
+        )
+    if parsed.tail_raw:
+        issues.append(
+            SemanticIssue(
+                "pcode_tail_not_exported",
+                "Bytes after NUL are sent to createrecidp; their program and "
+                "record-identity semantics are not exported.",
+                (("length", len(parsed.tail_raw)),),
+            )
+        )
+    evidence = (
+        f"mpengine 1.443.903.0 {type_name} receiver registration and storage wrapper",
+        "mpengine 1.443.903.0 shared FILEPATH/FOLDERNAME receiver path handling",
+        "mpengine 1.443.903.0 CSIDL_2_ix mapping call",
+    )
+    return RuleSemantics(
+        status="unsupported" if parsed.tail_raw or pipe_suffix else "confirmed_subset",
+        representation="fpath.receiver-storage.ir.v1",
+        data=JSONObject(
+            (
+                ("type", type_name),
+                ("raw_hex", parsed.raw.hex()),
+                ("storage_family", "asep" if is_asep else "standard"),
+                (
+                    "csidl",
+                    JSONObject(
+                        (
+                            ("value", parsed.csidl_value),
+                            ("wire", _wire_field("csidl_value", parsed.raw[:2], 0)),
+                            ("consumer", "CSIDL_2_ix"),
+                        )
+                    ),
+                ),
+                (
+                    "path",
+                    JSONObject(
+                        (
+                            ("kind", parsed.path_kind),
+                            (
+                                "wire",
+                                _wire_field(
+                                    "path_region", parsed.path_region_raw, path_offset
+                                ),
+                            ),
+                            ("bytes_hex", parsed.path_bytes.hex()),
+                            ("nul_terminated", parsed.nul_terminated),
+                            (
+                                "terminator",
+                                None
+                                if not parsed.nul_terminated
+                                else _wire_field(
+                                    "nul_terminator",
+                                    parsed.raw[
+                                        parsed.nul_offset
+                                        + path_offset : parsed.nul_offset
+                                        + path_offset
+                                        + 1
+                                    ],
+                                    parsed.nul_offset + path_offset,
+                                ),
+                            ),
+                            (
+                                "runtime_bytes_hex",
+                                parsed.runtime_path_bytes.hex(),
+                            ),
+                            (
+                                "normalization",
+                                "append_backslash_if_nonempty_and_missing"
+                                if parsed.path_kind == "foldername"
+                                else "none_confirmed",
+                            ),
+                            (
+                                "wildcard_detection",
+                                JSONObject(
+                                    (
+                                        ("consumer", "ResutilsStrHasWildcards"),
+                                        ("input", "runtime_bytes"),
+                                        (
+                                            "stored_effect",
+                                            "set_bit_31_of_csidl_index",
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "pcode_boundary_payload",
+                                None
+                                if parsed.pipe_offset is None
+                                else _wire_field(
+                                    "pcode_boundary_payload",
+                                    pipe_suffix,
+                                    path_offset + parsed.pipe_offset,
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "pcode_tail",
+                    JSONObject(
+                        (
+                            (
+                                "wire",
+                                _wire_field(
+                                    "pcode_tail",
+                                    parsed.tail_raw,
+                                    path_end + 1 if parsed.nul_terminated else path_end,
+                                ),
+                            ),
+                            (
+                                "receiver_path",
+                                "createrecidp" if parsed.tail_raw else "createrecid",
+                            ),
+                            ("meaning", None),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=evidence,
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 def _parser_for(type_byte: int) -> Callable[[bytes], FpathPayload]:
     def parser(payload: bytes) -> FpathPayload:
         return parse_fpath(payload, type_byte=type_byte)
@@ -155,6 +329,12 @@ def _parser_for(type_byte: int) -> Callable[[bytes], FpathPayload]:
 
 
 FPATH_SPECS = tuple(
-    FamilySpec(type_byte, name, _parser_for(type_byte), render_fpath)
+    FamilySpec(
+        type_byte,
+        name,
+        _parser_for(type_byte),
+        render_fpath,
+        semantic_exporter=export_fpath_semantics,
+    )
     for type_byte, name in FPATH_TYPES.items()
 )
