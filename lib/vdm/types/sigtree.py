@@ -1,6 +1,14 @@
 from dataclasses import dataclass
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 _FIELD_FAMILIES = {
     0x30: "unknown",
@@ -235,6 +243,192 @@ def render_sigtree(parsed: SigtreePayload) -> FormatResult:
     )
 
 
-SIGTREE_SPEC = FamilySpec(0x40, "SIGTREE", parse_sigtree, render_sigtree)
-SIGTREE_EXT_SPEC = FamilySpec(0x41, "SIGTREE_EXT", parse_sigtree, render_sigtree)
-SIGTREE_BM_SPEC = FamilySpec(0xB3, "SIGTREE_BM", parse_sigtree, render_sigtree)
+def _param_semantics(param: SigtreeParam | None) -> JSONObject | None:
+    if param is None:
+        return None
+    receiver_decoder = (
+        "BMGetInitData"
+        if param.kind in {"bm_pattern", "special_extended"}
+        else "read_sigattr_param_hash"
+    )
+    return JSONObject(
+        (
+            ("wire_kind", param.kind),
+            ("subtype", param.subtype),
+            ("raw_hex", param.raw.hex()),
+            ("receiver_decoder", receiver_decoder),
+            ("operand_semantics", "unknown"),
+        )
+    )
+
+
+def _export_sigtree_semantics(
+    parsed: SigtreePayload, *, record_type: int
+) -> RuleSemantics:
+    entries = tuple(
+        JSONObject(
+            (
+                ("index", index),
+                ("wire_fixed_raw_hex", entry.fixed_raw.hex()),
+                ("flags_raw_u32", entry.flags),
+                ("fid_lo", entry.fid_lo),
+                ("fid_hi", entry.fid_hi),
+                ("sub_lo", entry.sub_lo),
+                ("sub_hi", entry.sub_hi),
+                ("val_lo_u32", entry.val_lo),
+                ("val_hi_u32", entry.val_hi),
+                ("wire_level_extra_raw_hex", entry.level_extra_raw.hex()),
+                ("wire_param_b", _param_semantics(entry.param_b)),
+                ("wire_param_a", _param_semantics(entry.param_a)),
+            )
+        )
+        for index, entry in enumerate(parsed.entries)
+    )
+    data = JSONObject(
+        (
+            (
+                "wire_tree",
+                JSONObject(
+                    (
+                        ("record_type", record_type),
+                        ("entry_count", parsed.entry_count),
+                        ("format_level", parsed.format_level),
+                        ("raw_header_2", parsed.raw_header_2),
+                        ("handler_index", parsed.handler_index),
+                        ("name_raw_hex", parsed.name_raw.hex()),
+                        ("record_extra_raw_hex", parsed.record_extra_raw.hex()),
+                        ("entries", JSONArray(entries)),
+                        ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                        ("payload_raw_hex", parsed.raw.hex()),
+                    )
+                ),
+            ),
+            (
+                "receiver_storage",
+                JSONObject(
+                    (
+                        ("model", "runtime entry storage; exact allocation omitted"),
+                        ("wire_fixed_0x00_0x03_to_runtime_0x04", "confirmed"),
+                        ("wire_fixed_0x04_0x07_to_runtime_0x00", "confirmed"),
+                        ("wire_val_lo_to_runtime_0x10", "confirmed"),
+                        ("wire_val_hi_to_runtime_0x28", "confirmed"),
+                        ("wire_level_extension_1_to_runtime_0x08", "when present"),
+                        ("wire_level_extension_2_to_runtime_0x20", "when present"),
+                    )
+                ),
+            ),
+            (
+                "runtime_evaluator",
+                JSONObject(
+                    (
+                        ("graph_model", "named_attribute_dependency_dag"),
+                        (
+                            "named_attribute_lookup",
+                            (
+                                "equal_range by attribute type, name length, and "
+                                "lowercase CRC"
+                            ),
+                        ),
+                        (
+                            "entry_parameter_combination",
+                            "all selected parameters must match",
+                        ),
+                        (
+                            "parameter_dispatch",
+                            (
+                                "BMSearchWorker, scalar/CRC equality, or strong-hash "
+                                "path according to runtime flags"
+                            ),
+                        ),
+                        ("record_reduction", "unknown"),
+                        (
+                            "on_entry_match",
+                            "refresh_cksig_data may emit a named attribute",
+                        ),
+                        (
+                            "propagation",
+                            (
+                                "RuntimeAggregator::SetAttribute recursively invokes "
+                                "siga_cksig"
+                            ),
+                        ),
+                        (
+                            "handler_instance_2_effect",
+                            (
+                                "when handler_index is 2, refresh_cksig_data has "
+                                "BMLua reporting and telemetry branches"
+                            ),
+                        ),
+                        ("final_policy_effect", "unknown"),
+                        ("yara_translation", "not established"),
+                    )
+                ),
+            ),
+        )
+    )
+    return RuleSemantics(
+        status="unsupported" if parsed.trailing_raw else "observed_only",
+        representation="sigtree.wire_storage_evaluator.ir.v1",
+        data=data,
+        evidence=(
+            "mpengine 1.443.903.0 SigtreeHandlerInstance::push",
+            "mpengine 1.443.903.0 siga_cksig_impl and MatchParameter",
+            "mpengine 1.443.903.0 refresh_cksig_data",
+            "mpengine 1.443.903.0 RuntimeAggregator::SetAttribute",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "sigtree_reduction_and_policy_unknown",
+                "Parameter dispatch and named-attribute propagation are confirmed, "
+                "but record reduction, detailed operand flags, and final policy "
+                "remain incomplete.",
+            ),
+            *(
+                (
+                    SemanticIssue(
+                        "trailing_bytes_uninterpreted",
+                        "Bytes after all parsed entries have no confirmed semantics.",
+                        (("length", len(parsed.trailing_raw)),),
+                    ),
+                )
+                if parsed.trailing_raw
+                else ()
+            ),
+        ),
+    )
+
+
+def export_sigtree_semantics(parsed: SigtreePayload) -> RuleSemantics:
+    return _export_sigtree_semantics(parsed, record_type=0x40)
+
+
+def export_sigtree_ext_semantics(parsed: SigtreePayload) -> RuleSemantics:
+    return _export_sigtree_semantics(parsed, record_type=0x41)
+
+
+def export_sigtree_bm_semantics(parsed: SigtreePayload) -> RuleSemantics:
+    return _export_sigtree_semantics(parsed, record_type=0xB3)
+
+
+SIGTREE_SPEC = FamilySpec(
+    0x40,
+    "SIGTREE",
+    parse_sigtree,
+    render_sigtree,
+    semantic_exporter=export_sigtree_semantics,
+)
+SIGTREE_EXT_SPEC = FamilySpec(
+    0x41,
+    "SIGTREE_EXT",
+    parse_sigtree,
+    render_sigtree,
+    semantic_exporter=export_sigtree_ext_semantics,
+)
+SIGTREE_BM_SPEC = FamilySpec(
+    0xB3,
+    "SIGTREE_BM",
+    parse_sigtree,
+    render_sigtree,
+    semantic_exporter=export_sigtree_bm_semantics,
+)
