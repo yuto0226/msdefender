@@ -81,6 +81,13 @@ from .friendlyfile import (
     parse_friendlyfile_sha256,
     render_friendlyfile_sha256,
 )
+from .ftrie_pos import (
+    FTRIE_POS_SPEC,
+    FTRIE_POS_TYPE,
+    FTriePosPayload,
+    parse_ftrie_pos,
+    render_ftrie_pos,
+)
 from .gensfx import GENSFX_TYPE, GenSfxPayload, parse_gensfx, render_gensfx
 from .gensfx import SPEC as GENSFX_SPEC
 from .hostsentry import (
@@ -300,6 +307,8 @@ __all__ = [
     "FOP_TYPES",
     "FPATH_SPECS",
     "FPATH_TYPES",
+    "FTRIE_POS_SPEC",
+    "FTRIE_POS_TYPE",
     "GENSFX_SPEC",
     "GENSFX_TYPE",
     "HOSTSENTRY_TYPE",
@@ -374,6 +383,7 @@ __all__ = [
     "DbVarPayload",
     "DeltaBlobRecInfo",
     "DeltaBlobRecInfoEntry",
+    "FTriePosPayload",
     "FopPayload",
     "FpathPayload",
     "FriendlyFileSha256",
@@ -437,6 +447,7 @@ __all__ = [
     "parse_fop",
     "parse_fpath",
     "parse_friendlyfile_sha256",
+    "parse_ftrie_pos",
     "parse_gensfx",
     "parse_hostsentry",
     "parse_hstr",
@@ -491,6 +502,7 @@ __all__ = [
     "render_fop",
     "render_fpath",
     "render_friendlyfile_sha256",
+    "render_ftrie_pos",
     "render_gensfx",
     "render_hostsentry",
     "render_hstr",
