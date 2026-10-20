@@ -32,6 +32,7 @@ from .types.pestatic import SPEC as PESTATIC_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
 from .types.revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
+from .types.snidex import SNIDEX_SPECS
 from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
 from .types.trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
@@ -59,6 +60,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             VREG_SPEC,
             SIGTREE_SPEC,
             SIGTREE_EXT_SPEC,
+            *SNIDEX_SPECS,
             BM_INFO_SPEC,
             BRUTE_SPEC,
             *CK_SPECS,
