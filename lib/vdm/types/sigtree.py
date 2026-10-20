@@ -265,6 +265,10 @@ def _param_semantics(param: SigtreeParam | None) -> JSONObject | None:
 def _export_sigtree_semantics(
     parsed: SigtreePayload, *, record_type: int
 ) -> RuleSemantics:
+    has_countdown_adjustment = any(
+        entry.level_extra_raw and bool(entry.level_extra_raw[0] & 0x02)
+        for entry in parsed.entries
+    )
     entries = tuple(
         JSONObject(
             (
@@ -340,7 +344,131 @@ def _export_sigtree_semantics(
                                 "path according to runtime flags"
                             ),
                         ),
-                        ("record_reduction", "unknown"),
+                        (
+                            "record_reduction",
+                            JSONObject(
+                                (
+                                    ("model", "scan_time_countdown"),
+                                    (
+                                        "initial_countdown",
+                                        parsed.raw_header_2,
+                                    ),
+                                    (
+                                        "initial_countdown_source",
+                                        "wire byte +0x02",
+                                    ),
+                                    (
+                                        "reset_operation",
+                                        (
+                                            "ResetRecord copies record descriptor "
+                                            "+0x02 to the per-record scan state"
+                                        ),
+                                    ),
+                                    (
+                                        "accepted_contribution_operation",
+                                        (
+                                            "an accepted ordinary entry contribution "
+                                            "decrements the nonzero per-record "
+                                            "countdown by one"
+                                        ),
+                                    ),
+                                    (
+                                        "duplicate_contribution_guard",
+                                        (
+                                            "per-entry scan state gates repeated "
+                                            "contributions; exact flag-dependent "
+                                            "group reset semantics remain incomplete"
+                                        ),
+                                    ),
+                                    (
+                                        "level_extension_adjustment_enabled",
+                                        has_countdown_adjustment,
+                                    ),
+                                    (
+                                        "level_extension_adjustment_source",
+                                        (
+                                            "record descriptor +0x0D bit 0 is set "
+                                            "when any entry level-extension DWORD "
+                                            "has bit 0x02"
+                                        ),
+                                    ),
+                                    (
+                                        "level_extension_gate_behavior",
+                                        JSONObject(
+                                            (
+                                                (
+                                                    "matching_flagged_entry",
+                                                    (
+                                                        "insert the attribute record "
+                                                        "into a suppression set and "
+                                                        "return without decrementing "
+                                                        "the countdown"
+                                                    ),
+                                                ),
+                                                (
+                                                    "subsequent_contribution",
+                                                    (
+                                                        "return without a candidate "
+                                                        "while the attribute record is "
+                                                        "present in the suppression set"
+                                                    ),
+                                                ),
+                                                (
+                                                    "absence_path",
+                                                    (
+                                                        "the odd-count adjustment lets "
+                                                        "the remaining ordinary "
+                                                        "contributions complete the "
+                                                        "record"
+                                                    ),
+                                                ),
+                                                (
+                                                    "portable_boolean_label",
+                                                    (
+                                                        "negated/unmatched guard shape; "
+                                                        "exact flag-dependent grouping "
+                                                        "remains incomplete"
+                                                    ),
+                                                ),
+                                            )
+                                        ),
+                                    ),
+                                    (
+                                        "completion_expression",
+                                        (
+                                            "countdown_after = max(countdown_before "
+                                            "- 1, 0); test_value = "
+                                            "countdown_after - 1 when adjustment is "
+                                            "enabled and countdown_after is odd, "
+                                            "otherwise countdown_after; complete iff "
+                                            "test_value == 0"
+                                        ),
+                                    ),
+                                    (
+                                        "format_level_0_simplification",
+                                        (
+                                            "complete iff the post-decrement "
+                                            "countdown is zero"
+                                        ),
+                                    ),
+                                    (
+                                        "completion_candidate_state",
+                                        1,
+                                    ),
+                                    (
+                                        "incomplete_candidate_state",
+                                        2,
+                                    ),
+                                    (
+                                        "candidate_state_scope",
+                                        (
+                                            "refresh_cksig_data and its caller; not "
+                                            "a final threat verdict"
+                                        ),
+                                    ),
+                                )
+                            ),
+                        ),
                         (
                             "on_entry_match",
                             "refresh_cksig_data may emit a named attribute",
@@ -359,7 +487,32 @@ def _export_sigtree_semantics(
                                 "BMLua reporting and telemetry branches"
                             ),
                         ),
-                        ("final_policy_effect", "unknown"),
+                        (
+                            "downstream_policy",
+                            JSONObject(
+                                (
+                                    (
+                                        "consumers",
+                                        JSONArray(
+                                            (
+                                                (
+                                                    "SignatureHasValidator / "
+                                                    "ValidateSignatureWithPcode"
+                                                ),
+                                                "MpAggregateAttributeEx",
+                                                "ShouldContinueScanning",
+                                                "MpReportLowfiMatch",
+                                                "HipsStreamScanCheck",
+                                            )
+                                        ),
+                                    ),
+                                    (
+                                        "final_threat_verdict",
+                                        "context_dependent_unknown",
+                                    ),
+                                )
+                            ),
+                        ),
                         ("yara_translation", "not established"),
                     )
                 ),
@@ -367,22 +520,28 @@ def _export_sigtree_semantics(
         )
     )
     return RuleSemantics(
-        status="unsupported" if parsed.trailing_raw else "observed_only",
-        representation="sigtree.wire_storage_evaluator.ir.v1",
+        status="unsupported" if parsed.trailing_raw else "confirmed_subset",
+        representation="sigtree.wire_storage_evaluator.ir.v2",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 SigtreeHandlerInstance::push",
             "mpengine 1.443.903.0 siga_cksig_impl and MatchParameter",
             "mpengine 1.443.903.0 refresh_cksig_data",
+            "mpengine 1.443.903.0 SigtreeHandlerInstance::ResetRecord",
             "mpengine 1.443.903.0 RuntimeAggregator::SetAttribute",
         ),
         profile="mpengine-1.443.903.0",
         issues=(
             SemanticIssue(
-                "sigtree_reduction_and_policy_unknown",
-                "Parameter dispatch and named-attribute propagation are confirmed, "
-                "but record reduction, detailed operand flags, and final policy "
-                "remain incomplete.",
+                "sigtree_entry_state_flags_incomplete",
+                "The countdown reduction is confirmed, but every flag-dependent "
+                "entry grouping and reset case is not yet named.",
+            ),
+            SemanticIssue(
+                "sigtree_final_policy_context_dependent",
+                "A completed countdown produces a candidate state that still passes "
+                "validator, aggregation, scan-policy, low-fidelity, and HIPS paths; "
+                "it is not by itself a portable final threat verdict.",
             ),
             *(
                 (
