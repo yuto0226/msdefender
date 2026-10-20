@@ -227,6 +227,19 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "version_state(gktab) <= field_04",
             "full uint32_t unsigned comparison; state is +0xBB8 if nonzero, else +0xBA4 if nonzero, else 5 (0 if gktab is null)",
         ),
+        0x28: VersionCheckPredicate(
+            "known", "dword(gktab+0xB90) == field_04", "full uint32_t equality"
+        ),
+        0x2D: VersionCheckPredicate(
+            "known",
+            "byte(gktab+0xB43) == bool(field_04)",
+            "raw uint8_t state compared with uint32_t truthiness (0 or 1)",
+        ),
+        0x81: VersionCheckPredicate(
+            "known",
+            "(field_04 == 2 and dword(gktab+0xB20) in {7, 10}) or version_state(gktab) < field_04",
+            "unsigned uint32_t comparison; version_state is +0xBB8 if nonzero, else +0xBA4 if nonzero, else 5 (0 if gktab is null); field_04 == 2 reads +0xB20 before the null check",
+        ),
     }
 )
 
