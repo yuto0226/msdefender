@@ -14,20 +14,25 @@ _TEXT_PREVIEW: Final = 256
 class SnidExPayload:
     type: int
     raw: bytes
-    hashes: tuple[bytes, ...]
-    category: int
-    label_raw: bytes
+    key_blocks: tuple[bytes, ...]
+    category_value: int
+    recid_input_raw: bytes
 
     @property
-    def label(self) -> bytes:
-        """Return the bounded C-string view without requiring a terminator."""
-        return self.label_raw.split(b"\0", 1)[0]
+    def object_raw(self) -> bytes | None:
+        """Return the exact bytes interned by ``createrecidz``, when present."""
+        if not self.recid_input_raw or self.recid_input_raw[0] == 0:
+            return None
+        nul = self.recid_input_raw.find(b"\0")
+        return self.recid_input_raw if nul < 0 else self.recid_input_raw[: nul + 1]
 
     @property
-    def bytes_after_nul(self) -> bytes:
-        """Expose bytes ignored by the C-string view, if a NUL is present."""
-        _, separator, tail = self.label_raw.partition(b"\0")
-        return tail if separator else b""
+    def ignored_trailing_raw(self) -> bytes:
+        """Return bytes after the first NUL that the receiver does not intern."""
+        if not self.recid_input_raw:
+            return b""
+        nul = self.recid_input_raw.find(b"\0")
+        return b"" if nul < 0 else self.recid_input_raw[nul + 1 :]
 
 
 def parse_snidex(payload: bytes, type_byte: int = SNIDEX_TYPE) -> SnidExPayload:
@@ -41,15 +46,15 @@ def parse_snidex(payload: bytes, type_byte: int = SNIDEX_TYPE) -> SnidExPayload:
             f"truncated SNIDEX fixed prefix: need {prefix_size} bytes, "
             f"have {len(payload)}"
         )
-    hashes = tuple(
+    key_blocks = tuple(
         payload[offset : offset + 16] for offset in range(0, hash_count * 16, 16)
     )
     return SnidExPayload(
         type=type_byte,
         raw=payload,
-        hashes=hashes,
-        category=payload[hash_count * 16],
-        label_raw=payload[prefix_size:],
+        key_blocks=key_blocks,
+        category_value=payload[hash_count * 16],
+        recid_input_raw=payload[prefix_size:],
     )
 
 
@@ -57,25 +62,42 @@ def _parser_for(type_byte: int):
     return lambda payload: parse_snidex(payload, type_byte)
 
 
-def _text_preview(raw: bytes) -> str:
-    text = raw[:_TEXT_PREVIEW].decode("utf-8", errors="backslashreplace")
+def _text_preview(raw: bytes) -> str | None:
+    if raw.endswith(b"\0"):
+        raw = raw[:-1]
+    try:
+        text = raw[:_TEXT_PREVIEW].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not text or not all(character.isprintable() for character in text):
+        return None
     return repr(text) + (" ..." if len(raw) > _TEXT_PREVIEW else "")
 
 
 def render_snidex(parsed: SnidExPayload) -> FormatResult:
     rows = [
         ("type", f"0x{parsed.type:02X}"),
-        ("hash_chunks", str(len(parsed.hashes))),
+        ("key_blocks", str(len(parsed.key_blocks))),
     ]
     rows.extend(
-        (f"hash[{index}]", value.hex(" ")) for index, value in enumerate(parsed.hashes)
+        (f"key_block[{index}]", value.hex(" "))
+        for index, value in enumerate(parsed.key_blocks)
     )
+    object_raw = parsed.object_raw
+    identity_preview = _text_preview(object_raw) if object_raw is not None else None
     rows.extend(
         (
-            ("category", f"0x{parsed.category:02X}"),
-            ("label_length", str(len(parsed.label_raw))),
-            ("label", _text_preview(parsed.label)),
-            ("bytes_after_nul", str(len(parsed.bytes_after_nul))),
+            ("category_value", f"0x{parsed.category_value:02X} (semantics unresolved)"),
+            ("recid_input_length", str(len(parsed.recid_input_raw))),
+            (
+                "interned_object_length",
+                "none" if object_raw is None else f"{len(object_raw)} B",
+            ),
+            (
+                "identity_text_preview",
+                identity_preview if identity_preview is not None else "unavailable",
+            ),
+            ("receiver_ignored_length", str(len(parsed.ignored_trailing_raw))),
         )
     )
     title = "SNIDEX2" if parsed.type == SNIDEX2_TYPE else "SNIDEX"
