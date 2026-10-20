@@ -76,8 +76,6 @@ def parse_nid(payload: bytes, *, type_byte: int) -> NidPayload:
     ignored_trailing_raw = b""
     if not recid_input_raw:
         identity_kind: Literal["none", "object", "unnamed", "raw"] = "none"
-    elif type_byte == NID64_TYPE:
-        identity_kind = "raw"
     elif recid_input_raw[0] == 0:
         identity_kind = "unnamed"
         ignored_trailing_raw = recid_input_raw[1:]
@@ -118,6 +116,8 @@ def render_nid(parsed: NidPayload) -> FormatResult:
         fields.append(("key_match", "exact 4-byte key; exact metadata byte"))
     elif parsed.type_byte == SNID_TYPE:
         fields.append(("key_match", "exact 20-byte key; exact metadata byte"))
+    elif parsed.type_byte == NID64_TYPE:
+        fields.append(("key_match", "exact 8-byte key; exact metadata byte"))
     fields.append(("record_identity", parsed.identity_kind))
     identity_text = parsed.identity_text
     if identity_text is not None:
@@ -127,7 +127,7 @@ def render_nid(parsed: NidPayload) -> FormatResult:
                 ("recid_input_raw", parsed.recid_input_raw.hex(" ")),
             )
         )
-        if parsed.type_byte in (NID_TYPE, SNID_TYPE):
+        if parsed.type_byte in (NID_TYPE, SNID_TYPE, NID64_TYPE):
             fields.append(
                 (
                     "identity_role",
