@@ -39,6 +39,7 @@ from .types.nscript import NSCRIPT_SPECS
 from .types.pattmatch import SPEC as PATTMATCH_SPEC
 from .types.pebmpat import SPEC as PEBMPAT_SPEC
 from .types.pefile_cure import SPEC as PEFILE_CURE_SPEC
+from .types.pemain_locator import SPEC as PEMAIN_LOCATOR_SPEC
 from .types.pestatic import SPEC as PESTATIC_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
 from .types.removal_policy import REMOVAL_POLICY_SPECS
@@ -100,6 +101,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             MAGICCODE_SPEC,
             HOSTSENTRY_SPEC,
             PESTATIC_SPEC,
+            PEMAIN_LOCATOR_SPEC,
             PEBMPAT_SPEC,
             PATTMATCH_SPEC,
             PEFILE_CURE_SPEC,

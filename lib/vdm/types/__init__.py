@@ -202,6 +202,13 @@ from .pebmpat import SPEC as PEBMPAT_SPEC
 from .pebmpat import PEBMPat, parse_pebmpat, render_pebmpat
 from .pefile_cure import SPEC as PEFILE_CURE_SPEC
 from .pefile_cure import PeFileCure, parse_pefile_cure, render_pefile_cure
+from .pemain_locator import (
+    PEMAIN_LOCATOR_TYPE,
+    PeMainLocatorPayload,
+    parse_pemain_locator,
+    render_pemain_locator,
+)
+from .pemain_locator import SPEC as PEMAIN_LOCATOR_SPEC
 from .pestatic import SPEC as PESTATIC_SPEC
 from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
 from .regkey import SPEC as REGKEY_SPEC
@@ -358,6 +365,8 @@ __all__ = [
     "PATTMATCH_TYPE",
     "PEBMPAT_SPEC",
     "PEFILE_CURE_SPEC",
+    "PEMAIN_LOCATOR_SPEC",
+    "PEMAIN_LOCATOR_TYPE",
     "PESTATIC_SPEC",
     "REGKEY_SPEC",
     "REMOVAL_POLICY_BY_NAME_SPEC",
@@ -435,6 +444,7 @@ __all__ = [
     "PEBMPat",
     "PattMatchPayload",
     "PeFileCure",
+    "PeMainLocatorPayload",
     "PeStaticPayload",
     "RegKeyPayload",
     "RemovalPolicy",
@@ -498,6 +508,7 @@ __all__ = [
     "parse_pattmatch",
     "parse_pebmpat",
     "parse_pefile_cure",
+    "parse_pemain_locator",
     "parse_pestatic",
     "parse_regkey",
     "parse_removal_policy",
@@ -556,6 +567,7 @@ __all__ = [
     "render_pattmatch",
     "render_pebmpat",
     "render_pefile_cure",
+    "render_pemain_locator",
     "render_pestatic",
     "render_regkey",
     "render_removal_policy",
