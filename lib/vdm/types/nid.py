@@ -106,6 +106,13 @@ def render_nid(parsed: NidPayload) -> FormatResult:
         ("key_raw", parsed.key_raw.hex(" ")),
         ("selector", f"0x{parsed.selector:02x} ({selector_name})"),
     ]
+    if parsed.type_byte == SNID_TYPE:
+        fields.extend(
+            (
+                ("key_match", "exact 20-byte key; first DWORD indexed"),
+                ("selector_match", "exact byte"),
+            )
+        )
     if parsed.label is not None:
         fields.extend(
             (
@@ -113,6 +120,17 @@ def render_nid(parsed: NidPayload) -> FormatResult:
                 ("label_raw", parsed.label_raw.hex(" ") or "(empty)"),
             )
         )
+        if parsed.type_byte == SNID_TYPE:
+            fields.append(
+                (
+                    "label_role",
+                    (
+                        "record name; !# prefix routes to attribute aggregation"
+                        if parsed.label.startswith("!#")
+                        else "record name"
+                    ),
+                )
+            )
     if parsed.trailing_raw:
         fields.append(("trailing_raw", parsed.trailing_raw.hex(" ")))
     return FormatResult(
