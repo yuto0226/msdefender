@@ -56,6 +56,14 @@ from .common_code import SPEC as COMMON_CODE_SPEC
 from .common_code import CommonCodePayload, parse_common_code, render_common_code
 from .dbvar import DBVAR_TYPE, DbVarPayload, parse_dbvar, render_dbvar
 from .dbvar import SPEC as DBVAR_SPEC
+from .defaults import (
+    DEFAULTS_TYPE,
+    DefaultsPayload,
+    DefaultsSubrecord,
+    parse_defaults,
+    render_defaults,
+)
+from .defaults import SPEC as DEFAULTS_SPEC
 from .delta_blob_recinfo import (
     DELTA_BLOB_RECINFO_TYPE,
     DeltaBlobRecInfo,
@@ -354,6 +362,8 @@ __all__ = [
     "COMMON_CODE_SPEC",
     "DBVAR_SPEC",
     "DBVAR_TYPE",
+    "DEFAULTS_SPEC",
+    "DEFAULTS_TYPE",
     "DELTA_BLOB_RECINFO_SPEC",
     "DELTA_BLOB_RECINFO_TYPE",
     "EXPLICITRESOURCE_SPEC",
@@ -454,6 +464,8 @@ __all__ = [
     "CleanScriptPayload",
     "CommonCodePayload",
     "DbVarPayload",
+    "DefaultsPayload",
+    "DefaultsSubrecord",
     "DeltaBlobRecInfo",
     "DeltaBlobRecInfoEntry",
     "ExplicitResourcePayload",
@@ -532,6 +544,7 @@ __all__ = [
     "parse_cleanscript",
     "parse_common_code",
     "parse_dbvar",
+    "parse_defaults",
     "parse_delta_blob_recinfo",
     "parse_explicitresource",
     "parse_fop",
@@ -596,6 +609,7 @@ __all__ = [
     "render_cleanscript",
     "render_common_code",
     "render_dbvar",
+    "render_defaults",
     "render_delta_blob_recinfo",
     "render_explicitresource",
     "render_fop",
