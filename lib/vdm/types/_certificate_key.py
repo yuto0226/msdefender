@@ -49,12 +49,14 @@ def parse_certificate_key(key_data: bytes) -> CertificateKey:
                 key_type = candidate_type
                 break
 
-        text_raw = key_data
-        for offset in range(0, len(key_data) - 1, 2):
-            if key_data[offset : offset + 2] == b"\0\0":
-                text_raw = key_data[:offset]
-                terminator_raw = key_data[offset : offset + 2]
-                trailing_raw = key_data[offset + 2 :]
+        # The wide GetKey overload receives the material after a recognized
+        # prefix, not the complete key descriptor.
+        text_raw = material_raw
+        for offset in range(0, len(material_raw) - 1, 2):
+            if material_raw[offset : offset + 2] == b"\0\0":
+                text_raw = material_raw[:offset]
+                terminator_raw = material_raw[offset : offset + 2]
+                trailing_raw = material_raw[offset + 2 :]
                 break
         try:
             text = text_raw.decode("utf-16le")
