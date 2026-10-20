@@ -1,12 +1,48 @@
 """Parser and renderer for VERSIONCHECK (0x7A) payloads."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final
+from types import MappingProxyType
+from typing import Final, Literal
 
 from ..core import DisplaySection, FamilySpec, FormatResult
 
 VERSIONCHECK_TYPE: Final = 0x7A
 BASE_SIZE: Final = 8
+PredicateStatus = Literal["known", "partial", "unknown"]
+
+
+@dataclass(frozen=True, slots=True)
+class VersionCheckPredicate:
+    status: PredicateStatus
+    expression: str | None = None
+
+
+VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingProxyType(
+    {
+        0x00: VersionCheckPredicate("known", "always true; field_04 unused"),
+        0x31: VersionCheckPredicate("known", "bool(gktab+0xB43) == bool(field_04)"),
+        0x34: VersionCheckPredicate("known", "bool(gktab+0xB47) == bool(field_04)"),
+        0x3C: VersionCheckPredicate("known", "dword(gktab+0x15868) == field_04"),
+        0x3D: VersionCheckPredicate("known", "dword(gktab+0x1586C) == field_04"),
+        0x3E: VersionCheckPredicate("known", "dword(gktab+0x15870) == field_04"),
+        0x3F: VersionCheckPredicate("known", "dword(gktab+0x15874) == field_04"),
+        0x58: VersionCheckPredicate("known", "dword(gktab+0xB9C) > field_04"),
+        0x63: VersionCheckPredicate("known", "qword(gktab+0xBE0) > field_04"),
+        0x64: VersionCheckPredicate("known", "qword(gktab+0xBE0) < field_04"),
+        0x65: VersionCheckPredicate("known", "bool(gktab+0xB48) == bool(field_04)"),
+        0x66: VersionCheckPredicate("known", "dword(gktab+0x15884) == field_04"),
+        0x6A: VersionCheckPredicate(
+            "known", "high_dword(qword(gktab+0x15968)) < field_04"
+        ),
+        0x14: VersionCheckPredicate("known", "dword(gktab+0xB64) == field_04"),
+        0x27: VersionCheckPredicate("known", "dword(gktab+0xB90) > field_04"),
+        0x6F: VersionCheckPredicate("known", "qword(gktab+0x15968) > field_04"),
+        0x77: VersionCheckPredicate("partial"),
+        0x38: VersionCheckPredicate("partial"),
+        0x2C: VersionCheckPredicate("partial"),
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,16 +70,26 @@ def parse_versioncheck(payload: bytes) -> VersionCheckPayload:
 
 
 def render_versioncheck(parsed: VersionCheckPayload) -> FormatResult:
-    """Render confirmed DWORD ordering and conservative evaluator roles."""
+    """Render raw DWORDs with only engine-confirmed predicate details."""
+    predicate = VERSIONCHECK_PREDICATES.get(
+        parsed.field_00, VersionCheckPredicate("unknown")
+    )
+    condition = (
+        predicate.expression
+        if predicate.status == "known"
+        else (
+            "partial: see EvaluateVersioningOperator analysis"
+            if predicate.status == "partial"
+            else "unknown"
+        )
+    )
     sections = [
         DisplaySection(
             "Version Check",
             rows=(
-                (
-                    "field_00",
-                    f"0x{parsed.field_00:08x} (evaluator selector; mapping unresolved)",
-                ),
-                ("field_04", f"0x{parsed.field_04:08x} (selector-dependent operand)"),
+                ("field_00", f"0x{parsed.field_00:08x}"),
+                ("field_04", f"0x{parsed.field_04:08x}"),
+                ("condition", condition),
             ),
         )
     ]
