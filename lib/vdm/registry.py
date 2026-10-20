@@ -22,6 +22,7 @@ from .types.latent_threat import SPEC as LATENT_THREAT_SPEC
 from .types.lua_standalone import SPEC as LUASTANDALONE_SPEC
 from .types.macro_pcode import MACRO_PCODE_SPECS
 from .types.macro_source import SPEC as MACRO_SOURCE_SPEC
+from .types.magiccode import SPEC as MAGICCODE_SPEC
 from .types.nid import NID_SPECS
 from .types.nscript import NSCRIPT_SPECS
 from .types.pattmatch import SPEC as PATTMATCH_SPEC
@@ -68,6 +69,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             KPAT_SPEC,
             KPATEX_SPEC,
             IL2_PATTERN_SPEC,
+            MAGICCODE_SPEC,
             HOSTSENTRY_SPEC,
             PESTATIC_SPEC,
             PEBMPAT_SPEC,

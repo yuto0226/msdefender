@@ -108,6 +108,14 @@ from .macro_source import (
     render_macro_source,
 )
 from .macro_source import SPEC as MACRO_SOURCE_SPEC
+from .magiccode import (
+    SPEC as MAGICCODE_SPEC,
+)
+from .magiccode import (
+    MagicCodePayload,
+    parse_magiccode,
+    render_magiccode,
+)
 from .nid import NID64_TYPE, NID_SPECS, NidPayload, parse_nid, render_nid
 from .nscript import (
     NSCRIPT_SPECS,
@@ -235,6 +243,7 @@ __all__ = [
     "MACRO_PCODE_TYPE",
     "MACRO_SOURCE_SPEC",
     "MACRO_SOURCE_TYPE",
+    "MAGICCODE_SPEC",
     "MAGIC_THREAT_IDS",
     "NID64_TYPE",
     "NID_SPECS",
@@ -283,6 +292,7 @@ __all__ = [
     "LuaStandalonePayload",
     "MacroPcodePayload",
     "MacroSourcePayload",
+    "MagicCodePayload",
     "NScriptBrutePayload",
     "NScriptCurePayload",
     "NScriptPayload",
@@ -329,6 +339,7 @@ __all__ = [
     "parse_macro_pcode",
     "parse_macro_pcode64",
     "parse_macro_source",
+    "parse_magiccode",
     "parse_nid",
     "parse_nscript",
     "parse_nscript_brute",
@@ -370,6 +381,7 @@ __all__ = [
     "render_lua_standalone",
     "render_macro_pcode",
     "render_macro_source",
+    "render_magiccode",
     "render_nid",
     "render_nscript",
     "render_nscript_brute",
