@@ -32,6 +32,7 @@ from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
 from .types.trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
+from .types.vdll_code import FAMILY_SPECS as VDLL_CODE_SPECS
 from .types.vdll_meta import FAMILY_SPECS as VDLL_META_SPECS
 from .types.versioncheck import SPEC as VERSIONCHECK_SPEC
 from .types.vreg import SPEC as VREG_SPEC
@@ -74,6 +75,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             *NID_SPECS,
             *NSCRIPT_SPECS,
             *VDLL_META_SPECS,
+            *VDLL_CODE_SPECS,
         )
     }
 )
