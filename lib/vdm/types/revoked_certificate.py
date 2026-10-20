@@ -6,7 +6,15 @@ from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Final, Literal
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 from ..recid import RecIdTail, parse_recid_tail
 from ._certificate_key import parse_certificate_key
 
@@ -206,9 +214,175 @@ def render_revoked_certificate(parsed: RevokedCertificate) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
+def export_revoked_certificate_semantics(
+    parsed: RevokedCertificate,
+) -> RuleSemantics:
+    """Export only byte spans whose boundaries are established by this parser.
+
+    The receiver, certificate lookup, and time/flag gate are confirmed for this
+    engine profile. Portable data contains raw framing; behavior is separate.
+    """
+    key_start = 2
+    key_end = key_start + parsed.key_len
+    trailer_end = key_end + POLICY_TRAILER_SIZE
+    spans = (
+        ("key_len", 0, 2),
+        ("key_data", key_start, parsed.key_len),
+        ("policy_trailer", key_end, POLICY_TRAILER_SIZE),
+        ("recid_tail", trailer_end, len(parsed.recid_tail_raw)),
+    )
+    unsupported_reasons: list[SemanticIssue] = []
+    if parsed.recid_tail_raw:
+        unsupported_reasons.append(
+            SemanticIssue(
+                "recid_tail_semantics_unconfirmed",
+                "The trailing RecID bytes are preserved, but their gate and "
+                "effect are not confirmed for REVOKED_CERTIFICATE.",
+                (("length", len(parsed.recid_tail_raw)),),
+            )
+        )
+    if parsed.unknown_flag_bits:
+        unsupported_reasons.append(
+            SemanticIssue(
+                "unknown_revoke_flags",
+                "At least one policy trailer flag has no confirmed meaning.",
+                (("unknown_bits", parsed.unknown_flag_bits),),
+            )
+        )
+    if parsed.key_type not in _KEY_TYPES:
+        unsupported_reasons.append(
+            SemanticIssue(
+                "unknown_key_type",
+                "The key type byte is preserved, but its lookup meaning is unknown.",
+                (("key_type", parsed.key_type),),
+            )
+        )
+    elif parsed.key_type == 4:
+        unsupported_reasons.append(
+            SemanticIssue(
+                "key_type_not_used_by_confirmed_consumer",
+                "The loader recognizes BADHASH, but IsRevokedCert does not query "
+                "key type 4 in the confirmed certificate lookup path.",
+                (("key_type", parsed.key_type),),
+            )
+        )
+    if parsed.mode == "string" and not parsed.terminator_raw:
+        unsupported_reasons.append(
+            SemanticIssue(
+                "unterminated_engine_string",
+                "The engine receiver reads wide key strings without a key_len "
+                "bound; this record has no NUL terminator inside key_data.",
+            )
+        )
+    if parsed.decode_error is not None:
+        unsupported_reasons.append(
+            SemanticIssue(
+                "invalid_utf16le_key",
+                "The string-like key bytes cannot be decoded as UTF-16LE; "
+                "the raw key remains available.",
+            )
+        )
+
+    issues = list(unsupported_reasons)
+    return RuleSemantics(
+        status="unsupported" if unsupported_reasons else "confirmed_subset",
+        representation="revoked_certificate.raw_spans.ir.v1",
+        data=JSONObject(
+            (
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "framing",
+                    JSONArray(
+                        tuple(
+                            JSONObject(
+                                (
+                                    ("kind", name),
+                                    ("offset", offset),
+                                    ("length", length),
+                                    (
+                                        "raw_hex",
+                                        parsed.raw[offset : offset + length].hex(),
+                                    ),
+                                )
+                            )
+                            for name, offset, length in spans
+                        )
+                    ),
+                ),
+                (
+                    "engine_profile_semantics",
+                    JSONObject(
+                        (
+                            ("profile", "mpengine-1.443.903.0"),
+                            ("signature_type", REVOKED_CERTIFICATE_TYPE),
+                            ("lookup_key_type", parsed.key_type),
+                            (
+                                "lookup_match",
+                                "any matching certificate key query",
+                            ),
+                            (
+                                "minimum_signing_filetime",
+                                parsed.filetime,
+                            ),
+                            (
+                                "do_not_report_before_minimum_time",
+                                parsed.filetime != 0,
+                            ),
+                            (
+                                "skip_signed_file_gate",
+                                parsed.skips_signed_file_gate,
+                            ),
+                            (
+                                "runtime_result",
+                                "match_subject_to_time_and_signed_file_gates",
+                            ),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "local REVOKED_CERTIFICATE parser bounds key_len and the 12-byte trailer",
+            (
+                "mpengine 1.443.903.0 getsigtype at 0x180468C40 maps 0x6C to "
+                "SIGNATURE_TYPE_REVOKED_CERTIFICATE"
+            ),
+            ("mpengine 1.443.903.0 revokedcert_t subtype Register is at 0x1805DF5F0"),
+            (
+                "mpengine 1.443.903.0 revokedcert_t::Load at 0x180320808 reads "
+                "key_data, FILETIME, flags, and optional RecID"
+            ),
+            (
+                "mpengine 1.443.903.0 IsRevokedCert at 0x1802D816C queries "
+                "certificate keys 3, 2, 1, and 5 against the revoked store"
+            ),
+            (
+                "mpengine 1.443.903.0 ShouldReport at 0x18057971C enforces "
+                "the FILETIME lower bound and signed-file flag-bit-0 gate"
+            ),
+            (
+                "mpengine 1.443.903.0 ScanCertificate at 0x1802952B0 supplies "
+                "certificate identity and signing FILETIME to the store lookup"
+            ),
+            (
+                "mpengine 1.443.903.0 IsTrustedFile at 0x1802D8950 references "
+                "IsRevokedCert and AddMpAttributes; AddMpAttributes maps its revoked "
+                "result input to MpTrustCheck_RevokedCert"
+            ),
+            (
+                "mpas.sig corpus has 52,815 records with type 0x6C; key types "
+                "1, 2, 3, and 5 are observed"
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
     REVOKED_CERTIFICATE_TYPE,
     "REVOKED_CERTIFICATE",
     parse_revoked_certificate,
     render_revoked_certificate,
+    semantic_exporter=export_revoked_certificate_semantics,
 )

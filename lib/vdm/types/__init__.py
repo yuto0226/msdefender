@@ -264,6 +264,7 @@ from .removal_policy import (
 from .revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
 from .revoked_certificate import (
     RevokedCertificate,
+    export_revoked_certificate_semantics,
     parse_revoked_certificate,
     render_revoked_certificate,
 )
@@ -588,6 +589,7 @@ __all__ = [
     "VregPayload",
     "compute_delta_blob_output_crc32",
     "export_aggregator_semantics",
+    "export_revoked_certificate_semantics",
     "interpret_aggregator",
     "parse_aggregator",
     "parse_appmap",
