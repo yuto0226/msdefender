@@ -175,13 +175,36 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         ("primary_request_start", "scan_va - prefix"),
                         ("bm_match_length_argument", 2048),
                         ("bm_match_start_argument", "mapped_pointer + prefix"),
-                        ("bm_start_argument_interpretation", None),
+                        (
+                            "bm_start_argument_interpretation",
+                            "offset within the mapped PEMapper subject; backing file/RVA coordinate unknown",
+                        ),
+                        ("translation", "identity"),
+                        ("translation_symbol", "BM_MAP_ALL"),
+                        (
+                            "bm_match_flags",
+                            "(2 * !trie_flags_bit1) | 1",
+                        ),
+                        ("match_offset_outputs_requested", False),
                         (
                             "fallback_requests",
                             "(scan_va, 2048), then (scan_va, 1); the fallback uses the mapped length",
                         ),
                         ("runtime_bytes_observed", False),
                         ("file_or_rva_translation", None),
+                    )
+                ),
+            ),
+            (
+                "candidate_pipeline",
+                JSONObject(
+                    (
+                        (
+                            "matcher_stage",
+                            "trie prefix candidate -> BMMatchPEMapper -> P-code validation",
+                        ),
+                        ("pcode_context", "trie_flags_bit0 selects context 1 or 2"),
+                        ("final_verdict", None),
                     )
                 ),
             ),
@@ -192,13 +215,16 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         status=(
             "ignored" if parsed.receiver_result.startswith("no_op.") else "unsupported"
         ),
-        representation="pebmpat.pattern.ir.v1",
+        representation="pebmpat.pattern.ir.v2",
         data=data,
         evidence=(
             (
                 "PEBMPatScanner::AddNewPattern framing and BMGetPatternFlags "
                 "validation for mpengine 1.443.903.0"
             ),
+            "PEBMPatScanner::ScanEx @ 0x1803D5A5C",
+            "BMMatchPEMapper @ 0x1803D5E44",
+            "BMMatchEx2 @ 0x1800EC420",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
