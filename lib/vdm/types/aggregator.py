@@ -91,6 +91,30 @@ class _AggregatorParseError(Exception):
         self.issue = AggregatorSemanticIssue(code, offset, message)
 
 
+def _strip_literal_parentheses(source: bytes) -> bytes:
+    """Apply AddSignature's confirmed innermost literal-group rewrite."""
+    normalized = source
+    while True:
+        stack: list[int] = []
+        changed = False
+        for closing, byte in enumerate(normalized):
+            if byte == ord("("):
+                stack.append(closing)
+            elif byte == ord(")"):
+                if not stack:
+                    return normalized
+                opening = stack.pop()
+                inner = normalized[opening + 1 : closing]
+                if b"&" not in inner and b"|" not in inner:
+                    normalized = (
+                        normalized[:opening] + inner + normalized[closing + 1 :]
+                    )
+                    changed = True
+                    break
+        if not changed:
+            return normalized
+
+
 def interpret_aggregator(parsed: AggregatorPayload) -> AggregatorCondition:
     """Decode the verified expression grammar without changing wire parsing."""
     if parsed.decoded_sig_data is None:
@@ -113,6 +137,14 @@ def interpret_aggregator(parsed: AggregatorPayload) -> AggregatorCondition:
     if not source:
         return AggregatorCondition(
             None, AggregatorSemanticIssue("empty_expression", 0, "expression is empty")
+        )
+    source = _strip_literal_parentheses(source)
+    if not source:
+        return AggregatorCondition(
+            None,
+            AggregatorSemanticIssue(
+                "empty_expression", 0, "expression is empty after parenthesis rewrite"
+            ),
         )
 
     # The engine's operators share precedence and fold left-to-right. Building
