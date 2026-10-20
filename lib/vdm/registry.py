@@ -18,6 +18,7 @@ from .types.delta_blob_recinfo import SPEC as DELTA_BLOB_RECINFO_SPEC
 from .types.fop import FOP_SPECS
 from .types.fpath import FPATH_SPECS
 from .types.friendlyfile import SPEC as FRIENDLYFILE_SHA256_SPEC
+from .types.gensfx import SPEC as GENSFX_SPEC
 from .types.hostsentry import SPEC as HOSTSENTRY_SPEC
 from .types.hstr import HSTR_SPECS
 from .types.il2_pattern import SPEC as IL2_PATTERN_SPEC
@@ -80,6 +81,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             BRUTE_SPEC,
             *CK_SPECS,
             FRIENDLYFILE_SHA256_SPEC,
+            GENSFX_SPEC,
             SIGTREE_BM_SPEC,
             STATIC_SPEC,
             KCRCE_SPEC,

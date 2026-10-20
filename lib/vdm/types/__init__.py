@@ -81,6 +81,8 @@ from .friendlyfile import (
     parse_friendlyfile_sha256,
     render_friendlyfile_sha256,
 )
+from .gensfx import GENSFX_TYPE, GenSfxPayload, parse_gensfx, render_gensfx
+from .gensfx import SPEC as GENSFX_SPEC
 from .hostsentry import (
     HOSTSENTRY_TYPE,
     HostsentryPayload,
@@ -298,6 +300,8 @@ __all__ = [
     "FOP_TYPES",
     "FPATH_SPECS",
     "FPATH_TYPES",
+    "GENSFX_SPEC",
+    "GENSFX_TYPE",
     "HOSTSENTRY_TYPE",
     "HSTR_SPECS",
     "IL2_PATTERN_SPEC",
@@ -373,6 +377,7 @@ __all__ = [
     "FopPayload",
     "FpathPayload",
     "FriendlyFileSha256",
+    "GenSfxPayload",
     "HostsentryPayload",
     "HstrFlags",
     "HstrPayload",
@@ -432,6 +437,7 @@ __all__ = [
     "parse_fop",
     "parse_fpath",
     "parse_friendlyfile_sha256",
+    "parse_gensfx",
     "parse_hostsentry",
     "parse_hstr",
     "parse_il2_pattern",
@@ -485,6 +491,7 @@ __all__ = [
     "render_fop",
     "render_fpath",
     "render_friendlyfile_sha256",
+    "render_gensfx",
     "render_hostsentry",
     "render_hstr",
     "render_il2_pattern",
