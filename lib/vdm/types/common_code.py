@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 COMMON_CODE_TYPE: Final = 0xAF
 HEADER_SIZE: Final = 4
@@ -98,9 +105,66 @@ def render_common_code(parsed: CommonCodePayload) -> FormatResult:
     return FormatResult(sections=sections)
 
 
+def export_common_code_semantics(parsed: CommonCodePayload) -> RuleSemantics:
+    """Export receiver framing and lookup routing while keeping code opaque."""
+    mode = parsed.lookup_mode
+    unresolved_bits = parsed.flags & ~FLAGS_LOOKUP_MASK
+    issues = [
+        SemanticIssue(
+            "common_code_body_format_unknown",
+            "The code body is passed to GlobalBlocksInfo as bytes, but its "
+            "internal format and execution semantics are not confirmed.",
+        )
+    ]
+    if unresolved_bits:
+        issues.append(
+            SemanticIssue(
+                "common_code_other_flags_unknown",
+                "Flag bits outside the low two bits have no confirmed meaning.",
+                (("unresolved_bits", unresolved_bits),),
+            )
+        )
+    return RuleSemantics(
+        status="observed_only" if mode is not None else "ignored",
+        representation="common_code.receiver-observation.ir.v1",
+        data=JSONObject(
+            (
+                ("type", "COMMON_CODE"),
+                ("raw_hex", parsed.raw.hex()),
+                ("receiver_framing", "u16le flags, u16le code_size, code bytes"),
+                ("payload_length", HEADER_SIZE + parsed.code_size),
+                ("flags", parsed.flags),
+                ("lookup_flag_bits", parsed.flags & FLAGS_LOOKUP_MASK),
+                (
+                    "global_blocks_lookup",
+                    JSONObject(
+                        (
+                            ("disposition", "lookup" if mode is not None else "skip"),
+                            ("mode", mode),
+                        )
+                    ),
+                ),
+                ("code_size", parsed.code_size),
+                ("code_body_raw_hex", parsed.body_raw.hex()),
+                ("code_body_semantics", "opaque; internal format unconfirmed"),
+            )
+        ),
+        evidence=(
+            "ccode_receiver requires payload length == 4 + code_size",
+            "ccode_receiver accepts code_size from 1 through 256 bytes",
+            "GBB_load_ccode maps low flag bits 0/1 to lookup mode 1/2",
+            "GBB_load_ccode skips lookup when low flag bits are 2 or 3",
+            "GBB_load_ccode passes the body as a byte span to GlobalBlocksInfo",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
     COMMON_CODE_TYPE,
     "COMMON_CODE",
     parse_common_code,
     render_common_code,
+    semantic_exporter=export_common_code_semantics,
 )
