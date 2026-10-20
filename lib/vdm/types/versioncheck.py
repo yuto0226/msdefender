@@ -369,9 +369,9 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
         ),
         0x36: VersionCheckPredicate("partial"),
         0x37: VersionCheckPredicate(
-            "partial",
-            "state-gated CRCLowerStringW path; complete selector-dependent gate unresolved",
-            "field_04 high byte seeds CRC; low 24 bits derive a floating threshold divided by 1000",
+            "known",
+            "byte(gktab+0xBD9) == 0 and qword(gktab+0x158A8) != 0 and byte(gktab+0xB38) == 0 and float(CRCLowerStringW(field_04 >> 24, qword(gktab+0x158A8))) < float(((field_04 & 0xFFFFFF) / 1000.0) * 42000000.0)",
+            "high byte is the CRC seed; low 24 bits derive an unsigned floating threshold",
         ),
         0x4C: VersionCheckPredicate(
             "known", "dword(gktab+0xB80) != field_04", "full uint32_t inequality"
