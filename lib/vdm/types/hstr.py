@@ -12,7 +12,13 @@ from ..bm import (
     render_printable_bytes_preview,
 )
 from ..bm_semantic import serialize_bm_pattern
-from ..bm_yara import BmYaraRender, render_bm_yara
+from ..bm_yara import (
+    BmMatchContext,
+    BmRenderIssue,
+    BmYaraFidelity,
+    BmYaraRender,
+    render_bm_yara,
+)
 from ..condition import (
     Atom,
     Expr,
@@ -563,13 +569,68 @@ def parse_hstr(payload: bytes, *, type_byte: int) -> HstrPayload:
     )
 
 
+def _hstr_bm_runtime_context(
+    subsig: HstrSubsignature, pattern: BmPattern
+) -> tuple[JSONObject, BmMatchContext | None, bool]:
+    """Derive BM worker facts from an explicitly selected HSTR BM subsig."""
+    assert subsig.flags is not None
+    flags = subsig.flags.value
+    identity = bool(flags & 0x0001)
+    translation = bytes(
+        byte + 0x20 if 0x41 <= byte <= 0x5A else byte for byte in range(256)
+    )
+    if identity:
+        translation = bytes(range(256))
+    capture_opcode_present = any(token.raw_id == 0x1B for token in pattern.tokens)
+    worker_mode = ((flags >> 6) & 2) | 1
+    display = JSONObject(
+        (
+            ("reader_kind", "BUFFER"),
+            ("translation", "identity" if identity else "ascii_lowercase"),
+            ("worker_mode", worker_mode),
+            ("offsets_argument_present", False),
+            ("capture_opcode_present", capture_opcode_present),
+        )
+    )
+    match_context = (
+        BmMatchContext(
+            reader_kind="BUFFER",
+            translation=translation,
+            worker_mode=worker_mode,
+            capture_enabled=False,
+        )
+        if identity and not capture_opcode_present
+        else None
+    )
+    return display, match_context, identity
+
+
+def _render_hstr_bm_yara(
+    subsig: HstrSubsignature, pattern: BmPattern
+) -> tuple[BmYaraRender, JSONObject]:
+    runtime_context, match_context, identity = _hstr_bm_runtime_context(subsig, pattern)
+    rendered = render_bm_yara(pattern, context=match_context)
+    if not identity:
+        rendered = BmYaraRender(
+            body=None,
+            fidelity=BmYaraFidelity.UNSUPPORTED,
+            diagnostics=(
+                *rendered.diagnostics,
+                BmRenderIssue("bm_nonidentity_translation", 0),
+            ),
+            requirements=rendered.requirements,
+            printable_preview=rendered.printable_preview,
+        )
+    return rendered, runtime_context
+
+
 def _render_hstr_subsignature_display(
     subsig: HstrSubsignature, meaning: HstrSubsignatureMeaning
 ) -> tuple[str, BmPattern | None, BmYaraRender | None, str | None, tuple[str, ...]]:
     """Present wire bytes consistently; modifiers require confirmed semantics."""
     if meaning.kind == "BM_PATTERN":
         pattern = decode_bm_pattern(subsig.data)
-        rendered = render_bm_yara(pattern)
+        rendered, _ = _render_hstr_bm_yara(subsig, pattern)
         display = rendered.body or (
             "unsupported ("
             + ", ".join(issue.code for issue in rendered.diagnostics)
@@ -807,6 +868,8 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         data_offset = flags_offset + flags_length
         meaning = classify_hstr_subsignature(subsig)
         pattern_data = None
+        bm_runtime_context = None
+        bm_yara_data = None
 
         if meaning.unknown_flag_bits:
             unsupported = True
@@ -852,7 +915,29 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         if subsig.flags is not None and subsig.flags.value & 0x0002:
             pattern = decode_bm_pattern(subsig.data)
             pattern_data, pattern_issues = serialize_bm_pattern(pattern)
-            bm_render = render_bm_yara(pattern)
+            bm_render, bm_runtime_context = _render_hstr_bm_yara(subsig, pattern)
+            bm_yara_data = JSONObject(
+                (
+                    ("fidelity", bm_render.fidelity.value),
+                    ("body", bm_render.body),
+                    ("requirements", JSONArray(bm_render.requirements)),
+                    (
+                        "diagnostics",
+                        JSONArray(
+                            tuple(
+                                JSONObject(
+                                    (
+                                        ("code", diagnostic.code),
+                                        ("offset", diagnostic.offset),
+                                        ("raw_id", diagnostic.raw_id),
+                                    )
+                                )
+                                for diagnostic in bm_render.diagnostics
+                            )
+                        ),
+                    ),
+                )
+            )
             unsupported |= bool(pattern_issues)
             for issue in pattern_issues:
                 issues.append(
@@ -862,12 +947,16 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                         (("subsignature_index", index), *issue.details),
                     )
                 )
+            unsupported_render_diagnostic = any(
+                diagnostic.code != "bm_nonidentity_translation"
+                for diagnostic in bm_render.diagnostics
+            )
             if (
                 any(
                     isinstance(operation, BmOpaque)
                     for operation in interpret_bm_pattern(pattern).operations
                 )
-                or bm_render.fidelity.value == "unsupported"
+                or unsupported_render_diagnostic
             ):
                 unsupported = True
                 issues.append(
@@ -877,15 +966,21 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                         (("subsignature_index", index),),
                     )
                 )
-            elif bm_render.fidelity.value != "exact" or bm_render.requirements:
+            if not (subsig.flags.value & 0x0001):
+                unsupported = True
+                issues.append(
+                    SemanticIssue(
+                        "bm_nonidentity_translation",
+                        "The HSTR BM caller applies an ASCII lowercase translation map.",
+                        (("subsignature_index", index),),
+                    )
+                )
+            elif bm_render.fidelity.value == "conditional" or bm_render.requirements:
                 unsupported = True
                 issues.append(
                     SemanticIssue(
                         "bm_match_context_unconfirmed",
-                        (
-                            "BM lowering requires matcher context not supplied "
-                            "by this family export."
-                        ),
+                        "BM lowering still requires matcher context not established by this export.",
                         (("subsignature_index", index),),
                     )
                 )
@@ -978,6 +1073,8 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     ("matching", meaning.matching),
                     ("data_shape", meaning.display_encoding),
                     ("bm_pattern", pattern_data),
+                    ("bm_runtime_context", bm_runtime_context),
+                    ("bm_yara", bm_yara_data),
                 )
             )
         )
@@ -1042,7 +1139,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v2",
+        representation="hstr.matcher-subset.ir.v3",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
