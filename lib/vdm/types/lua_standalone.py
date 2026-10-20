@@ -188,7 +188,14 @@ def _parse_metadata(
 
     while offset < len(data):
         key_end = data.find(b"\0", offset)
-        if key_end < 0 or key_end == len(data) - 1:
+        if key_end < 0:
+            break
+        if key_end == len(data) - 1:
+            if key_end == offset:
+                # AddScript treats a terminal empty key as the end of metadata.
+                # Consume that byte; it is not an unparsed metadata field.
+                offset = key_end + 1
+            # A non-empty key with no following value remains unparsed raw.
             break
 
         value_offset = key_end + 1
