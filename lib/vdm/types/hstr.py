@@ -64,7 +64,6 @@ class HstrSubsignatureMeaning:
     display_text: str | None
     flag_names: tuple[str, ...]
     unknown_flag_bits: int
-    tag_int16: int
     score_add: int | None
 
 
@@ -140,7 +139,6 @@ def classify_hstr_subsignature(subsig: HstrSubsignature) -> HstrSubsignatureMean
     else:
         kind = "BINARY" if encoding == "HEX" else "LITERAL"
         matching = "BYTE_EXACT" if flags & 0x0001 else "ASCII_FOLD_AZ"
-    signed = subsig.tag - 0x10000 if subsig.tag & 0x8000 else subsig.tag
     return HstrSubsignatureMeaning(
         kind=kind,
         matching=matching,
@@ -148,10 +146,9 @@ def classify_hstr_subsignature(subsig: HstrSubsignature) -> HstrSubsignatureMean
         display_text=text,
         flag_names=names,
         unknown_flag_bits=unknown,
-        tag_int16=signed,
-        # The confirmed add path supports positive weights; a signed view alone
-        # does not establish a negative-score effect for high-bit wire values.
-        score_add=subsig.tag if signed >= 0 else None,
+        # The engine adds the raw WORD modulo 2^16 and interprets only the final
+        # aggregate as signed. Keep high-bit words out of the monotone AST.
+        score_add=subsig.tag if subsig.tag < 0x8000 else None,
     )
 
 
@@ -602,7 +599,7 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
         tag_note = (
             f"score +{meaning.score_add}"
             if meaning.score_add is not None
-            else f"int16 {meaning.tag_int16}"
+            else f"score +0x{subsig.tag:04X} modulo 2^16"
         )
         if subsig.flags is None:
             flags_text = "NOT_PRESENT"
