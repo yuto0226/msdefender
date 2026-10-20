@@ -41,6 +41,8 @@ def parse_kvir32(payload: bytes) -> Kvir32Payload:
     if declared_size == 0:
         raise ValueError("invalid KVIR32 extension size 0")
 
+    # In the observed corpus profile, declared_size counts the bytes after
+    # the size byte, including the 0x21 marker. This is not an engine rule.
     expected_size = declared_size + 1
     if len(remainder) != expected_size:
         raise ValueError(
