@@ -112,8 +112,9 @@ def export_common_code_semantics(parsed: CommonCodePayload) -> RuleSemantics:
     issues = [
         SemanticIssue(
             "common_code_body_format_unknown",
-            "The code body is passed to GlobalBlocksInfo as bytes, but its "
-            "internal format and execution semantics are not confirmed.",
+            "Only receiver framing and GlobalBlocksInfo lookup routing are "
+            "confirmed. The body format, execution, matching, and final "
+            "verdict semantics remain unknown.",
         )
     ]
     if unresolved_bits:
@@ -125,11 +126,15 @@ def export_common_code_semantics(parsed: CommonCodePayload) -> RuleSemantics:
             )
         )
     return RuleSemantics(
-        status="observed_only" if mode is not None else "ignored",
-        representation="common_code.receiver-observation.ir.v1",
+        status="confirmed_subset" if mode is not None else "ignored",
+        representation="common_code.receiver-routing.ir.v1",
         data=JSONObject(
             (
                 ("type", "COMMON_CODE"),
+                (
+                    "semantic_scope",
+                    "receiver_framing_and_global_blocks_lookup_routing_only",
+                ),
                 ("raw_hex", parsed.raw.hex()),
                 ("receiver_framing", "u16le flags, u16le code_size, code bytes"),
                 ("payload_length", HEADER_SIZE + parsed.code_size),
@@ -146,7 +151,10 @@ def export_common_code_semantics(parsed: CommonCodePayload) -> RuleSemantics:
                 ),
                 ("code_size", parsed.code_size),
                 ("code_body_raw_hex", parsed.body_raw.hex()),
-                ("code_body_semantics", "opaque; internal format unconfirmed"),
+                (
+                    "code_body_semantics",
+                    "opaque; execution, matching, and verdict unknown",
+                ),
             )
         ),
         evidence=(
