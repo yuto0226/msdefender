@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 DBVAR_TYPE: Final = 0x5B
 _VALUE_PREVIEW_SIZE: Final = 32
@@ -84,4 +91,115 @@ def render_dbvar(parsed: DbVarPayload) -> FormatResult:
     return FormatResult(sections=sections)
 
 
-SPEC = FamilySpec(DBVAR_TYPE, "DBVAR", parse_dbvar, render_dbvar)
+def export_dbvar_semantics(parsed: DbVarPayload) -> RuleSemantics:
+    """Export the confirmed receiver lookup/update behavior for DBVAR."""
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="dbvar.named_raw_value.v1",
+        data=JSONObject(
+            (
+                ("type", "dbvar"),
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "name",
+                    JSONObject(
+                        (
+                            ("length", parsed.name_len),
+                            ("raw_hex", parsed.name_raw.hex()),
+                        )
+                    ),
+                ),
+                (
+                    "lookup",
+                    JSONObject(
+                        (
+                            ("requires_equal_byte_length", True),
+                            ("comparison", "ascii_case_insensitive"),
+                            ("non_ascii_bytes", "exact_byte_compare"),
+                        )
+                    ),
+                ),
+                (
+                    "declared_value",
+                    JSONObject(
+                        (
+                            ("length", parsed.value_len),
+                            ("raw_hex", parsed.value_raw.hex()),
+                            ("semantics", "unknown"),
+                        )
+                    ),
+                ),
+                (
+                    "receiver",
+                    JSONObject(
+                        (
+                            (
+                                "unknown_name",
+                                JSONObject(
+                                    (
+                                        ("result", "success"),
+                                        ("value_length_validated", False),
+                                    )
+                                ),
+                            ),
+                            (
+                                "existing_nonempty_storage",
+                                JSONObject(
+                                    (
+                                        ("result", "success"),
+                                        ("overwrite", False),
+                                        ("value_length_validated", False),
+                                    )
+                                ),
+                            ),
+                            (
+                                "matching_empty_storage",
+                                JSONObject(
+                                    (
+                                        ("value_length_validated", True),
+                                        (
+                                            "copy_data_input",
+                                            "declared_value.raw_hex",
+                                        ),
+                                        (
+                                            "copy_data_success",
+                                            "replaces_data_pointer_and_size",
+                                        ),
+                                        ("copy_data_success_result", 0),
+                                        ("copy_data_allocation_failure", 0x8007),
+                                        ("copy_data_error", "propagated"),
+                                        ("trailing_bytes", "ignored"),
+                                    )
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                ("trailing_hex", parsed.trailing.hex()),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 ReceiveDatabaseVar",
+            "mpengine 1.443.903.0 DBVarEntry::CopyData",
+            "mpas.sig corpus: 2,190 DBVAR records across 497 names",
+            "mpas.sig corpus: declared lengths match payloads; no trailing bytes",
+            "mpav.sig corpus: no DBVAR records",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "dbvar_consumer_semantics_unknown",
+                "The raw value is stored as bytes, but the purpose and meaning "
+                "of each named database variable are not established.",
+            ),
+        ),
+    )
+
+
+SPEC = FamilySpec(
+    DBVAR_TYPE,
+    "DBVAR",
+    parse_dbvar,
+    render_dbvar,
+    semantic_exporter=export_dbvar_semantics,
+)
