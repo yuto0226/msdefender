@@ -168,6 +168,18 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "full uint32_t value",
             "set staging_uuid_b[4:8] = field_04",
         ),
+        0x97: VersionCheckPredicate(
+            "known",
+            "always true",
+            "full uint32_t value",
+            "set staging_uuid_b[8:12] = field_04",
+        ),
+        0x98: VersionCheckPredicate(
+            "known",
+            "qword(gktab+0x15878) != qword(staging_uuid_b[0:8]) or qword(gktab+0x15880) != qword(staging_uuid_b[8:16]) or qword(gktab+0x15900) == 0",
+            "full uint32_t value",
+            "set staging_uuid_b[12:16] = field_04; format staged UUID only on false result",
+        ),
         0x13: VersionCheckPredicate(
             "known",
             "dword(gktab+0xB64) <= field_04",
