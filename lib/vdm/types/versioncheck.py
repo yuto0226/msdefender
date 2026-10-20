@@ -180,6 +180,12 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "full uint32_t value",
             "set staging_uuid_b[12:16] = field_04; format staged UUID only on false result",
         ),
+        0xB3: VersionCheckPredicate(
+            "known", "dword(gktab+0x15888) == field_04", "full uint32_t equality"
+        ),
+        0xB4: VersionCheckPredicate(
+            "known", "dword(gktab+0x1588C) == field_04", "full uint32_t equality"
+        ),
         0x13: VersionCheckPredicate(
             "known",
             "dword(gktab+0xB64) <= field_04",
