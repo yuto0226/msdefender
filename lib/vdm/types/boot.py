@@ -25,7 +25,7 @@ class BootPayload:
     raw: bytes
     variant: Literal["current", "legacy_opaque"]
     receiver_acceptance: Literal[
-        "accepted_by_current_template", "unaccepted_by_current_template"
+        "accepted_by_current_template", "rejected_by_current_template"
     ]
     identity_raw: bytes | None
     identity: str | None
@@ -52,7 +52,7 @@ def parse_boot(payload: bytes) -> BootPayload:
         return BootPayload(
             raw=payload,
             variant="legacy_opaque",
-            receiver_acceptance="unaccepted_by_current_template",
+            receiver_acceptance="rejected_by_current_template",
             identity_raw=None,
             identity=None,
             descriptor_raw=None,
@@ -135,7 +135,10 @@ def render_boot(parsed: BootPayload) -> FormatResult:
         rows.extend(
             (
                 ("raw_preview", _preview(parsed.raw)),
-                ("interpretation", "unaccepted by current template; preserved opaque"),
+                (
+                    "interpretation",
+                    "current template rejects with 0xA004; preserved opaque",
+                ),
             )
         )
         return FormatResult(sections=(DisplaySection("BOOT", rows=tuple(rows)),))
@@ -365,7 +368,20 @@ def export_boot_semantics(parsed: BootPayload) -> RuleSemantics:
         issues.append(
             SemanticIssue(
                 "legacy_shape_unrecognized",
-                "The payload does not contain a complete current BOOT descriptor.",
+                "The observed legacy shape is opaque; do not infer legacy fields.",
+            )
+        )
+        issues.append(
+            SemanticIssue(
+                "current_template_rejects_shape",
+                "mpengine 1.443.903.0 ReceiveNewTemplate returns 0xA004 for this "
+                "missing-NUL or short-descriptor shape; DispatchRecords propagates "
+                "the error and DispatchRecord has no receiver fallback.",
+                (
+                    ("current_template_error_code", 40964),
+                    ("current_template_error_hex", "0xA004"),
+                    ("dispatch_fallback", False),
+                ),
             )
         )
 
@@ -381,6 +397,16 @@ def export_boot_semantics(parsed: BootPayload) -> RuleSemantics:
                     parsed.identity_raw.hex()
                     if parsed.identity_raw is not None
                     else None,
+                ),
+                (
+                    "current_template_shape_disposition",
+                    "rejected_with_0xA004"
+                    if parsed.variant == "legacy_opaque"
+                    else "matches_current_template_shape",
+                ),
+                (
+                    "current_template_error_code",
+                    40964 if parsed.variant == "legacy_opaque" else None,
                 ),
                 ("selector_domain", parsed.selector_domain),
                 ("rule", rule),
