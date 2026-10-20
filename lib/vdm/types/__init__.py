@@ -4,6 +4,15 @@ from .aggregator import (
     parse_aggregator,
     render_aggregator,
 )
+from .appmap import (
+    APPMAP_SPEC,
+    APPMAP_TYPE,
+    AppMapPayload,
+    AppMapSection,
+    AppMapTerminator,
+    parse_appmap,
+    render_appmap,
+)
 from .bm_env_var_map import (
     BM_ENV_VAR_MAP_TYPE,
     BMEnvVarMap,
@@ -248,6 +257,8 @@ from .vreg import VREG_TYPE, VregPayload, parse_vreg, render_vreg
 
 __all__ = [
     "AGGREGATOR_SPECS",
+    "APPMAP_SPEC",
+    "APPMAP_TYPE",
     "BM_ENV_VAR_MAP_SPEC",
     "BM_ENV_VAR_MAP_TYPE",
     "BOOT_SPEC",
@@ -323,6 +334,9 @@ __all__ = [
     "VREG_SPEC",
     "VREG_TYPE",
     "AggregatorPayload",
+    "AppMapPayload",
+    "AppMapSection",
+    "AppMapTerminator",
     "BMEnvVarMap",
     "BMInfo",
     "BootPayload",
@@ -379,6 +393,7 @@ __all__ = [
     "VersionCheckPayload",
     "VregPayload",
     "parse_aggregator",
+    "parse_appmap",
     "parse_bm_env_var_map",
     "parse_bm_info",
     "parse_boot",
@@ -429,6 +444,7 @@ __all__ = [
     "parse_versioncheck",
     "parse_vreg",
     "render_aggregator",
+    "render_appmap",
     "render_bm_env_var_map",
     "render_bm_info",
     "render_boot",
