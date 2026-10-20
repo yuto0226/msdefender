@@ -98,7 +98,7 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
 
 
 def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
-    """Export confirmed NDAT framing and callback dispatch without guessing use."""
+    """Export only NDAT callbacks tied to a static registration and consumer."""
     callback_targets = {
         5: "LogSkipNdatCallback",
         22: "CAsrNotAllowedNdatCallback",
@@ -189,6 +189,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             "mpengine 1.443.903.0 NdatPostCallback 0x180464800/0x186",
             "mpengine 1.443.903.0 LogSkip::Initialize 0x180B53F80/0x41",
             "mpengine 1.443.903.0 logskip_init_module 0x180B54A70/0x12F",
+            "mpengine 1.443.903.0 cksig_init_module 0x1805648A0/0x31D",
+            "mpengine 1.443.903.0 qword_181280FF0 write xrefs: cksig_init_module memset, LogSkip::Initialize assignment; read: NdatPostCallback",
             "mpengine 1.443.903.0 LogSkipNdatCallback 0x18005B7C0/0x68",
             "mpengine 1.443.903.0 CAsrNotAllowedNdatCallback 0x1805009C0/0x59",
             "mpengine 1.443.903.0 LogSkip::AddString 0x18005C630/0xE66",
