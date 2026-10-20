@@ -153,6 +153,19 @@ from .pestatic import SPEC as PESTATIC_SPEC
 from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
 from .regkey import SPEC as REGKEY_SPEC
 from .regkey import RegKeyPayload, parse_regkey, render_regkey
+from .removal_policy import (
+    REMOVAL_POLICY_BY_NAME_SPEC,
+    REMOVAL_POLICY_BY_NAME_TYPE,
+    REMOVAL_POLICY_SPEC,
+    REMOVAL_POLICY_SPECS,
+    REMOVAL_POLICY_TYPE,
+    RemovalPolicy,
+    RemovalPolicyByName,
+    parse_removal_policy,
+    parse_removal_policy_by_name,
+    render_removal_policy,
+    render_removal_policy_by_name,
+)
 from .revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
 from .revoked_certificate import (
     RevokedCertificate,
@@ -274,6 +287,11 @@ __all__ = [
     "PEFILE_CURE_SPEC",
     "PESTATIC_SPEC",
     "REGKEY_SPEC",
+    "REMOVAL_POLICY_BY_NAME_SPEC",
+    "REMOVAL_POLICY_BY_NAME_TYPE",
+    "REMOVAL_POLICY_SPEC",
+    "REMOVAL_POLICY_SPECS",
+    "REMOVAL_POLICY_TYPE",
     "REVOKED_CERTIFICATE_SPEC",
     "SIGTREE_BM_SPEC",
     "SIGTREE_EXT_SPEC",
@@ -331,6 +349,8 @@ __all__ = [
     "PeFileCure",
     "PeStaticPayload",
     "RegKeyPayload",
+    "RemovalPolicy",
+    "RemovalPolicyByName",
     "RevokedCertificate",
     "SigtreeEntry",
     "SigtreeParam",
@@ -382,6 +402,8 @@ __all__ = [
     "parse_pefile_cure",
     "parse_pestatic",
     "parse_regkey",
+    "parse_removal_policy",
+    "parse_removal_policy_by_name",
     "parse_revoked_certificate",
     "parse_sigtree",
     "parse_snidex",
@@ -428,6 +450,8 @@ __all__ = [
     "render_pefile_cure",
     "render_pestatic",
     "render_regkey",
+    "render_removal_policy",
+    "render_removal_policy_by_name",
     "render_revoked_certificate",
     "render_sigtree",
     "render_snidex",

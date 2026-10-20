@@ -33,6 +33,7 @@ from .types.pebmpat import SPEC as PEBMPAT_SPEC
 from .types.pefile_cure import SPEC as PEFILE_CURE_SPEC
 from .types.pestatic import SPEC as PESTATIC_SPEC
 from .types.regkey import SPEC as REGKEY_SPEC
+from .types.removal_policy import REMOVAL_POLICY_SPECS
 from .types.revoked_certificate import SPEC as REVOKED_CERTIFICATE_SPEC
 from .types.sigtree import SIGTREE_BM_SPEC, SIGTREE_EXT_SPEC, SIGTREE_SPEC
 from .types.snidex import SNIDEX_SPECS
@@ -49,6 +50,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
         spec.type_byte: spec
         for spec in (
             REGKEY_SPEC,
+            *REMOVAL_POLICY_SPECS,
             REVOKED_CERTIFICATE_SPEC,
             *AGGREGATOR_SPECS,
             TRUSTED_PUBLISHER_SPEC,
