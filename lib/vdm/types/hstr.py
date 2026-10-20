@@ -661,7 +661,10 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
             ("subsig_count", str(len(parsed.subsignatures))),
             (
                 "tail_word0",
-                f"0x{parsed.tail_word0:04X} (semantics unresolved)"
+                (
+                    f"0x{parsed.tail_word0:04X} "
+                    "(candidate order key when retained rows are validator-sorted)"
+                )
                 if parsed.tail_word0 is not None
                 else "NOT_PRESENT",
             ),
