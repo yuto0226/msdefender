@@ -205,6 +205,11 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
         0x29: VersionCheckPredicate(
             "known", "g_CustomSetId == field_04", "full uint32_t equality"
         ),
+        0x2B: VersionCheckPredicate(
+            "known",
+            "byte(gktab+0xB3C) == bool(field_04)",
+            "uint32_t truthiness compared with raw uint8_t state",
+        ),
         0x2E: VersionCheckPredicate(
             "known",
             "byte(gktab+0xB3E) == bool(field_04)",
@@ -330,6 +335,11 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "known",
             "byte(gktab+0xB38) == bool(field_04)",
             "uint32_t truthiness compared with raw uint8_t state",
+        ),
+        0x07: VersionCheckPredicate(
+            "known",
+            "dword(gktab+0xB20) > field_04",
+            "full uint32_t unsigned comparison",
         ),
         0x17: VersionCheckPredicate(
             "known", "dword(gktab+0xB68) != field_04", "full uint32_t inequality"
