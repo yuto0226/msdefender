@@ -4,8 +4,27 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Final, Literal
 
-from ..condition import And, Atom, Expr, Or, negate, render_yara_like
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..condition import (
+    And,
+    AtLeast,
+    Atom,
+    Const,
+    Expr,
+    Not,
+    Or,
+    negate,
+    render_yara_like,
+)
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+    SemanticJSONValue,
+)
 from ..pattern_codec import PATTERN_DECODING_TABLE
 
 AAGGREGATOR_TYPE: Final = 0x96
@@ -232,6 +251,72 @@ def interpret_aggregator(parsed: AggregatorPayload) -> AggregatorCondition:
         return AggregatorCondition(None, error.issue)
 
 
+def _expression_ast(expression: Expr) -> SemanticJSONValue:
+    """Serialize the verified condition nodes as a tagged JSON AST object."""
+    if isinstance(expression, Const):
+        return JSONObject((("type", "const"), ("value", expression.value)))
+    if isinstance(expression, Atom):
+        return JSONObject((("type", "atom"), ("identifier", expression.identifier)))
+    if isinstance(expression, AtLeast):
+        return JSONObject(
+            (
+                ("type", "at_least"),
+                ("count", expression.count),
+                (
+                    "atoms",
+                    JSONArray(
+                        tuple(_expression_ast(atom) for atom in expression.atoms)
+                    ),
+                ),
+                ("selector", expression.selector),
+            )
+        )
+    if isinstance(expression, And | Or):
+        return JSONObject(
+            (
+                ("type", "and" if isinstance(expression, And) else "or"),
+                (
+                    "terms",
+                    JSONArray(
+                        tuple(_expression_ast(term) for term in expression.terms)
+                    ),
+                ),
+            )
+        )
+    if isinstance(expression, Not):
+        return JSONObject((("type", "not"), ("term", _expression_ast(expression.term))))
+    raise TypeError(f"unsupported expression {type(expression).__name__}")
+
+
+def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
+    condition = interpret_aggregator(parsed)
+    issue = condition.issue
+    return RuleSemantics(
+        status=(
+            "confirmed_subset"
+            if issue is None
+            else "ignored"
+            if issue.code == "receiver_ignored"
+            else "unsupported"
+        ),
+        representation="boolean_expr.ast.v1",
+        data=None
+        if condition.expression is None
+        else _expression_ast(condition.expression),
+        evidence=("mpengine 1.443.903.0 AddSignature expression subset",),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                issue.code,
+                issue.message,
+                (("offset", issue.offset),),
+            ),
+        )
+        if issue is not None
+        else (),
+    )
+
+
 def parse_aggregator(payload: bytes, *, type_byte: int) -> AggregatorPayload:
     """Parse either receiver envelope; ValueError denotes malformed input.
 
@@ -383,11 +468,13 @@ AGGREGATOR_SPECS = (
         "AAGGREGATOR",
         partial(parse_aggregator, type_byte=AAGGREGATOR_TYPE),
         render_aggregator,
+        semantic_exporter=export_aggregator_semantics,
     ),
     FamilySpec(
         AAGGREGATOREX_TYPE,
         "AAGGREGATOREX",
         partial(parse_aggregator, type_byte=AAGGREGATOREX_TYPE),
         render_aggregator,
+        semantic_exporter=export_aggregator_semantics,
     ),
 )

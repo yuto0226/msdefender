@@ -31,6 +31,148 @@ Renderer = Callable[[T], FormatResult]
 
 type JSONValue = NoneType | bool | int | float | str | tuple[JSONValue, ...]
 type JSONDetails = tuple[tuple[str, JSONValue], ...]
+type SemanticJSONValue = NoneType | bool | int | float | str | JSONArray | JSONObject
+type SemanticJSONDetails = tuple[tuple[str, SemanticJSONValue], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class JSONArray:
+    """An immutable JSON array, including an unambiguous empty array."""
+
+    items: tuple[SemanticJSONValue, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class JSONObject:
+    """An immutable JSON object represented by ordered key/value pairs."""
+
+    items: tuple[tuple[str, SemanticJSONValue], ...]
+
+    def __post_init__(self) -> None:
+        if any(not isinstance(key, str) or not key for key, _ in self.items):
+            raise ValueError("semantic JSON object keys must be non-empty strings")
+        keys = tuple(key for key, _ in self.items)
+        if len(keys) != len(set(keys)):
+            raise ValueError("semantic JSON object keys must be unique")
+
+
+SemanticStatus = Literal["confirmed_subset", "observed_only", "unsupported", "ignored"]
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticIssue:
+    """Machine-readable reason a semantic export is incomplete or unavailable."""
+
+    code: str
+    message: str
+    details: SemanticJSONDetails = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, str) or not isinstance(self.message, str):
+            raise TypeError("semantic issue code and message must be strings")
+        if not self.code or not self.message:
+            raise ValueError("semantic issue code and message must be non-empty")
+        if not isinstance(self.details, tuple):
+            raise TypeError("semantic issue details must be an immutable tuple")
+        keys: list[str] = []
+        for entry in self.details:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                raise TypeError("semantic issue details must contain key/value pairs")
+            key, value = entry
+            if not isinstance(key, str):
+                raise TypeError("semantic issue detail keys must be strings")
+            if not key:
+                raise ValueError("semantic issue detail keys must be non-empty")
+            keys.append(key)
+            _validate_semantic_json_value(value)
+        if len(keys) != len(set(keys)):
+            raise ValueError("semantic issue detail keys must be unique")
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "details": {
+                key: _to_semantic_json_value(value) for key, value in self.details
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RuleSemantics:
+    """Immutable portable semantic envelope using immutable JSON-compatible data."""
+
+    status: SemanticStatus
+    representation: str
+    data: SemanticJSONValue = None
+    evidence: tuple[str, ...] = ()
+    profile: str | None = None
+    issues: tuple[SemanticIssue, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.status not in {
+            "confirmed_subset",
+            "observed_only",
+            "unsupported",
+            "ignored",
+        }:
+            raise ValueError(f"invalid semantic status {self.status!r}")
+        if not isinstance(self.representation, str):
+            raise TypeError("semantic representation must be a string")
+        if not self.representation:
+            raise ValueError("semantic representation must be non-empty")
+        _validate_semantic_json_value(self.data)
+        if not isinstance(self.evidence, tuple) or any(
+            not isinstance(item, str) for item in self.evidence
+        ):
+            raise TypeError("semantic evidence must be an immutable tuple of strings")
+        if self.profile is not None and not isinstance(self.profile, str):
+            raise TypeError("semantic profile must be a string or None")
+        if not isinstance(self.issues, tuple) or any(
+            not isinstance(issue, SemanticIssue) for issue in self.issues
+        ):
+            raise TypeError("semantic issues must be an immutable tuple")
+
+    def to_json(self) -> dict[str, object]:
+        """Return standard-library-json-serializable envelope data."""
+        return {
+            "status": self.status,
+            "representation": self.representation,
+            "data": _to_semantic_json_value(self.data),
+            "evidence": list(self.evidence),
+            "profile": self.profile,
+            "issues": [issue.to_json() for issue in self.issues],
+        }
+
+
+def _validate_semantic_json_value(value: SemanticJSONValue) -> None:
+    if value is None or isinstance(value, (bool, int, str)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("semantic JSON numbers must be finite")
+        return
+    if isinstance(value, JSONArray):
+        for item in value.items:
+            _validate_semantic_json_value(item)
+        return
+    if isinstance(value, JSONObject):
+        for key, item in value.items:
+            if not key:
+                raise ValueError("semantic JSON object keys must be non-empty")
+            _validate_semantic_json_value(item)
+        return
+    raise TypeError(
+        f"semantic value is not immutable JSON data: {type(value).__name__}"
+    )
+
+
+def _to_semantic_json_value(value: SemanticJSONValue) -> object:
+    if isinstance(value, JSONArray):
+        return [_to_semantic_json_value(item) for item in value.items]
+    if isinstance(value, JSONObject):
+        return {key: _to_semantic_json_value(item) for key, item in value.items}
+    return value
 
 
 def _validate_json_value(value: JSONValue) -> None:
@@ -134,6 +276,9 @@ class ArtifactExport:
             raise ValueError("ready artifact export must contain artifacts")
 
 
+SemanticExporter = Callable[[T], RuleSemantics]
+
+
 @dataclass(frozen=True, slots=True)
 class FamilySpec[T]:
     type_byte: int
@@ -141,3 +286,4 @@ class FamilySpec[T]:
     parser: Parser[T]
     renderer: Renderer[T]
     exporter: Callable[[T], ArtifactExport] | None = None
+    semantic_exporter: SemanticExporter[T] | None = None
