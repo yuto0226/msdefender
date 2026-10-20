@@ -3,12 +3,21 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 CKOLDREC_TYPE: Final = 0x11
 CKSIMPLEREC_TYPE: Final = 0x50
 _BASE_SIZE: Final = 20
 _PREVIEW_LIMIT: Final = 64
+_KNOWN_FLAGS_MASK: Final = 0xBC000000
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,7 +228,232 @@ def render_cksimplerec(parsed: CkSimplePayload) -> FormatResult:
     )
 
 
+def _wire_span(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def _raw_payload(parsed: CkOldPayload | CkSimplePayload) -> bytes:
+    """Reassemble the exact wire payload from the lossless parsed fields."""
+    if isinstance(parsed, CkOldPayload):
+        prefix = (
+            parsed.first_word.to_bytes(2, "little")
+            + parsed.first_length.to_bytes(2, "little")
+            + parsed.first_crc32.to_bytes(4, "little")
+        )
+    else:
+        prefix = parsed.first_dword.to_bytes(
+            4, "little"
+        ) + parsed.first16_crc32.to_bytes(4, "little")
+    prefix += (
+        parsed.second_offset.to_bytes(2, "little")
+        + parsed.second_length.to_bytes(2, "little")
+        + parsed.second_crc32.to_bytes(4, "little")
+        + parsed.flags.to_bytes(4, "little")
+    )
+    return prefix + (parsed.object_wire_raw or b"") + parsed.remaining_raw
+
+
+def _ck_semantics(
+    parsed: CkOldPayload | CkSimplePayload, *, old: bool
+) -> RuleSemantics:
+    raw = _raw_payload(parsed)
+    issues: list[SemanticIssue] = [
+        SemanticIssue(
+            "final_verdict_unknown",
+            "A CK callback match does not by itself establish a final detection verdict.",
+        )
+    ]
+    unsupported = False
+    framing = [
+        _wire_span("fixed_prefix", raw[:_BASE_SIZE], 0),
+        _wire_span(
+            "conditional_object_wire",
+            parsed.object_wire_raw or b"",
+            _BASE_SIZE,
+        ),
+        _wire_span(
+            "unconsumed_tail",
+            parsed.remaining_raw,
+            _BASE_SIZE + len(parsed.object_wire_raw or b""),
+        ),
+    ]
+    if parsed.flags & ~_KNOWN_FLAGS_MASK:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "unknown_flag_bits",
+                "CK flag bits outside the sign bit and ck_type are preserved but uninterpreted.",
+                (("unknown_bits", parsed.flags & ~_KNOWN_FLAGS_MASK),),
+            )
+        )
+    if parsed.object_data_raw is not None:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "opaque_conditional_object",
+                "The receiver stores these bytes as an object; their application semantics are unknown.",
+                (("length", len(parsed.object_data_raw)),),
+            )
+        )
+    if parsed.remaining_raw:
+        unsupported = True
+        issues.append(
+            SemanticIssue(
+                "unconsumed_tail",
+                "The receiver leaves these payload bytes unconsumed and their semantics are unknown.",
+                (("length", len(parsed.remaining_raw)),),
+            )
+        )
+
+    receiver = JSONObject(
+        (
+            ("fixed_prefix_length", _BASE_SIZE),
+            ("conditional_object", "read_u16_length_and_store_if_flags_sign_bit_set"),
+            ("trailing_bytes", "accepted_without_cursor_exhaustion"),
+        )
+    )
+    storage = JSONObject(
+        (
+            ("entry_stride", 0x1C if old else 0x24),
+            ("threat_id_field", "runtime_entry_plus_20"),
+            ("conditional_object_slot", "runtime_entry_plus_24"),
+        )
+    )
+    if old:
+        assert isinstance(parsed, CkOldPayload)
+        first = JSONObject(
+            (
+                ("callback_mode_index", parsed.callback_mode_index),
+                ("callback_length", parsed.first_length),
+                ("expected_callback_result", parsed.first_crc32),
+            )
+        )
+        second = JSONObject(
+            (
+                ("callback_offset", parsed.second_offset),
+                ("callback_length", parsed.second_length),
+                ("expected_callback_result", parsed.second_crc32),
+            )
+        )
+        comparison = "each callback result equals its stored DWORD"
+        representation = "ckoldrec.callback_checks.ir.v1"
+        callback_description = "caller_supplied_callback"
+        callback_sequence = JSONArray((first, second))
+        key = JSONObject(
+            (("kind", "callback_slot"), ("index", parsed.callback_mode_index))
+        )
+        first_word_unknown = parsed.first_word & ~0x3F
+        if first_word_unknown:
+            unsupported = True
+            issues.append(
+                SemanticIssue(
+                    "unknown_first_word_bits",
+                    "CKOLDREC first_word bits outside the low six callback index bits are uninterpreted.",
+                    (("unknown_bits", first_word_unknown),),
+                )
+            )
+    else:
+        assert isinstance(parsed, CkSimplePayload)
+        first = JSONObject(
+            (
+                ("callback_kind", "knbuf_crc"),
+                ("callback_length", 16),
+                ("expected_callback_result", parsed.first16_crc32),
+                ("crc_algorithm", "CRC_1"),
+            )
+        )
+        second = JSONObject(
+            (
+                ("callback_offset", parsed.second_offset),
+                ("callback_length", parsed.second_length),
+                ("expected_callback_result", parsed.second_crc32),
+            )
+        )
+        comparison = "callback CRC result equals stored DWORD"
+        representation = "cksimplerec.callback_checks.ir.v1"
+        callback_description = "caller_selected_callback_and_context"
+        callback_sequence = JSONArray((first, second))
+        key = JSONObject(
+            (
+                ("kind", "subject_first_dword"),
+                ("value", parsed.first_dword),
+            )
+        )
+
+    return RuleSemantics(
+        status="unsupported" if unsupported else "confirmed_subset",
+        representation=representation,
+        data=JSONObject(
+            (
+                ("raw_hex", raw.hex()),
+                ("wire_framing", JSONArray(tuple(framing))),
+                ("receiver", receiver),
+                ("storage", storage),
+                (
+                    "runtime_matching",
+                    JSONObject(
+                        (
+                            ("ck_type_filter", parsed.ck_type),
+                            ("lookup_key", key),
+                            ("callback_source", callback_description),
+                            ("callback_checks", callback_sequence),
+                            ("comparison", comparison),
+                        )
+                    ),
+                ),
+                (
+                    "reporting",
+                    JSONObject(
+                        (
+                            ("threat_id_source", "runtime_entry_plus_20"),
+                            (
+                                "final_verdict",
+                                "unknown; policy/report continuation is separate",
+                            ),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "ReceiveNewTemplate 0x1000/0x1006 descriptor behavior",
+            "CK scanner callback/key comparisons documented for this engine profile",
+            "ShouldContinueScanning separates a scanner match from final reporting",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+def export_ckoldrec_semantics(parsed: CkOldPayload) -> RuleSemantics:
+    """Export confirmed CKOLDREC callback fields without verdict inference."""
+    return _ck_semantics(parsed, old=True)
+
+
+def export_cksimplerec_semantics(parsed: CkSimplePayload) -> RuleSemantics:
+    """Export confirmed CKSIMPLEREC checks without verdict inference."""
+    return _ck_semantics(parsed, old=False)
+
+
 CK_SPECS = (
-    FamilySpec(CKOLDREC_TYPE, "CKOLDREC", parse_ckoldrec, render_ckoldrec),
-    FamilySpec(CKSIMPLEREC_TYPE, "CKSIMPLEREC", parse_cksimplerec, render_cksimplerec),
+    FamilySpec(
+        CKOLDREC_TYPE,
+        "CKOLDREC",
+        parse_ckoldrec,
+        render_ckoldrec,
+        semantic_exporter=export_ckoldrec_semantics,
+    ),
+    FamilySpec(
+        CKSIMPLEREC_TYPE,
+        "CKSIMPLEREC",
+        parse_cksimplerec,
+        render_cksimplerec,
+        semantic_exporter=export_cksimplerec_semantics,
+    ),
 )
