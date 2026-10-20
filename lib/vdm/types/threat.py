@@ -107,7 +107,7 @@ class ThreatBegin:
 @dataclass(frozen=True, slots=True)
 class ThreatEnd:
     raw: bytes
-    threat_id: int
+    value: int
     trailing_raw: bytes
 
 
@@ -228,10 +228,10 @@ def parse_threat_begin(payload: bytes) -> ThreatBegin:
 
 def parse_threat_end(payload: bytes) -> ThreatEnd:
     if len(payload) < 4:
-        raise ValueError("truncated THREAT_END threat ID")
+        raise ValueError("truncated THREAT_END value")
     return ThreatEnd(
         raw=payload,
-        threat_id=int.from_bytes(payload[:4], "little"),
+        value=int.from_bytes(payload[:4], "little"),
         trailing_raw=payload[4:],
     )
 
@@ -295,7 +295,7 @@ def render_threat_begin(threat: ThreatBegin) -> FormatResult:
 
 
 def render_threat_end(threat: ThreatEnd) -> FormatResult:
-    fields = [("threat_id", f"{threat.threat_id:#010x}")]
+    fields = [("value", f"{threat.value:#010x}")]
     if threat.trailing_raw:
         fields.append(("trailing_raw", threat.trailing_raw.hex(" ")))
     return FormatResult(fields=tuple(fields))

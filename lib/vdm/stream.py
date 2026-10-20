@@ -39,13 +39,6 @@ class ThreatBlock:
     end: ThreatEnd | None = None
     end_record: WireRecord | None = None
 
-    @property
-    def id_matches(self) -> bool | None:
-        """Compare local envelope IDs; this is not an engine acceptance check."""
-        if self.end is None:
-            return None
-        return self.begin.threat_id == self.end.threat_id
-
     def to_bytes(self) -> bytes:
         records = (self.begin_record, *self.records)
         if self.end_record is not None:
@@ -53,7 +46,7 @@ class ThreatBlock:
         return b"".join(record.raw for record in records)
 
 
-BlockReason = Literal["nested_begin", "unterminated", "id_mismatch"]
+BlockReason = Literal["nested_begin", "unterminated"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +137,7 @@ def iter_threat_events(source: Path | BinaryIO) -> Iterator[StreamEvent]:
             else:
                 yield ThreatBlockEvent(
                     make_block(end, record),
-                    reason="id_mismatch" if begin.threat_id != end.threat_id else None,
+                    reason=None,
                 )
                 begin_record = None
                 begin = None

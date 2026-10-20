@@ -148,8 +148,8 @@ def _manifest(
             "end_present": end_record is not None,
             "end": (
                 {
-                    "threat_id": block.end.threat_id,
-                    "threat_id_hex": f"0x{block.end.threat_id:08X}",
+                    "value": block.end.value,
+                    "value_hex": f"0x{block.end.value:08X}",
                     "offset": end_record.offset,
                     "header_size": end_record.header_size,
                     "payload_size": end_record.size,
@@ -158,12 +158,7 @@ def _manifest(
                 if block.end is not None and end_record is not None
                 else None
             ),
-            "id_matches": block.id_matches,
-            "complete": (
-                termination_reason == "normal"
-                and end_record is not None
-                and block.id_matches is True
-            ),
+            "complete": termination_reason == "normal" and end_record is not None,
             "termination_reason": termination_reason,
         },
         "records": [
@@ -271,14 +266,6 @@ def _report_event(
                 "Unterminated THREAT_BEGIN for '%s' at end of stream",
                 block.begin.name,
             )
-        case ThreatBlockEvent(block=block, reason="id_mismatch"):
-            if block.end is not None:
-                warn(
-                    "THREAT_END ID mismatch for '%s': begin=%08X end=%08X",
-                    block.begin.name,
-                    block.begin.threat_id,
-                    block.end.threat_id,
-                )
         case UnmatchedEndEvent():
             warn("THREAT_END without preceding THREAT_BEGIN — skipping")
 
