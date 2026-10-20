@@ -50,6 +50,7 @@ from .types.static import SPEC as STATIC_SPEC
 from .types.threat import THREAT_SPECS
 from .types.titanflt import SPEC as TITANFLT_SPEC
 from .types.trusted_publisher import SPEC as TRUSTED_PUBLISHER_SPEC
+from .types.ufsp_disable import SPEC as UFSP_DISABLE_SPEC
 from .types.unplib import SPEC as UNPLIB_SPEC
 from .types.vdll_code import FAMILY_SPECS as VDLL_CODE_SPECS
 from .types.vdll_meta import FAMILY_SPECS as VDLL_META_SPECS
@@ -67,6 +68,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             APPMAP_SPEC,
             BLOOM_FILTER_SPEC,
             TRUSTED_PUBLISHER_SPEC,
+            UFSP_DISABLE_SPEC,
             UNPLIB_SPEC,
             LATENT_THREAT_SPEC,
             LUASTANDALONE_SPEC,

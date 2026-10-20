@@ -279,6 +279,13 @@ from .trusted_publisher import (
     parse_trusted_publisher,
     render_trusted_publisher,
 )
+from .ufsp_disable import SPEC as UFSP_DISABLE_SPEC
+from .ufsp_disable import (
+    UFSP_DISABLE_TYPE,
+    UfspDisablePayload,
+    parse_ufsp_disable,
+    render_ufsp_disable,
+)
 from .unplib import SPEC as UNPLIB_SPEC
 from .unplib import UNPLIB_TYPE, UnpLibPayload, parse_unplib, render_unplib
 from .vdll_code import (
@@ -389,6 +396,8 @@ __all__ = [
     "TITANFLT_SPEC",
     "TITANFLT_TYPE",
     "TRUSTED_PUBLISHER_SPEC",
+    "UFSP_DISABLE_SPEC",
+    "UFSP_DISABLE_TYPE",
     "UNPLIB_SPEC",
     "UNPLIB_TYPE",
     "VDLL_CODE_SPECS",
@@ -461,6 +470,7 @@ __all__ = [
     "ThreatMetadata",
     "TitanFltPayload",
     "TrustedPublisher",
+    "UfspDisablePayload",
     "UnpLibPayload",
     "VdllCodePayload",
     "VdllMetaPayload",
@@ -521,6 +531,7 @@ __all__ = [
     "parse_threat_end",
     "parse_titanflt",
     "parse_trusted_publisher",
+    "parse_ufsp_disable",
     "parse_unplib",
     "parse_vdll_code",
     "parse_vdll_meta",
@@ -580,6 +591,7 @@ __all__ = [
     "render_threat_end",
     "render_titanflt",
     "render_trusted_publisher",
+    "render_ufsp_disable",
     "render_unplib",
     "render_vdll_code",
     "render_vdll_meta",
