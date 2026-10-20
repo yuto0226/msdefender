@@ -103,15 +103,22 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         5: "LogSkipNdatCallback",
         22: "CAsrNotAllowedNdatCallback",
     }
+    callback_semantics = {
+        5: "logskip_rule_ingest",
+        22: "custom_asr_not_allowed_rule_ingest",
+    }
     callback_target = callback_targets.get(parsed.callback_index)
-    issues = [
-        SemanticIssue(
-            "ndat_callback_business_semantics_unknown",
-            "Callback dispatch is established, but the callback index's "
-            "business meaning is not a final-detection result.",
-            details=(("callback_index", parsed.callback_index),),
+    business_semantics = callback_semantics.get(parsed.callback_index, "unknown")
+    issues = []
+    if callback_target is None:
+        issues.append(
+            SemanticIssue(
+                "ndat_callback_business_semantics_unknown",
+                "No registration target or consumer semantics are confirmed "
+                "for this callback index.",
+                details=(("callback_index", parsed.callback_index),),
+            )
         )
-    ]
     if parsed.record_id_suffix_raw is not None:
         issues.append(
             SemanticIssue(
@@ -138,7 +145,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status=status,
-        representation="ndat.counted_data_callback_suffix.v1",
+        representation="ndat.counted_data_callback_suffix.v2",
         data=JSONObject(
             (
                 ("type", "NDAT"),
@@ -154,8 +161,11 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             ("dispatch_target", callback_target),
                             ("dispatch_mechanism_confirmed", True),
                             ("dispatch_target_confirmed", callback_target is not None),
-                            ("business_semantics", "unknown"),
-                            ("is_final_detection", False),
+                            ("business_semantics", business_semantics),
+                            (
+                                "is_final_detection",
+                                False if callback_target is not None else None,
+                            ),
                         )
                     ),
                 ),
@@ -175,10 +185,15 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             )
         ),
         evidence=(
-            "mpengine 1.443.903.0 ReceiveNewTemplate NDAT descriptors",
-            "mpengine 1.443.903.0 NdatPostCallback dispatches by callback index",
-            "mpengine 1.443.903.0 LogSkip::Initialize registers index 5",
-            "mpengine 1.443.903.0 logskip_init_module registers index 22",
+            "mpengine 1.443.903.0 ReceiveNewTemplate 0x1803224D0/0xB70",
+            "mpengine 1.443.903.0 NdatPostCallback 0x180464800/0x186",
+            "mpengine 1.443.903.0 LogSkip::Initialize 0x180B53F80/0x41",
+            "mpengine 1.443.903.0 logskip_init_module 0x180B54A70/0x12F",
+            "mpengine 1.443.903.0 LogSkipNdatCallback 0x18005B7C0/0x68",
+            "mpengine 1.443.903.0 CAsrNotAllowedNdatCallback 0x1805009C0/0x59",
+            "mpengine 1.443.903.0 LogSkip::AddString 0x18005C630/0xE66",
+            "mpengine 1.443.903.0 CustomAsrIsNotAllowed 0x180B53EF0/0x8E",
+            "mpengine 1.443.903.0 LogSkip::Check 0x180287DE0/0x1104",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
