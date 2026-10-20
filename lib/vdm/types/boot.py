@@ -81,10 +81,11 @@ def parse_boot(payload: bytes) -> BootPayload:
         special_check_length = None
         special_crc32 = None
     else:
-        # Outside 4..32, the matcher wraps (selector - 4) with & 0x1F after
-        # a fixed dword compare. Preserve values without assigning a span.
+        # The matcher compares a fixed dword plus a wrapped secondary span.
+        # The descriptor only supplies 31 bytes after selector; do not invent
+        # the bytes the runtime may read beyond that stored body.
         selector_domain = "wrapped_unknown"
-        runtime_compare_span = None
+        runtime_compare_span = (0, 4 + ((selector - 4) & 0x1F))
         pattern_raw = None
         wildcard_count = None
         special_prefix = None
@@ -195,11 +196,23 @@ def render_boot(parsed: BootPayload) -> FormatResult:
             )
         )
     else:
+        assert parsed.descriptor_raw is not None
+        available_body_length = len(parsed.descriptor_raw) - 1
+        compare_length = (
+            parsed.runtime_compare_span[1]
+            if parsed.runtime_compare_span is not None
+            else 0
+        )
         rows.extend(
             (
                 (
                     "runtime_note",
-                    "wrapped selector; runtime compare span unknown",
+                    "wrapped selector; span is binary-derived, selector meaning unknown",
+                ),
+                ("available_descriptor_body", f"{available_body_length} B"),
+                (
+                    "unavailable_compare_bytes",
+                    f"{max(0, compare_length - available_body_length)} B",
                 ),
                 ("descriptor_preview", _preview(parsed.descriptor_raw)),
             )
