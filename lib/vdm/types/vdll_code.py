@@ -3,7 +3,18 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    Artifact,
+    ArtifactExport,
+    ArtifactWarning,
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 VDLL_CODE_TYPES: Final = (0x79, 0x7C, 0x91, 0x9C, 0xC4)
 MIN_FILE_SIZE: Final = 0x400
@@ -318,12 +329,128 @@ def render_vdll_code(parsed: VdllCodePayload) -> FormatResult:
     return FormatResult(sections=(DisplaySection("VDLL Code PE", rows=rows),))
 
 
+def export_vdll_code(parsed: VdllCodePayload) -> ArtifactExport:
+    """Export the accepted record bytes verbatim, without loading or relinking."""
+    return ArtifactExport(
+        status="ready",
+        artifacts=(Artifact("vdll-code.bin", "opaque_vdll_pe_record", parsed.raw),),
+        warnings=(
+            ArtifactWarning(
+                "vdll_linkage_unresolved",
+                "The bytes are exported unchanged. Engine image normalization, "
+                "linkage, runtime execution, and scan-time use are not confirmed.",
+                (
+                    ("record_type", f"0x{parsed.type:02X}"),
+                    ("host_association", parsed.host),
+                ),
+            ),
+        ),
+    )
+
+
+def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
+    """Describe receiver routing and PE observations, not detection policy."""
+    return RuleSemantics(
+        status="observed_only",
+        representation="vdll.receiver_observation.v1",
+        data=JSONObject(
+            (
+                ("type", f"0x{parsed.type:02X}"),
+                ("record_payload_raw_hex", parsed.raw.hex()),
+                ("payload_framing", "exact VDM record payload; inner chunking unknown"),
+                ("host_association", parsed.host),
+                ("payload_length", len(parsed.raw)),
+                ("pe_magic", f"0x{parsed.magic:04X}"),
+                ("machine", f"0x{parsed.machine:04X}"),
+                ("size_image", parsed.size_image),
+                ("size_headers", parsed.size_headers),
+                ("section_count", len(parsed.sections)),
+                (
+                    "sections",
+                    JSONArray(
+                        tuple(
+                            JSONObject(
+                                (
+                                    ("name_raw_hex", section.name.hex()),
+                                    ("virtual_size", section.virtual_size),
+                                    ("virtual_address", section.virtual_address),
+                                    ("raw_size", section.raw_size),
+                                    ("raw_pointer", section.raw_pointer),
+                                )
+                            )
+                            for section in parsed.sections
+                        )
+                    ),
+                ),
+                (
+                    "export_directory",
+                    JSONObject(
+                        (
+                            ("rva", parsed.export_directory.rva),
+                            ("size", parsed.export_directory.size),
+                            ("file_offset", parsed.export_offset),
+                        )
+                    ),
+                ),
+                (
+                    "cli_directory",
+                    JSONObject(
+                        (
+                            ("rva", parsed.cli_directory.rva),
+                            ("size", parsed.cli_directory.size),
+                            ("file_offset", parsed.cli_offset),
+                        )
+                    ),
+                ),
+                (
+                    "metadata_directory",
+                    JSONObject(
+                        (
+                            ("rva", parsed.metadata_directory.rva),
+                            ("size", parsed.metadata_directory.size),
+                            ("file_offset", parsed.metadata_offset),
+                        )
+                    ),
+                ),
+                ("overlay_length", len(parsed.overlay)),
+                ("runtime_execution_confirmed", False),
+                ("final_detection_policy_confirmed", False),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 dllsupp_init registers record types to host receivers",
+            "mpengine 1.443.903.0 vdll_receiver passes payload and length to vdll_data_t::init",
+            "The accepted payload is preserved byte-for-byte; PE fields are bounded offline observations",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=(
+            SemanticIssue(
+                "vdll_inner_framing_and_engine_normalization_unknown",
+                "The VDM record payload boundary is known, but internal chunking, "
+                "header normalization, and engine load acceptance are not established.",
+            ),
+            SemanticIssue(
+                "vdll_linkage_and_runtime_use_unknown",
+                "Export lookup, linkage, runtime execution, and scan-time matching "
+                "are not confirmed.",
+            ),
+            SemanticIssue(
+                "vdll_detection_policy_unknown",
+                "This code record alone does not establish a malware detection "
+                "condition or final detection policy.",
+            ),
+        ),
+    )
+
+
 FAMILY_SPECS: Final = tuple(
     FamilySpec(
         type_byte,
         f"VDLL_CODE_{type_byte:02X}",
         _parser_for(type_byte),
         render_vdll_code,
+        exporter=export_vdll_code,
+        semantic_exporter=export_vdll_code_semantics,
     )
     for type_byte in VDLL_CODE_TYPES
 )
