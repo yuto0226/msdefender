@@ -4,6 +4,15 @@ from .aggregator import (
     parse_aggregator,
     render_aggregator,
 )
+from .bm_env_var_map import (
+    BM_ENV_VAR_MAP_TYPE,
+    BMEnvVarMap,
+    parse_bm_env_var_map,
+    render_bm_env_var_map,
+)
+from .bm_env_var_map import (
+    SPEC as BM_ENV_VAR_MAP_SPEC,
+)
 from .bm_info import SPEC, BMInfo, parse_bm_info, render_bm_info
 from .boot import BOOT_SPEC, BOOT_TYPE, BootPayload, parse_boot, render_boot
 from .brute import SPEC as BRUTE_SPEC
@@ -239,6 +248,8 @@ from .vreg import VREG_TYPE, VregPayload, parse_vreg, render_vreg
 
 __all__ = [
     "AGGREGATOR_SPECS",
+    "BM_ENV_VAR_MAP_SPEC",
+    "BM_ENV_VAR_MAP_TYPE",
     "BOOT_SPEC",
     "BOOT_TYPE",
     "BRUTE_SPEC",
@@ -312,6 +323,7 @@ __all__ = [
     "VREG_SPEC",
     "VREG_TYPE",
     "AggregatorPayload",
+    "BMEnvVarMap",
     "BMInfo",
     "BootPayload",
     "BrutePayload",
@@ -367,6 +379,7 @@ __all__ = [
     "VersionCheckPayload",
     "VregPayload",
     "parse_aggregator",
+    "parse_bm_env_var_map",
     "parse_bm_info",
     "parse_boot",
     "parse_brute",
@@ -416,6 +429,7 @@ __all__ = [
     "parse_versioncheck",
     "parse_vreg",
     "render_aggregator",
+    "render_bm_env_var_map",
     "render_bm_info",
     "render_boot",
     "render_brute",
