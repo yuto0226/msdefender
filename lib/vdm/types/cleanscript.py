@@ -1,6 +1,13 @@
 from dataclasses import dataclass
 
-from ..core import FamilySpec, FormatResult
+from ..core import (
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 _HEADER_SIZE = 32
 _VERSION_MAJOR = 1
@@ -116,4 +123,109 @@ def render_cleanscript(parsed: CleanScriptPayload) -> FormatResult:
     )
 
 
-SPEC = FamilySpec(0x49, "CLEANSCRIPT", parse_cleanscript, render_cleanscript)
+def export_cleanscript_semantics(parsed: CleanScriptPayload) -> RuleSemantics:
+    """Export receiver and consumer facts while keeping unconfirmed fields raw."""
+    accepted = parsed.receiver_result == "added_candidate"
+    status = "confirmed_subset" if accepted else "ignored"
+    issues = (
+        (
+            SemanticIssue(
+                "cleanscript_field_semantics_unknown",
+                "The cleanup interpreter consumes the row and tail, but most "
+                "wire fields still lack confirmed business meanings.",
+            ),
+        )
+        if accepted
+        else (
+            SemanticIssue(
+                "receiver_ignored_candidate",
+                "The current receiver returns success without adding this payload "
+                "to the CLEANSCRIPT candidate table.",
+                details=(("receiver_result", parsed.receiver_result),),
+            ),
+        )
+    )
+    return RuleSemantics(
+        status=status,
+        representation="cleanscript.receiver_candidate_and_consumer.v1",
+        data=JSONObject(
+            (
+                ("type", "CLEANSCRIPT"),
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "wire_fields",
+                    JSONObject(
+                        (
+                            ("discriminator", parsed.discriminator),
+                            ("version_flags", parsed.version_flags),
+                            ("value_4", parsed.value_4),
+                            ("value_8", parsed.value_8),
+                            ("length_0", parsed.length_0),
+                            ("length_1", parsed.length_1),
+                            ("length_2", parsed.length_2),
+                            ("count_3", parsed.count_3),
+                            ("byte_18", parsed.byte_18),
+                            ("byte_19", parsed.byte_19),
+                            ("reserved_raw_hex", parsed.reserved_raw.hex()),
+                            ("tail_raw_hex", parsed.tail_raw.hex()),
+                        )
+                    ),
+                ),
+                (
+                    "receiver_candidate",
+                    JSONObject(
+                        (
+                            ("receiver", "sysclean_push"),
+                            ("receiver_address", "0x180562F00"),
+                            ("candidate_added", accepted),
+                            ("receiver_result", parsed.receiver_result),
+                            ("discriminator_range", "0..3"),
+                            ("version_major", 1),
+                            ("version_minor_max", 1),
+                            ("tail_length_expected", parsed.expected_tail_len),
+                            ("tail_length_observed", len(parsed.tail_raw)),
+                        )
+                    ),
+                ),
+                (
+                    "confirmed_consumers",
+                    JSONObject(
+                        (
+                            ("runtime_table_consumer", "sysclean"),
+                            ("runtime_table_consumer_address", "0x180555DBC"),
+                            (
+                                "dispatch_targets",
+                                JSONArray(
+                                    ("pInterpretRoutine", "pInterpretOnEachDetection")
+                                ),
+                            ),
+                            ("interpreter_body", "pInterpretBody"),
+                            ("script_role", "cleanup routine data"),
+                            ("detection_rule", False),
+                        )
+                    ),
+                ),
+                (
+                    "field_semantics",
+                    "observed_only; names are wire offsets, not business meanings",
+                ),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 sysclean_init_module registers type 0x49",
+            "mpengine 1.443.903.0 sysclean_push candidate validation and row storage",
+            "mpengine 1.443.903.0 sysclean runtime dispatch",
+            "mpengine 1.443.903.0 pInterpretRoutine and pInterpretBody",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=issues,
+    )
+
+
+SPEC = FamilySpec(
+    0x49,
+    "CLEANSCRIPT",
+    parse_cleanscript,
+    render_cleanscript,
+    semantic_exporter=export_cleanscript_semantics,
+)
