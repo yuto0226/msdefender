@@ -243,13 +243,13 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
         ),
         0x22: VersionCheckPredicate(
             "known",
-            "byte(gktab+0xBD9) == 0 and qword(gktab+0x158A8) != 0 and byte(gktab+0xB38) == 0 and (byte(gktab+0xB5D) != 0 or float(CRCLowerStringW(field_04 >> 24, qword(gktab+0x158A8))) >= float(((field_04 & 0xFFFFFF) / 1000.0) * 10000000.0))",
-            "high byte is the CRC seed; low 24 bits derive an unsigned floating threshold",
+            "byte(gktab+0xBD9) == 0 and qword(gktab+0x158A8) != 0 and byte(gktab+0xB38) == 0 and (byte(gktab+0xB5D) != 0 or float32(uint32(CRCLowerStringW(field_04 >> 24, qword(gktab+0x158A8)))) >= float32(float32((field_04 & 0xFFFFFF) / 1000.0) * float32_bits(0x4C23D70A)))",
+            "high byte is the CRC seed; low 24 bits derive a float32 threshold; 0x4C23D70A is a float32 bit pattern",
         ),
         0x39: VersionCheckPredicate(
             "known",
-            "byte(gktab+0xBD9) == 0 and qword(gktab+0x158A8) != 0 and (dword(gktab+0xB20) not in {7, 10} or byte(gktab+0xB38) == 0) and float(CRCLowerStringW(field_04 >> 24, qword(gktab+0x158A8))) >= float(((field_04 & 0xFFFFFF) / 1000.0) * 10000000.0)",
-            "high byte is the CRC seed; low 24 bits derive an unsigned floating threshold",
+            "byte(gktab+0xBD9) == 0 and qword(gktab+0x158A8) != 0 and (dword(gktab+0xB20) not in {7, 10} or byte(gktab+0xB38) == 0) and float32(uint32(CRCLowerStringW(field_04 >> 24, qword(gktab+0x158A8)))) >= float32(float32((field_04 & 0xFFFFFF) / 1000.0) * float32_bits(0x4C23D70A))",
+            "high byte is the CRC seed; low 24 bits derive a float32 threshold; 0x4C23D70A is a float32 bit pattern",
         ),
         0x84: VersionCheckPredicate(
             "known",
@@ -377,8 +377,8 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
         0x36: VersionCheckPredicate("partial"),
         0x37: VersionCheckPredicate(
             "known",
-            "byte(gktab+0xBD9) == 0 and qword(gktab+0x158A8) != 0 and byte(gktab+0xB38) == 0 and float(CRCLowerStringW(field_04 >> 24, qword(gktab+0x158A8))) < float(((field_04 & 0xFFFFFF) / 1000.0) * 42000000.0)",
-            "high byte is the CRC seed; low 24 bits derive an unsigned floating threshold",
+            "byte(gktab+0xBD9) == 0 and qword(gktab+0x158A8) != 0 and byte(gktab+0xB38) == 0 and float32(uint32(CRCLowerStringW(field_04 >> 24, qword(gktab+0x158A8)))) < float32(float32((field_04 & 0xFFFFFF) / 1000.0) * float32_bits(0x4C23D70A))",
+            "high byte is the CRC seed; low 24 bits derive a float32 threshold; 0x4C23D70A is a float32 bit pattern",
         ),
         0x4C: VersionCheckPredicate(
             "known", "dword(gktab+0xB80) != field_04", "full uint32_t inequality"
