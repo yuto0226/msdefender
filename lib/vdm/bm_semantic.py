@@ -1,0 +1,166 @@
+"""Portable, renderer-independent serialization of the decoded BM view."""
+
+from typing import Literal
+
+from .bm import (
+    BmAlternatives,
+    BmClass,
+    BmEnd,
+    BmExtension,
+    BmGap,
+    BmLiteral,
+    BmOpaque,
+    BmPattern,
+    BmScan,
+    BmSemanticOperation,
+    interpret_bm_pattern,
+)
+from .core import JSONArray, JSONObject, SemanticIssue
+
+
+def _object(items: dict[str, object]) -> JSONObject:
+    return JSONObject(tuple((key, _value(value)) for key, value in items.items()))
+
+
+def _value(value: object):
+    if isinstance(value, bytes):
+        return value.hex()
+    if isinstance(value, dict):
+        return _object(value)
+    if isinstance(value, (list, tuple)):
+        return JSONArray(tuple(_value(item) for item in value))
+    return value
+
+
+OperationFidelity = Literal["exact", "conditional", "unsupported"]
+
+
+def _operation_ir(operation: BmSemanticOperation) -> dict[str, object]:
+    raw = operation.raw
+    fidelity: OperationFidelity = "exact"
+    requirements: list[str] = []
+    result: dict[str, object] = {
+        "kind": type(operation).__name__[2:].lower(),
+        "raw_span": {"offset": operation.offset, "length": len(raw)},
+        "raw_hex": raw.hex(),
+        "raw_id": None,
+        "dispatch": None,
+        "operands_hex": "",
+        "fidelity": fidelity,
+        "requirements": requirements,
+        "issues": [],
+    }
+    token = getattr(operation, "token", None)
+    if token is not None:
+        result["raw_id"] = token.raw_id
+        result["dispatch"] = {
+            "id": token.dispatch_id,
+            "descriptor_flags": token.descriptor_flags,
+        }
+        result["operands_hex"] = token.operands.hex()
+
+    decoded: dict[str, object] = {}
+    if isinstance(operation, BmLiteral):
+        decoded["value_hex"] = operation.value.hex()
+    elif isinstance(operation, BmGap):
+        decoded.update(
+            minimum=operation.minimum,
+            maximum=operation.maximum,
+            bounded=operation.bounded,
+        )
+    elif isinstance(operation, BmAlternatives):
+        decoded.update(
+            widths=list(operation.widths),
+            choices_hex=[choice.hex() for choice in operation.choices],
+        )
+    elif isinstance(operation, BmScan):
+        decoded.update(kind=operation.kind, operand=operation.operand)
+        result["fidelity"] = "conditional"
+        result["requirements"] = [operation.support_note]
+    elif isinstance(operation, BmClass):
+        decoded.update(count=operation.count, spec_hex=operation.spec.hex())
+        result["fidelity"] = "conditional"
+        result["requirements"] = ["reader-specific class predicates are not modeled"]
+    elif isinstance(operation, BmExtension):
+        decoded.update(
+            name=operation.name, value=operation.value, bitmap=operation.bitmap
+        )
+        result["fidelity"] = "conditional"
+        result["requirements"] = [
+            "operation parameters are decoded, but reader state effects are not modeled"
+        ]
+    elif isinstance(operation, BmOpaque):
+        result["kind"] = "opaque"
+        result["fidelity"] = "unsupported"
+        result["requirements"] = []
+        result["issues"] = ["opcode semantics are unknown or unsupported"]
+    elif isinstance(operation, BmEnd):
+        result["raw_id"] = 0
+        decoded["terminator"] = True
+    else:
+        # Keep future operation variants lossless without inventing a wire name.
+        result["kind"] = "unclassified"
+        result["fidelity"] = "unsupported"
+        result["issues"] = ["operation variant has no semantic serializer"]
+    result["decoded"] = decoded
+    return result
+
+
+def serialize_bm_pattern(
+    pattern: BmPattern,
+) -> tuple[JSONObject, tuple[SemanticIssue, ...]]:
+    """Serialize one decoder view, including its exact unparsed remainder."""
+    semantic_pattern = interpret_bm_pattern(pattern)
+    operations = [_operation_ir(operation) for operation in semantic_pattern.operations]
+    issues: list[dict[str, object]] = []
+    semantic_issues: list[SemanticIssue] = []
+    if pattern.issue is not None:
+        issues.append(
+            {
+                "code": pattern.issue.code,
+                "offset": pattern.issue.offset,
+                "raw_id": pattern.issue.raw_id,
+            }
+        )
+        semantic_issues.append(
+            SemanticIssue(
+                pattern.issue.code,
+                "BM decoder stopped with an issue; remaining bytes are preserved.",
+                (("offset", pattern.issue.offset),),
+            )
+        )
+    if pattern.remaining_raw and pattern.ended:
+        issues.append(
+            {
+                "code": "multi_segment_unparsed",
+                "offset": pattern.consumed,
+                "raw_hex": pattern.remaining_raw.hex(),
+            }
+        )
+        semantic_issues.append(
+            SemanticIssue(
+                "multi_segment_unparsed",
+                "Only the first BM segment is represented as operations.",
+                (("offset", pattern.consumed),),
+            )
+        )
+    remaining = {
+        "offset": pattern.consumed,
+        "length": len(pattern.remaining_raw),
+        "raw_hex": pattern.remaining_raw.hex(),
+    }
+    data = _object(
+        {
+            "profile": pattern.profile,
+            "raw_hex": pattern.raw.hex(),
+            "consumed": pattern.consumed,
+            "ended": pattern.ended,
+            "operations": operations,
+            "remaining_raw": remaining,
+            "issues": issues,
+        }
+    )
+    return data, tuple(semantic_issues)
+
+
+__all__ = ["serialize_bm_pattern"]

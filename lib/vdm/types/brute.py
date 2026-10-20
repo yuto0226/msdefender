@@ -3,8 +3,17 @@
 from dataclasses import dataclass
 
 from ..bm import BmPattern, validate_bm_framing
+from ..bm_semantic import serialize_bm_pattern
 from ..bm_yara import render_bm_yara
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 _PREVIEW = 64
 _TEXT_PREVIEW = 512
@@ -122,4 +131,72 @@ def render_brute(parsed: BrutePayload) -> FormatResult:
     return FormatResult(sections=(DisplaySection("BRUTE", rows=tuple(rows)),))
 
 
-SPEC = FamilySpec(0xD0, "BRUTE", parse_brute, render_brute)
+def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
+    """Export portable raw BM IR while withholding an engine verdict claim."""
+    pattern_data, pattern_issues = serialize_bm_pattern(parsed.pattern)
+    name_length = len(parsed.name_bytes)
+    body_offset = 1 + name_length + 1 + 1 + 4 + 4
+    body_end = body_offset + parsed.body_len
+    framing_fields = (
+        ("name_length", 0, 1),
+        ("name", 1, name_length),
+        ("script_type_flags", 1 + name_length, 1),
+        ("direction", 2 + name_length, 1),
+        ("position", 3 + name_length, 4),
+        ("body_length", 7 + name_length, 4),
+        ("body", body_offset, parsed.body_len),
+        ("trailing", body_end, len(parsed.trailing)),
+    )
+    framing = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("kind", name),
+                    ("raw_span", JSONObject((("offset", offset), ("length", length)))),
+                    ("raw_hex", parsed.raw[offset : offset + length].hex()),
+                )
+            )
+            for name, offset, length in framing_fields
+        )
+    )
+    outer = JSONObject(
+        (
+            ("raw_hex", parsed.raw.hex()),
+            ("framing", framing),
+            ("name_length", name_length),
+            ("name_raw_hex", parsed.name_bytes.hex()),
+            ("script_type_flags", parsed.script_type_flags),
+            ("script_type_raw", parsed.script_type_raw),
+            ("lowfi", parsed.lowfi),
+            ("direction_raw", parsed.direction_raw),
+            ("position_raw", parsed.position_raw),
+            ("body_length", parsed.body_len),
+            ("trailing_raw_hex", parsed.trailing.hex()),
+        )
+    )
+    data = JSONObject(pattern_data.items + (("outer", outer),))
+    return RuleSemantics(
+        status="observed_only",
+        representation="bm.pattern.ir.v1",
+        data=data,
+        evidence=("BM wire framing and decoded fields for mpengine 1.443.903.0",),
+        profile=f"mpengine-{parsed.pattern.profile}",
+        issues=(
+            SemanticIssue(
+                "outer_verdict_unknown",
+                "BRUTE direction and metadata are retained without assigning "
+                "verdict semantics.",
+                (("direction_raw", parsed.direction_raw),),
+            ),
+            *pattern_issues,
+        ),
+    )
+
+
+SPEC = FamilySpec(
+    0xD0,
+    "BRUTE",
+    parse_brute,
+    render_brute,
+    semantic_exporter=export_brute_semantics,
+)
