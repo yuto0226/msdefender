@@ -6,7 +6,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 VREG_TYPE: Final = 0xB0
 MAX_KEY_UNITS: Final = 0x100
@@ -20,6 +28,16 @@ _HIVE_LABELS = MappingProxyType(
         3: "HKU (HKEY_USERS)",
         4: "HKEY_PERFORMANCE_DATA",
         5: "HKCC (HKEY_CURRENT_CONFIG)",
+    }
+)
+_HIVE_IDENTITIES = MappingProxyType(
+    {
+        0: "HKEY_CLASSES_ROOT",
+        1: "HKEY_CURRENT_USER",
+        2: "HKEY_LOCAL_MACHINE",
+        3: "HKEY_USERS",
+        4: "HKEY_PERFORMANCE_DATA",
+        5: "HKEY_CURRENT_CONFIG",
     }
 )
 
@@ -232,4 +250,170 @@ def render_vreg(parsed: VregPayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
-SPEC = FamilySpec(VREG_TYPE, "VREG", parse_vreg, render_vreg)
+def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
+    return JSONObject(
+        (
+            ("kind", kind),
+            ("raw_span", JSONObject((("offset", offset), ("length", len(raw))))),
+            ("raw_hex", raw.hex()),
+        )
+    )
+
+
+def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
+    """Export only VREG behavior confirmed in the selected engine profile."""
+    key_end = 3 + len(parsed.key_raw)
+    name_offset = key_end + 3
+    data_size_offset = name_offset + len(parsed.name_raw)
+    data_offset = data_size_offset + 2
+    issues = [
+        SemanticIssue(
+            "query_policy_incomplete",
+            "VirtualReg query and enumeration consumers are confirmed, but their "
+            "fallback and reporting policies are not fully modeled.",
+        ),
+        SemanticIssue(
+            "value_type_is_raw",
+            "The receiver forwards value_type and data without validating their "
+            "relationship; Windows REG_* names are not treated as enforcement "
+            "semantics.",
+            (("value_type", parsed.value_type),),
+        ),
+    ]
+    unknown_hive = parsed.hive > 5
+    if unknown_hive:
+        issues.append(
+            SemanticIssue(
+                "hive_slot_unrecognized",
+                "The receiver preserves this hive byte, but the virtual-registry "
+                "handle normalization only confirms slots 0 through 5.",
+                (("hive", parsed.hive),),
+            )
+        )
+    if parsed.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "trailing_bytes_ignored_by_receiver",
+                "The receiver stops after data_size bytes; trailing bytes do not "
+                "participate in key creation or value setting.",
+                (("length", len(parsed.trailing_raw)),),
+            )
+        )
+
+    return RuleSemantics(
+        status="unsupported" if unknown_hive else "confirmed_subset",
+        representation="vreg.virtual_registry_write.ir.v1",
+        data=JSONObject(
+            (
+                ("type", "VREG"),
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "hive",
+                    JSONObject(
+                        (
+                            ("raw_u8", parsed.hive),
+                            (
+                                "virtual_registry_slot",
+                                parsed.hive if parsed.hive <= 5 else None,
+                            ),
+                            (
+                                "windows_hive_identity",
+                                _HIVE_IDENTITIES.get(parsed.hive),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "key",
+                    JSONObject(
+                        (
+                            (
+                                "wire",
+                                _wire_field("utf16le_code_units", parsed.key_raw, 3),
+                            ),
+                            ("unit_count", parsed.key_units),
+                            ("wire_text", parsed.key_wire),
+                            ("effective_c_string", parsed.key),
+                        )
+                    ),
+                ),
+                (
+                    "value_name",
+                    JSONObject(
+                        (
+                            (
+                                "wire",
+                                _wire_field(
+                                    "utf16le_code_units", parsed.name_raw, name_offset
+                                ),
+                            ),
+                            ("unit_count", parsed.name_units),
+                            ("wire_text", parsed.name_wire),
+                            ("effective_c_string", parsed.name),
+                        )
+                    ),
+                ),
+                (
+                    "write",
+                    JSONObject(
+                        (
+                            ("create_key_attempt", True),
+                            ("set_value_attempt", parsed.data_size != 0),
+                            ("value_type_raw_u8", parsed.value_type),
+                            ("data_size", parsed.data_size),
+                            (
+                                "data",
+                                _wire_field(
+                                    "opaque_value_bytes", parsed.data_raw, data_offset
+                                ),
+                            ),
+                            ("type_to_data_validation", False),
+                        )
+                    ),
+                ),
+                (
+                    "confirmed_query_consumers",
+                    JSONArray(
+                        (
+                            "query_value",
+                            "query_key",
+                            "enumerate_subkey",
+                            "enumerate_value",
+                        )
+                    ),
+                ),
+                ("query_policy", None),
+                (
+                    "trailing",
+                    _wire_field(
+                        "ignored_trailing_bytes",
+                        parsed.trailing_raw,
+                        data_offset + len(parsed.data_raw),
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            (
+                "mpengine 1.443.903.0 vregReceiver framing, key creation, and "
+                "conditional setValue call"
+            ),
+            "mpengine 1.443.903.0 VirtualReg::setValue stores raw type and data bytes",
+            (
+                "mpengine 1.443.903.0 VirtualReg::queryValue/queryKey/"
+                "enumerateSubKey/enumerateValue consumers"
+            ),
+            "mpengine 1.443.903.0 VirtualReg::createKey and hive-handle normalization",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
+SPEC = FamilySpec(
+    VREG_TYPE,
+    "VREG",
+    parse_vreg,
+    render_vreg,
+    semantic_exporter=export_vreg_semantics,
+)
