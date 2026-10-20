@@ -5,7 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import Artifact, ArtifactExport, DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    Artifact,
+    ArtifactExport,
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 RPF_ROUTINE_TYPE: Final = 0x53
 _HEADER_SIZE: Final = 32
@@ -281,12 +291,213 @@ def export_rpf_routine(parsed: RpfRoutinePayload) -> ArtifactExport:
     )
 
 
+def export_rpf_routine_semantics(parsed: RpfRoutinePayload) -> RuleSemantics:
+    """Export RPFM wire and runtime facts without interpreting managed code."""
+    known_section_kinds = {1, 2, 3, 4, 5, 7}
+    unknown_sections = tuple(
+        section.kind
+        for section in parsed.sections
+        if section.kind not in known_section_kinds
+    )
+    has_entry_tails = any(routine.trailing_raw for routine in parsed.routines)
+    issues = [
+        SemanticIssue(
+            "rpf_sections_opaque",
+            "Section bytes are preserved verbatim; their internal formats are "
+            "not established.",
+        ),
+        SemanticIssue(
+            "rpf_managed_code_uninterpreted",
+            "CLR metadata and routine method bodies are not decoded or executed "
+            "by this exporter.",
+        ),
+        SemanticIssue(
+            "rpf_detection_semantics_unconfirmed",
+            "RPFROUTINE registration and runtime loading do not establish a "
+            "detection rule or final verdict.",
+        ),
+    ]
+    if parsed.crc_valid is False:
+        issues.append(
+            SemanticIssue(
+                "rpf_crc_invalid",
+                "The receiver-compatible payload CRC does not match.",
+                (
+                    ("stored_crc", parsed.stored_crc),
+                    ("computed_crc", parsed.computed_crc),
+                ),
+            )
+        )
+    if unknown_sections:
+        issues.append(
+            SemanticIssue(
+                "rpf_unknown_section_kind",
+                "Unrecognized section kinds are retained as raw bytes and are "
+                "not assigned semantics.",
+                (("kinds", JSONArray(unknown_sections)),),
+            )
+        )
+    if has_entry_tails:
+        issues.append(
+            SemanticIssue(
+                "rpf_entry_tail_uninterpreted",
+                "Bytes after the optional second NUL-terminated name are "
+                "preserved without interpretation.",
+            )
+        )
+    if parsed.tail_raw:
+        issues.append(
+            SemanticIssue(
+                "rpf_payload_tail_uninterpreted",
+                "Bytes after the declared RPFM size are preserved without "
+                "interpretation.",
+                (("length", len(parsed.tail_raw)),),
+            )
+        )
+
+    wire_routines = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("index", index),
+                    ("offset", routine.offset),
+                    ("size", routine.size),
+                    ("kind", routine.kind),
+                    ("receiver_candidate", routine.kind <= 0x200),
+                    ("fields_raw_hex", routine.fields_raw.hex()),
+                    ("name_raw_hex", routine.name_raw.hex()),
+                    ("name_ascii", routine.name),
+                    (
+                        "second_name_raw_hex",
+                        routine.second_name_raw.hex()
+                        if routine.second_name_raw is not None
+                        else None,
+                    ),
+                    ("second_name_ascii", routine.second_name),
+                    ("trailing_raw_hex", routine.trailing_raw.hex()),
+                )
+            )
+            for index, routine in enumerate(parsed.routines)
+        )
+    )
+    wire_sections = JSONArray(
+        tuple(
+            JSONObject(
+                (
+                    ("index", index),
+                    ("kind", section.kind),
+                    ("offset_from_body", section.offset),
+                    ("size", section.size),
+                    ("raw_hex", section.raw.hex()),
+                )
+            )
+            for index, section in enumerate(parsed.sections)
+        )
+    )
+    fail_closed = bool(
+        parsed.crc_valid is False
+        or unknown_sections
+        or has_entry_tails
+        or parsed.tail_raw
+    )
+    return RuleSemantics(
+        status="unsupported" if fail_closed else "observed_only",
+        representation="rpf_routine.receiver_and_runtime_inventory.v1",
+        data=JSONObject(
+            (
+                ("type", "RPFROUTINE"),
+                ("raw_hex", parsed.raw.hex()),
+                (
+                    "wire_container",
+                    JSONObject(
+                        (
+                            ("magic", "RPFM"),
+                            ("declared_size", parsed.declared_size),
+                            ("reserved", parsed.reserved),
+                            ("routine_count", parsed.routine_count),
+                            ("routine_table_offset", parsed.routine_table_offset),
+                            ("index_data_offset", parsed.index_data_offset),
+                            (
+                                "descriptor_table_offset",
+                                parsed.descriptor_table_offset,
+                            ),
+                            ("version", parsed.version),
+                            ("state", parsed.state),
+                            ("flags", parsed.flags),
+                            ("routines", wire_routines),
+                            ("sections", wire_sections),
+                            ("crc_marker_offset", parsed.crc_marker_offset),
+                            ("stored_crc", parsed.stored_crc),
+                            ("computed_crc", parsed.computed_crc),
+                            ("crc_valid", parsed.crc_valid),
+                            ("tail_raw_hex", parsed.tail_raw.hex()),
+                        )
+                    ),
+                ),
+                (
+                    "receiver_storage",
+                    JSONObject(
+                        (
+                            ("registration", "netvm_init_module"),
+                            ("registration_address", "0x180BE9030"),
+                            ("record_type", RPF_ROUTINE_TYPE),
+                            ("receiver", "nvsig_push"),
+                            ("receiver_address", "0x18032C230"),
+                            ("end_callback", "nvsig_pushend"),
+                            ("end_callback_address", "0x18032E850"),
+                            ("runtime_entry_stride", 160),
+                            ("internal_table_is_wire_layout", False),
+                        )
+                    ),
+                ),
+                (
+                    "runtime",
+                    JSONObject(
+                        (
+                            ("managed_module", "DynamicModule"),
+                            ("managed_module_name", "RPF-Emu"),
+                            ("metadata_cache", "nvmcache_data"),
+                            ("metadata_cache_address", "0x180259344"),
+                            ("native_module_loader", "init_native_rpf_routines"),
+                            ("native_module_loader_address", "0x180BEB244"),
+                            ("routine_interpreter", None),
+                            ("routine_call_sites", None),
+                            ("method_body_semantics", "unknown"),
+                        )
+                    ),
+                ),
+                (
+                    "detection_relevance",
+                    JSONObject(
+                        (
+                            ("detection_role", "unknown"),
+                            ("rule_semantics_established", False),
+                            ("final_verdict_established", False),
+                            ("basis", "receiver and runtime loading evidence only"),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "mpengine 1.443.903.0 netvm_init_module registers type 0x53",
+            "mpengine 1.443.903.0 nvsig_push validates and stores RPFM payloads",
+            "mpengine 1.443.903.0 nvsig_pushend publishes the DynamicModule",
+            "mpengine 1.443.903.0 nvmcache_data links CLR metadata and routines",
+            "mpengine 1.443.903.0 init_native_rpf_routines loads native RPF DLLs",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
+
+
 SPEC = FamilySpec(
     RPF_ROUTINE_TYPE,
     "RPFROUTINE",
     parse_rpf_routine,
     render_rpf_routine,
     export_rpf_routine,
+    semantic_exporter=export_rpf_routine_semantics,
 )
 
 __all__ = [
@@ -296,6 +507,7 @@ __all__ = [
     "RpfRoutinePayload",
     "RpfRoutineSection",
     "export_rpf_routine",
+    "export_rpf_routine_semantics",
     "parse_rpf_routine",
     "render_rpf_routine",
 ]
