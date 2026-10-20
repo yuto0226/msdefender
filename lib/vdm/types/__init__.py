@@ -13,6 +13,13 @@ from .appmap import (
     parse_appmap,
     render_appmap,
 )
+from .bloom_filter import (
+    BLOOM_FILTER_SPEC,
+    BLOOM_FILTER_TYPE,
+    BloomFilterPayload,
+    parse_bloom_filter,
+    render_bloom_filter,
+)
 from .bm_env_var_map import (
     BM_ENV_VAR_MAP_TYPE,
     BMEnvVarMap,
@@ -259,6 +266,8 @@ __all__ = [
     "AGGREGATOR_SPECS",
     "APPMAP_SPEC",
     "APPMAP_TYPE",
+    "BLOOM_FILTER_SPEC",
+    "BLOOM_FILTER_TYPE",
     "BM_ENV_VAR_MAP_SPEC",
     "BM_ENV_VAR_MAP_TYPE",
     "BOOT_SPEC",
@@ -339,6 +348,7 @@ __all__ = [
     "AppMapTerminator",
     "BMEnvVarMap",
     "BMInfo",
+    "BloomFilterPayload",
     "BootPayload",
     "BrutePayload",
     "CkOldPayload",
@@ -394,6 +404,7 @@ __all__ = [
     "VregPayload",
     "parse_aggregator",
     "parse_appmap",
+    "parse_bloom_filter",
     "parse_bm_env_var_map",
     "parse_bm_info",
     "parse_boot",
@@ -445,6 +456,7 @@ __all__ = [
     "parse_vreg",
     "render_aggregator",
     "render_appmap",
+    "render_bloom_filter",
     "render_bm_env_var_map",
     "render_bm_info",
     "render_boot",

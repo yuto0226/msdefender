@@ -5,6 +5,7 @@ from typing import Any
 from .core import FamilySpec
 from .types.aggregator import AGGREGATOR_SPECS
 from .types.appmap import APPMAP_SPEC
+from .types.bloom_filter import BLOOM_FILTER_SPEC
 from .types.bm_env_var_map import SPEC as BM_ENV_VAR_MAP_SPEC
 from .types.bm_info import SPEC as BM_INFO_SPEC
 from .types.boot import BOOT_SPEC
@@ -56,6 +57,7 @@ DEFAULT_REGISTRY: Mapping[int, FamilySpec[Any]] = MappingProxyType(
             REVOKED_CERTIFICATE_SPEC,
             *AGGREGATOR_SPECS,
             APPMAP_SPEC,
+            BLOOM_FILTER_SPEC,
             TRUSTED_PUBLISHER_SPEC,
             LATENT_THREAT_SPEC,
             LUASTANDALONE_SPEC,
