@@ -3,8 +3,17 @@
 from dataclasses import dataclass
 
 from ..bm import BmPattern, validate_bm_framing
+from ..bm_semantic import serialize_bm_pattern
 from ..bm_yara import render_bm_yara
-from ..core import DisplaySection, FamilySpec, FormatResult
+from ..core import (
+    DisplaySection,
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 _PREVIEW = 64
 _TEXT_PREVIEW = 512
@@ -27,8 +36,6 @@ def parse_pebmpat(payload: bytes) -> PEBMPat:
     if len(payload) < 4:
         raise ValueError("truncated PEBMPAT header")
     flags = payload[0]
-    if flags & ~1:
-        raise ValueError("PEBMPAT flags contain unsupported bits")
     name_len = payload[1]
     pattern_len = int.from_bytes(payload[2:4], "little")
     expected = 4 + name_len + pattern_len
@@ -38,7 +45,9 @@ def parse_pebmpat(payload: bytes) -> PEBMPat:
     name = payload[4:name_end]
     pattern_raw = payload[name_end:]
     pattern = None
-    if pattern_len <= 4:
+    if flags & ~1:
+        receiver_result = "no_op.unsupported_flags"
+    elif pattern_len <= 4:
         receiver_result = "no_op.pattern_length_le_4"
     else:
         sentinel = pattern_raw.find(b"\x90", 0, min(8, len(pattern_raw)))
@@ -52,6 +61,118 @@ def parse_pebmpat(payload: bytes) -> PEBMPat:
             else:
                 receiver_result = "added_candidate"
     return PEBMPat(payload, flags, name, pattern_raw, pattern, receiver_result)
+
+
+def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
+    """Export raw PEBMPAT framing and a non-authoritative BM decoder view."""
+    name_start = 4
+    pattern_start = name_start + len(parsed.name)
+    framing = JSONArray(
+        (
+            JSONObject(
+                (
+                    ("kind", "flags"),
+                    ("raw_span", JSONObject((("offset", 0), ("length", 1)))),
+                    ("raw_hex", parsed.raw[:1].hex()),
+                )
+            ),
+            JSONObject(
+                (
+                    ("kind", "name_length"),
+                    ("raw_span", JSONObject((("offset", 1), ("length", 1)))),
+                    ("raw_hex", parsed.raw[1:2].hex()),
+                )
+            ),
+            JSONObject(
+                (
+                    ("kind", "pattern_length"),
+                    ("raw_span", JSONObject((("offset", 2), ("length", 2)))),
+                    ("raw_hex", parsed.raw[2:4].hex()),
+                )
+            ),
+            JSONObject(
+                (
+                    ("kind", "name"),
+                    (
+                        "raw_span",
+                        JSONObject(
+                            (("offset", name_start), ("length", len(parsed.name)))
+                        ),
+                    ),
+                    ("raw_hex", parsed.name.hex()),
+                )
+            ),
+            JSONObject(
+                (
+                    ("kind", "pattern"),
+                    (
+                        "raw_span",
+                        JSONObject(
+                            (
+                                ("offset", pattern_start),
+                                ("length", len(parsed.pattern_raw)),
+                            )
+                        ),
+                    ),
+                    ("raw_hex", parsed.pattern_raw.hex()),
+                )
+            ),
+        )
+    )
+    issues = [
+        SemanticIssue(
+            "runtime_region_unknown",
+            "PEMapper offsets and scan_limit do not establish a portable file/RVA region.",
+        ),
+        SemanticIssue(
+            "final_detection_policy_unknown",
+            "A BM candidate still requires runtime matching and validation; final policy is not modeled.",
+        ),
+    ]
+    pattern_data = None
+    if parsed.pattern is not None:
+        pattern_data, pattern_issues = serialize_bm_pattern(parsed.pattern)
+        issues.extend(pattern_issues)
+        issues.append(
+            SemanticIssue(
+                "bm_operand_semantics_incomplete",
+                "BM framing is validated, but operand and mapper-dependent behavior are not portable.",
+            )
+        )
+    else:
+        issues.append(
+            SemanticIssue(
+                "receiver_no_op",
+                "The receiver does not add this pattern candidate; raw bytes are retained.",
+                (("receiver_result", parsed.receiver_result),),
+            )
+        )
+    data = JSONObject(
+        (
+            ("raw_hex", parsed.raw.hex()),
+            ("framing", framing),
+            ("flags", parsed.flags),
+            ("unknown_flag_bits", parsed.flags & ~1),
+            ("name_raw_hex", parsed.name.hex()),
+            ("pattern_length", len(parsed.pattern_raw)),
+            ("pattern_raw_hex", parsed.pattern_raw.hex()),
+            ("receiver_result", parsed.receiver_result),
+            ("bm_pattern", pattern_data),
+        )
+    )
+    return RuleSemantics(
+        status="ignored" if parsed.pattern is None else "unsupported",
+        representation="pebmpat.pattern.ir.v1",
+        data=data,
+        evidence=(
+            (
+                "PEBMPatScanner::AddNewPattern framing and BMGetPatternFlags "
+                "validation for mpengine 1.443.903.0"
+            ),
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+    )
 
 
 def _preview(raw: bytes) -> str:
@@ -100,4 +221,10 @@ def render_pebmpat(parsed: PEBMPat) -> FormatResult:
     return FormatResult(sections=(DisplaySection("PEBMPAT", rows=tuple(rows)),))
 
 
-SPEC = FamilySpec(0x95, "PEBMPAT", parse_pebmpat, render_pebmpat)
+SPEC = FamilySpec(
+    0x95,
+    "PEBMPAT",
+    parse_pebmpat,
+    render_pebmpat,
+    semantic_exporter=export_pebmpat_semantics,
+)
