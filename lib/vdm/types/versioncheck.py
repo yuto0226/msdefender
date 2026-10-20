@@ -17,6 +17,7 @@ class VersionCheckPredicate:
     status: PredicateStatus
     expression: str | None = None
     field_04_domain: str | None = None
+    effect: str | None = None
 
 
 VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingProxyType(
@@ -130,6 +131,18 @@ VERSIONCHECK_PREDICATES: Final[Mapping[int, VersionCheckPredicate]] = MappingPro
             "known",
             "byte(gktab+0xB44) == bool(field_04)",
             "uint32_t truthiness compared with raw uint8_t state",
+        ),
+        0x91: VersionCheckPredicate(
+            "known",
+            "always true",
+            "full uint32_t value",
+            "set staging_buffer[0:4] = field_04 and zero staging_buffer[4:16]",
+        ),
+        0x92: VersionCheckPredicate(
+            "known",
+            "always true",
+            "full uint32_t value",
+            "set staging_buffer[4:8] = field_04",
         ),
         0x13: VersionCheckPredicate(
             "known",
@@ -339,6 +352,8 @@ def render_versioncheck(parsed: VersionCheckPayload) -> FormatResult:
     ]
     if predicate.field_04_domain is not None:
         rows.append(("field_04_domain", predicate.field_04_domain))
+    if predicate.effect is not None:
+        rows.append(("effect", predicate.effect))
     sections = [
         DisplaySection(
             "Version Check",
