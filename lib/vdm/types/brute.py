@@ -172,21 +172,69 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
             ("position_raw", parsed.position_raw),
             ("body_length", parsed.body_len),
             ("trailing_raw_hex", parsed.trailing.hex()),
+            (
+                "runtime_matcher_context",
+                JSONObject(
+                    (
+                        (
+                            "registration",
+                            "init_brute -> kcrce_pushBrute -> Kcrce_SearchBrute",
+                        ),
+                        ("match_function", "BMMatchEx2"),
+                        ("subject_reader", "BMSBufferReader"),
+                        ("subject_base_argument", "subject buffer base"),
+                        ("subject_size_argument", "subject buffer size"),
+                        (
+                            "start_argument",
+                            "subject base + KCRCE loop candidate offset",
+                        ),
+                        (
+                            "remaining_size_argument",
+                            "subject size - KCRCE loop candidate offset",
+                        ),
+                        ("pattern_argument", "KCRCE entry +0x00 BM object"),
+                        ("pattern_size_argument", "KCRCE entry +0x12 body length"),
+                        ("translation", "identity"),
+                        ("translation_symbol", "BM_MAP_ALL"),
+                        ("flags_argument", "KCRCE entry +0x16 runtime control flags"),
+                        ("capture_output", "caller_supplied_match_end_slot"),
+                        ("offsets_vector_supplied", False),
+                        (
+                            "unresolved",
+                            JSONArray(
+                                (
+                                    "payload direction/position to candidate window and scan order",
+                                    "capture output consumer and reporting meaning",
+                                    "PCode result to final report/verdict policy",
+                                )
+                            ),
+                        ),
+                    )
+                ),
+            ),
         )
     )
     data = JSONObject(pattern_data.items + (("outer", outer),))
     return RuleSemantics(
         status="observed_only",
-        representation="bm.pattern.ir.v1",
+        representation="brute.bm_candidate.ir.v2",
         data=data,
-        evidence=("BM wire framing and decoded fields for mpengine 1.443.903.0",),
+        evidence=(
+            "BM wire framing and decoded fields for mpengine 1.443.903.0",
+            "init_brute @ 0x180AFD578 and kcrce_pushBrute @ 0x1800FEE80",
+            "Kcrce_SearchBrute @ 0x180131A38 calls BMMatchEx2 @ 0x1800EC420",
+            "BM candidate success is followed by ValidateSignatureWithPcode @ 0x180135494",
+        ),
         profile=f"mpengine-{parsed.pattern.profile}",
         issues=(
             SemanticIssue(
                 "outer_verdict_unknown",
-                "BRUTE direction and metadata are retained without assigning "
-                "verdict semantics.",
-                (("direction_raw", parsed.direction_raw),),
+                "BM match is a candidate only; direction, position, capture, "
+                "and final report policy are not fully resolved.",
+                (
+                    ("direction_raw", parsed.direction_raw),
+                    ("position_raw", parsed.position_raw),
+                ),
             ),
             *pattern_issues,
         ),
