@@ -102,6 +102,8 @@ from .nscript import (
 )
 from .pebmpat import SPEC as PEBMPAT_SPEC
 from .pebmpat import PEBMPat, parse_pebmpat, render_pebmpat
+from .pefile_cure import SPEC as PEFILE_CURE_SPEC
+from .pefile_cure import PeFileCure, parse_pefile_cure, render_pefile_cure
 from .pestatic import SPEC as PESTATIC_SPEC
 from .pestatic import PeStaticPayload, parse_pestatic, render_pestatic
 from .regkey import SPEC as REGKEY_SPEC
@@ -193,6 +195,7 @@ __all__ = [
     "NID_SPECS",
     "NSCRIPT_SPECS",
     "PEBMPAT_SPEC",
+    "PEFILE_CURE_SPEC",
     "PESTATIC_SPEC",
     "REGKEY_SPEC",
     "REVOKED_CERTIFICATE_SPEC",
@@ -234,6 +237,7 @@ __all__ = [
     "NScriptSPPayload",
     "NidPayload",
     "PEBMPat",
+    "PeFileCure",
     "PeStaticPayload",
     "RegKeyPayload",
     "RevokedCertificate",
@@ -273,6 +277,7 @@ __all__ = [
     "parse_nscript_cure",
     "parse_nscript_sp",
     "parse_pebmpat",
+    "parse_pefile_cure",
     "parse_pestatic",
     "parse_regkey",
     "parse_revoked_certificate",
@@ -307,6 +312,7 @@ __all__ = [
     "render_nscript_cure",
     "render_nscript_sp",
     "render_pebmpat",
+    "render_pefile_cure",
     "render_pestatic",
     "render_regkey",
     "render_revoked_certificate",
