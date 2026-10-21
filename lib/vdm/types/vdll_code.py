@@ -420,6 +420,7 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
         evidence=(
             "mpengine 1.443.903.0 dllsupp_init registers record types to host receivers",
             "mpengine 1.443.903.0 vdll_receiver passes payload and length to vdll_data_t::init",
+            "mpengine 1.443.903.0 vdll_load maps VDLL shadow pages into PEVAMap; x86/x64 handle_exception can redirect emulated IP to VDLL callback VA",
             "The accepted payload is preserved byte-for-byte; PE fields are bounded offline observations",
         ),
         profile="mpengine-1.443.903.0",
@@ -430,8 +431,10 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
                 "header normalization, and engine load acceptance are not established.",
             ),
             SemanticIssue(
-                "vdll_linkage_and_runtime_use_unknown",
-                "Export lookup, linkage, runtime execution, and scan-time matching "
+                "vdll_record_runtime_use_unknown",
+                "Finalize linking and x86/x64 emulated control-flow handoff "
+                "targets are confirmed. This record's callback reachability, "
+                "callback-body execution, scan-time match, and final detection "
                 "are not confirmed.",
             ),
             SemanticIssue(

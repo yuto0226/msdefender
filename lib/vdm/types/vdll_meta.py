@@ -144,6 +144,49 @@ def export_vdll_meta(
                 JSONObject(
                     (
                         (
+                            "finalize_host_table_index_map",
+                            JSONArray(
+                                (
+                                    JSONObject(
+                                        (
+                                            ("host_selector", 0),
+                                            ("table_index", 0),
+                                            ("registered_type", "0xB5"),
+                                        )
+                                    ),
+                                    JSONObject(
+                                        (
+                                            ("host_selector", 1),
+                                            ("table_index", 1),
+                                            ("registered_type", "0xE1"),
+                                        )
+                                    ),
+                                    JSONObject(
+                                        (
+                                            ("host_selector", 2),
+                                            ("table_index", 2),
+                                            ("registered_type", "0xE2"),
+                                        )
+                                    ),
+                                    JSONObject(
+                                        (
+                                            ("host_selector", 3),
+                                            ("table_index", 3),
+                                            ("registered_type", "0x93 (unnamed)"),
+                                        )
+                                    ),
+                                )
+                            ),
+                        ),
+                        (
+                            "this_record_finalize_table_index",
+                            {0xB5: 0, 0xE1: 1, 0xE2: 2}.get(type_byte),
+                        ),
+                        (
+                            "type_mapped_by_get_meta_type_from_vtype",
+                            type_byte != 0xE3,
+                        ),
+                        (
                             "entry_pairing",
                             (
                                 "No unique VDLL_CODE record pairing is established "
@@ -153,10 +196,11 @@ def export_vdll_meta(
                         (
                             "linker_symbol_lookup",
                             (
-                                "VDLL finalize queries hashed engine symbols through "
-                                "the current code object's address lookup, then falls "
-                                "back to PE exports; its connection to this metadata "
-                                "table is unconfirmed."
+                                "VDLL finalize maps host selectors 0/1/2/3 to global "
+                                "metadata table indexes 0/1/2/3 and queries hashed "
+                                "engine symbols there first; on miss it falls back "
+                                "to the current code object's PE export index. This "
+                                "does not establish unique wire-record pairing."
                             ),
                         ),
                     )
@@ -166,8 +210,10 @@ def export_vdll_meta(
                 "runtime_loader",
                 (
                     "The metadata receiver stores this record in a type-specific "
-                    "table; a direct path from this table to code loading or symbol "
-                    "resolution is not established."
+                    "global table. VDLL finalize uses host-selected table indexes "
+                    "for hashed symbol resolution; code-object PE exports are a "
+                    "separate fallback lookup. No unique metadata-to-code record "
+                    "pairing is established."
                 ),
             ),
             ("raw_hex", parsed.raw.hex()),
@@ -217,10 +263,10 @@ def export_vdll_meta(
             ),
             (
                 "mpengine 1.443.903.0 vdll_receiver_end @ 0x1800FF328 "
-                "queries the current code object's address lookup for hashed "
-                "engine symbols and falls back to PE exports; a direct "
-                "connection to this type-specific metadata table is not "
-                "established."
+                "queries get_address_from_meta_id(type_index, hash), which indexes "
+                "qword_1812748E0[type_index], then falls back to the current "
+                "vdll_data_t PE export index. get_meta_type_from_vtype maps "
+                "host selectors 0/1/2/3 to metadata indexes 0/1/2/3."
             ),
             (
                 "The metadata receiver's observed role is table insertion; this "
