@@ -360,11 +360,17 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
     """Describe receiver routing and PE observations, not detection policy."""
     host_selector = _HOST_SELECTOR[parsed.type]
     return RuleSemantics(
-        status="observed_only",
-        representation="vdll.receiver_observation.v2",
+        status="confirmed_subset",
+        representation="vdll.receiver_load_link.ir.v3",
         data=JSONObject(
             (
                 ("type", f"0x{parsed.type:02X}"),
+                (
+                    "semantic_scope",
+                    "receiver_load_normalization_and_linker_observation_only",
+                ),
+                ("record_role", "loadable_vdll_code_artifact"),
+                ("detection_rule", False),
                 ("record_payload_raw_hex", parsed.raw.hex()),
                 (
                     "payload_framing",
@@ -633,8 +639,9 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
             SemanticIssue(
                 "vdll_normalization_details_and_acceptance_partial",
                 "Static analysis confirms masked PE header normalization, bounded "
-                "section copying, and import/export parsing. The exact normalization "
-                "for every field and acceptance of this offline parse are not established.",
+                "section copying, and import/export parsing in the receiver. Exact "
+                "normalization of every field, relocation handling, and acceptance "
+                "of any specific offline-parsed artifact remain unresolved.",
             ),
             SemanticIssue(
                 "vdll_record_runtime_use_unknown",
