@@ -637,8 +637,9 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
     issues = [
         SemanticIssue(
             "runtime_effect_unresolved",
-            "Static analysis confirms a route into Lua execution and a "
-            "validator status writeback gate, but does not establish that this "
+            "Static analysis confirms engine-wide ingestion and execution-capable "
+            "contracts. The validator status-writeback contract is scoped to "
+            "category 0x15; none of these observations establishes that this "
             "record executes, its host-side effects, or the final verdict.",
             (
                 (
@@ -647,11 +648,18 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                         (
                             "AddScript may store a processed script in a holder",
                             "LoadFunction transfers LuaQ code into a Lua Proto",
-                            "the runner invokes the loaded closure with lua_pcall",
+                            "an engine-wide runner path can invoke a loaded closure with lua_pcall",
+                        )
+                        + (
                             (
-                                "the standalone validator writes a status candidate "
-                                "to match+0x30 only after execution and status checks"
-                            ),
+                                (
+                                    "for category 0x15, the standalone validator "
+                                    "writes a status candidate to match+0x30 only "
+                                    "after execution and status checks"
+                                ),
+                            )
+                            if parsed.category == 0x15
+                            else ()
                         )
                     ),
                 ),
@@ -842,9 +850,14 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                             (
                                 "scope",
                                 (
-                                    "static control-flow and data-flow observations; "
-                                    "does not assert that this record was executed"
+                                    "engine-wide static control-flow and data-flow "
+                                    "contracts; does not assert a per-record receiver "
+                                    "route or execution"
                                 ),
+                            ),
+                            (
+                                "payload_receiver_route",
+                                "static versus dynamic route is not encoded in the payload",
                             ),
                             (
                                 "record_to_vm",
@@ -898,8 +911,9 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                                             (
                                                 "AddScript stores a ProcessedLuaScript in a "
                                                 "holder; LoadFunction copies the LuaQ code "
-                                                "pointer/count into Proto; RunScript loads the "
-                                                "closure and calls lua_pcall."
+                                                "pointer/count into Proto; an engine-wide "
+                                                "RunScript path loads a closure and calls "
+                                                "lua_pcall. This is not a per-record route."
                                             ),
                                         ),
                                     )
@@ -909,7 +923,19 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                                 "signature_validator",
                                 JSONObject(
                                     (
-                                        ("status", "confirmed_subset"),
+                                        (
+                                            "status",
+                                            (
+                                                "confirmed_subset"
+                                                if parsed.category == 0x15
+                                                else "not_established_for_record_category"
+                                            ),
+                                        ),
+                                        ("category_scope", 0x15),
+                                        (
+                                            "applies_to_record_category",
+                                            parsed.category == 0x15,
+                                        ),
                                         (
                                             "lookup",
                                             (
@@ -959,6 +985,11 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                                         (
                                             "worker",
                                             "ValidateSignatureWithPcodeStandaloneWorker2",
+                                        ),
+                                        ("category_scope", 0x15),
+                                        (
+                                            "applies_to_record_category",
+                                            parsed.category == 0x15,
                                         ),
                                         ("worker_address", "0x18002E670"),
                                         ("worker_size", "0x81A"),
@@ -1070,11 +1101,16 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                 ("record_trailing_raw_hex", parsed.trailing_raw.hex()),
                 (
                     "runtime_registration",
-                    "record ingestion into ProcessedLuaScript holder confirmed",
+                    "engine-wide AddScript ingestion contract observed; payload does not encode the static/dynamic receiver route",
                 ),
                 (
                     "runtime_execution_effect",
-                    "script-defined host effects unknown; worker status writeback confirmed",
+                    (
+                        "script-defined host effects unknown; category 0x15 worker "
+                        "status-writeback contract confirmed"
+                        if parsed.category == 0x15
+                        else "script-defined host effects and category-specific consumer route unknown"
+                    ),
                 ),
             )
         ),
