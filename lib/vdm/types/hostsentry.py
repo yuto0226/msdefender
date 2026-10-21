@@ -162,8 +162,8 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
     )
     issues = [
         SemanticIssue(
-            "report_state_semantics_unknown",
-            "The callback report-state byte selects return 0x29 or 0, but its higher-level report meaning is unknown.",
+            "report_state_business_meaning_unknown",
+            "At the observed kcrce_scanfile callsite, context byte +1 is initialized to 1 and makes a match return 0x29; its business/report label remains unknown.",
         ),
         SemanticIssue(
             "scan_result_semantics_unknown",
@@ -234,7 +234,7 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
             if parsed.trailing_raw or (wildcard and hosts_domain is None)
             else "confirmed_subset"
         ),
-        representation="hostsentry.map-lookup.ir.v2",
+        representation="hostsentry.map-lookup.ir.v3",
         data=JSONObject(
             (
                 ("type", "HOSTSENTRY"),
@@ -253,6 +253,20 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
                             ),
                             ("c_string_hex", address_c_string.hex()),
                             ("null_sentinel", parsed.address_null_sentinel),
+                            (
+                                "domain",
+                                JSONObject(
+                                    (
+                                        ("wire_value", "NUL-terminated byte string"),
+                                        (
+                                            "engine_interpretation",
+                                            "case-insensitive NULL sentinel or CRCLowerStringA key",
+                                        ),
+                                        ("syntax_validation_observed", False),
+                                        ("semantic_domain", "unknown"),
+                                    )
+                                ),
+                            ),
                             ("map_key", address_key),
                         )
                     ),
@@ -325,6 +339,25 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
                                 JSONArray((0x29, 0x64)),
                             ),
                             (
+                                "caller_context_seed",
+                                JSONObject(
+                                    (
+                                        ("caller", "kcrce_scanfile"),
+                                        ("callsite", "0x18011FE43"),
+                                        (
+                                            "context_storage",
+                                            "stack-local result buffer",
+                                        ),
+                                        ("result_byte_0_initial", 0),
+                                        ("result_byte_1_initial", 1),
+                                        (
+                                            "result_byte_1_source",
+                                            "r13d = 1 at 0x18011FC21; stored at 0x18011FE3F",
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
                                 "callback_observed_effects",
                                 JSONObject(
                                     (
@@ -343,9 +376,10 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
                                         (
                                             "outer_verdict",
                                             (
-                                                "unknown; enumerator consumes distinct "
-                                                "callback return branches, but report "
-                                                "meaning is not established"
+                                                "unknown; kcrce_scanfile maps a nonzero "
+                                                "enumerator return to scanresult 0xFE, "
+                                                "but final SCAN_REPLY/report meaning is "
+                                                "not established"
                                             ),
                                         ),
                                     )
@@ -371,7 +405,11 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
             ),
             (
                 "mpengine 1.443.903.0 MPEnumHostsEntries (0x1804270AC) "
-                "callback consumption"
+                "0x29/0x64 callback branches and result consumption"
+            ),
+            (
+                "mpengine 1.443.903.0 kcrce_scanfile (0x18011FBC0) "
+                "callback context seed and nonzero enumerator result mapping"
             ),
             (
                 "mpengine 1.443.903.0 GetHostsDomain (0x18059E480) "
