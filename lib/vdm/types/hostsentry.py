@@ -234,7 +234,7 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
             if parsed.trailing_raw or (wildcard and hosts_domain is None)
             else "confirmed_subset"
         ),
-        representation="hostsentry.map-lookup.ir.v1",
+        representation="hostsentry.map-lookup.ir.v2",
         data=JSONObject(
             (
                 ("type", "HOSTSENTRY"),
@@ -324,6 +324,33 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
                                 "enumerator_special_branches",
                                 JSONArray((0x29, 0x64)),
                             ),
+                            (
+                                "callback_observed_effects",
+                                JSONObject(
+                                    (
+                                        (
+                                            "match_flag_write",
+                                            "result_byte_0 = 1 on match",
+                                        ),
+                                        (
+                                            "record_id_write",
+                                            "result_dword_4 = matched_record_id",
+                                        ),
+                                        (
+                                            "return_gate",
+                                            "return 0x29 when preexisting result_byte_1 != 0; otherwise return 0",
+                                        ),
+                                        (
+                                            "outer_verdict",
+                                            (
+                                                "unknown; enumerator consumes distinct "
+                                                "callback return branches, but report "
+                                                "meaning is not established"
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
                         )
                     ),
                 ),
@@ -334,10 +361,22 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
             )
         ),
         evidence=(
-            "mpengine 1.443.903.0 hosts_push bounded spans, record identity, and map insertion",
-            "mpengine 1.443.903.0 hosts_callback exact/wildcard lookup and result writes",
-            "mpengine 1.443.903.0 MPEnumHostsEntries callback consumption",
-            "mpengine 1.443.903.0 GetHostsDomain hostname slicing behavior",
+            (
+                "mpengine 1.443.903.0 hosts_push (0x18059E170) bounded spans, "
+                "record identity, and map insertion"
+            ),
+            (
+                "mpengine 1.443.903.0 hosts_callback (0x1804E9580) "
+                "exact/wildcard lookup, result writes, and return gate"
+            ),
+            (
+                "mpengine 1.443.903.0 MPEnumHostsEntries (0x1804270AC) "
+                "callback consumption"
+            ),
+            (
+                "mpengine 1.443.903.0 GetHostsDomain (0x18059E480) "
+                "hostname slicing behavior"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
