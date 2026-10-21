@@ -339,7 +339,9 @@ def export_boot_semantics(parsed: BootPayload) -> RuleSemantics:
             issues.append(
                 SemanticIssue(
                     "wrapped_selector_semantics_unknown",
-                    "The selector span wraps, but its predicate semantics are unknown.",
+                    "The matcher branch arithmetic produces this wrapped span, "
+                    "but selectors outside 4..32 have no confirmed valid wire "
+                    "domain or predicate semantics.",
                     (("selector_raw", parsed.selector_raw),),
                 )
             )
@@ -350,6 +352,10 @@ def export_boot_semantics(parsed: BootPayload) -> RuleSemantics:
                     (
                         "runtime_compare_span",
                         JSONArray(parsed.runtime_compare_span or ()),
+                    ),
+                    (
+                        "branch_arithmetic_status",
+                        "observed_machine_behavior_not_validated_wire_semantics",
                     ),
                     ("descriptor_raw_hex", field.hex()),
                 )
@@ -387,7 +393,7 @@ def export_boot_semantics(parsed: BootPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
-        representation="boot.candidate_probe.ir.v1",
+        representation="boot.candidate_probe.ir.v2",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
