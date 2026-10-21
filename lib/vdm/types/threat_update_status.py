@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 from typing import Final
 
-from ..core import FamilySpec, FormatResult, JSONObject, RuleSemantics, SemanticIssue
+from ..core import (
+    FamilySpec,
+    FormatResult,
+    JSONArray,
+    JSONObject,
+    RuleSemantics,
+    SemanticIssue,
+)
 
 _NAME_PREVIEW_BYTES = 64
 _NAME_PREVIEW_CHARS = 96
@@ -107,10 +114,19 @@ def export_threat_update_status_semantics(
     has_trailing = bool(parsed.trailing_raw)
     issues = [
         SemanticIssue(
-            "status_word_consumers_unresolved",
-            "The consumers and value domains of both DWORDs are unconfirmed.",
+            "dword_value_domains_unresolved",
+            "A bounded consumer uses the first DWORD as a mask operand and ORs "
+            "the second into an output DWORD, but neither value domain nor "
+            "product-level meaning is confirmed.",
             (("fields", "word_08, word_0c"),),
-        )
+        ),
+        SemanticIssue(
+            "metadata_only_effect_unproven",
+            "The receiver stores the DWORDs in a per-type row, but the bounded "
+            "static trace does not prove that their product effect is limited "
+            "to metadata updates.",
+            (("row_offsets", "0x08, 0x0C"),),
+        ),
     ]
     if has_trailing:
         issues.append(
@@ -126,7 +142,7 @@ def export_threat_update_status_semantics(
         # This describes our knowledge, not engine acceptance. The receiver
         # accepts a suffix after the registered template fields.
         status="observed_only",
-        representation="vdm.threat_update_status.receiver_observation.v1",
+        representation="vdm.threat_update_status.receiver_observation.v2",
         profile="mpengine-1.443.903.0",
         evidence=(
             (
@@ -139,9 +155,23 @@ def export_threat_update_status_semantics(
                 "DWORDs into row offsets 0x00, 0x08, and 0x0C."
             ),
             (
+                "mpengine 1.443.903.0 DispatchRecord at 0x1800FAF18 and "
+                "FastDispatchRecord at 0x1805CD7BC are confirmed generic callers "
+                "of ReceiveNewTemplate. ThreatUpdateStatus at 0x1809B0FF8 "
+                "reads the indexed row: row+0x08 is ANDed with input_context+0x08; "
+                "on regex match and nonzero intersection, row+0x0C is ORed into "
+                "output_context+0x0C. ksignalupper at 0x180279E98 calls it at "
+                "0x18027A6D5 and returns its MP_ERROR result."
+            ),
+            (
+                "mpengine 1.443.903.0 SigDataInit at 0x1809AEE24 registers "
+                "the type 0xC3 template from 0x180EEC9D0; template execution "
+                "does not establish metadata-only product behavior."
+            ),
+            (
                 "The local mpas.sig corpus contains three type 0xC3 records; "
-                "the bounded static audit did not identify dedicated consumers "
-                "for either DWORD."
+                "these samples corroborate observed values only and do not define "
+                "the two DWORDs' value domains or product-level effect."
             ),
         ),
         issues=tuple(issues),
@@ -185,9 +215,57 @@ def export_threat_update_status_semantics(
                 ),
                 ("word_08", parsed.word_08),
                 ("word_0c", parsed.word_0c),
-                ("value_semantics", "unresolved; no dedicated consumer confirmed"),
-                ("trailing_length", len(parsed.trailing_raw)),
-                ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                (
+                    "consumer_trace",
+                    JSONObject(
+                        (
+                            ("registration_address", "0x1809AEE24"),
+                            ("template_handler_address", "0x1803224D0"),
+                            (
+                                "dispatchers",
+                                JSONArray(("0x1800FAF18", "0x1805CD7BC")),
+                            ),
+                            ("dedicated_value_consumer", "confirmed_bounded_consumer"),
+                            ("consumer_address", "0x1809B0FF8"),
+                            (
+                                "name_gate",
+                                "row+0x00 regex must match the resolved threat name",
+                            ),
+                            ("mask_operand", "row+0x08 & input_context+0x08"),
+                            (
+                                "or_contribution",
+                                "row+0x0C is ORed into output_context+0x0C",
+                            ),
+                            ("caller_address", "0x180279E98"),
+                            ("caller_site", "0x18027A6D5"),
+                            ("metadata_only_effect", "not_proven"),
+                            (
+                                "search_scope",
+                                (
+                                    "one indexed-row consumer confirmed; other "
+                                    "consumers and product-level meaning unresolved"
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "value_semantics",
+                    "bounded use confirmed: first DWORD is a mask operand and second DWORD is an OR contribution; value domains and product-level meaning remain unresolved",
+                ),
+                (
+                    "trailing",
+                    JSONObject(
+                        (
+                            ("length", len(parsed.trailing_raw)),
+                            ("raw_hex", parsed.trailing_raw.hex()),
+                            (
+                                "interpretation",
+                                "accepted_by_template_loop_not_stored_by_its_fields",
+                            ),
+                        )
+                    ),
+                ),
             )
         ),
     )
