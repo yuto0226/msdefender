@@ -180,8 +180,54 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         (
                             "coordinate",
                             (
-                                "mapper address argument from ScanEx passed to "
-                                "PEEmuMapper::mmap / __mmap_ex"
+                                "ScanEx scan_offset guest VA; trie prefix and BM search "
+                                "both use this start, with no trie-hit offset returned"
+                            ),
+                        ),
+                        (
+                            "trie_reader",
+                            JSONObject(
+                                (
+                                    (
+                                        "callback",
+                                        "PEMapper::mmap vtable slot 0, one byte per call",
+                                    ),
+                                    ("cursor_start", "ScanEx scan_offset"),
+                                    ("cursor_step", 1),
+                                    (
+                                        "read_count_guard",
+                                        "GetChar permits calls while count <= 0x1000",
+                                    ),
+                                    ("read_count_field_offset", 0x10),
+                                    ("guest_va_field_offset", 0x08),
+                                )
+                            ),
+                        ),
+                        (
+                            "bm_subject_reader",
+                            JSONObject(
+                                (
+                                    (
+                                        "mapping_callback",
+                                        "BMMatchPEMapper gets pe_vars through mapper vtable slot 1 and calls __mmap_ex directly",
+                                    ),
+                                    (
+                                        "matcher_reader",
+                                        "BMMatchEx2 BMSBufferReader over the mapped contiguous pointer span",
+                                    ),
+                                    (
+                                        "reader_callbacks",
+                                        "BM worker reads mapped buffer bytes; it does not call ScanContext::GetChar",
+                                    ),
+                                    (
+                                        "reader_cursor",
+                                        "starts at mapped pointer + requested prefix in the primary-window branch",
+                                    ),
+                                    (
+                                        "reader_end",
+                                        "bounded by the mapped subject span",
+                                    ),
+                                )
                             ),
                         ),
                         ("primary_request_length", "prefix + 2048"),
@@ -305,6 +351,14 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         ),
                         ("runtime_bytes_observed", False),
                         (
+                            "candidate_search_guest_va",
+                            "ScanEx scan_offset; runtime value supplied by caller",
+                        ),
+                        (
+                            "candidate_search_range",
+                            "[scan_offset, scan_offset + 2048) in the primary-window branch",
+                        ),
+                        (
                             "file_or_rva_translation",
                             "conditional x86 and x64 file-backed VMM interval paths; candidate-specific mapping unknown",
                         ),
@@ -366,7 +420,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         status=(
             "ignored" if parsed.receiver_result.startswith("no_op.") else "unsupported"
         ),
-        representation="pebmpat.pattern.ir.v4",
+        representation="pebmpat.pattern.ir.v5",
         data=data,
         evidence=(
             (
