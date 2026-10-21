@@ -137,12 +137,19 @@ def export_threat_update_status_semantics(
                 (("trailing_length", len(parsed.trailing_raw)),),
             )
         )
+    issues.append(
+        SemanticIssue(
+            "final_policy_unresolved",
+            "The bounded consumer dataflow does not establish the final product policy or verdict.",
+            (("consumer", "ThreatUpdateStatus"),),
+        )
+    )
 
     return RuleSemantics(
-        # This describes our knowledge, not engine acceptance. The receiver
-        # accepts a suffix after the registered template fields.
-        status="observed_only",
-        representation="vdm.threat_update_status.receiver_observation.v2",
+        # confirmed_subset covers the fully consumed projection and bounded
+        # consumer dataflow; an unconsumed suffix remains unsupported.
+        status="unsupported" if has_trailing else "confirmed_subset",
+        representation="vdm.threat_update_status.receiver_observation.v3",
         profile="mpengine-1.443.903.0",
         evidence=(
             (
