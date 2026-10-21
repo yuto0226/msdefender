@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 CKOLDREC_TYPE: Final = 0x11
@@ -373,10 +376,9 @@ def _ck_semantics(
         assert isinstance(parsed, CkSimplePayload)
         first = JSONObject(
             (
-                ("callback_kind", "knbuf_crc"),
-                ("callback_length", 16),
+                ("callback_offset_argument", 0),
+                ("callback_length_argument", 16),
                 ("expected_callback_result", parsed.first16_crc32),
-                ("crc_algorithm", "CRC_1"),
             )
         )
         second = JSONObject(
@@ -386,14 +388,14 @@ def _ck_semantics(
                 ("expected_callback_result", parsed.second_crc32),
             )
         )
-        comparison = "callback CRC result equals stored DWORD"
-        representation = "cksimplerec.callback_checks.ir.v1"
-        callback_description = "caller_selected_callback_and_context"
+        comparison = "each caller-supplied callback result equals its stored DWORD"
+        representation = "cksimplerec.callback_checks.ir.v2"
+        callback_description = "caller_supplied_callback_and_context"
         callback_sequence = JSONArray((first, second))
         key = JSONObject(
             (
-                ("kind", "subject_first_dword"),
-                ("value", parsed.first_dword),
+                ("kind", "caller_supplied_lookup_key"),
+                ("expected", parsed.first_dword),
             )
         )
 
@@ -409,6 +411,29 @@ def _ck_semantics(
                 "SigseqFromDatabaseRecord @ 0x1805F7D84",
                 "SigshaFromDatabaseRecord @ 0x1803CA9B4",
             )
+        )
+
+    family = "ckoldrec" if old else "cksimplerec"
+    wire_claim_id = f"{family}_wire_layout"
+    dispatch_claim_id = f"{family}_dispatch_path"
+    receiver_claim_id = f"{family}_receiver_projection"
+    consumer_claim_id = f"{family}_runtime_callback_matching"
+    predicate_claim_id = f"{family}_candidate_predicate"
+    report_claim_id = f"{family}_report_route"
+    final_claim_id = f"{family}_final_verdict"
+    receiver_evidence_id = f"{family}_receiver"
+    dispatch_evidence_id = f"{family}_dispatch"
+    consumer_evidence_id = f"{family}_consumer"
+    report_evidence_id = f"{family}_report"
+    receiver_locator = "ReceiveNewTemplate CK descriptor route"
+    if old:
+        dispatch_locator = "cksig_init_module @ 0x1805648A0: selector 0x411"
+        consumer_locator = "krecpush_end @ 0x180474B20; ksigsearch @ 0x18019428C"
+    else:
+        dispatch_locator = "cksig_init_module @ 0x1805648A0: selector 0x450"
+        consumer_locator = (
+            "knrecpush_end @ 0x180412290; BuildTables @ 0x180412454; "
+            "knsigsearch @ 0x180193ED0"
         )
 
     return RuleSemantics(
@@ -449,6 +474,147 @@ def _ck_semantics(
         evidence=tuple(evidence),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id=wire_claim_id,
+                scope="wire_layout",
+                statement=(
+                    f"{family.upper()} has a 20-byte fixed prefix followed by a "
+                    "sign-bit-conditional u16-length-prefixed object and an "
+                    "otherwise unconsumed suffix."
+                ),
+                coverage="complete",
+                evidence_refs=(receiver_evidence_id,),
+            ),
+            SemanticClaim(
+                id=dispatch_claim_id,
+                scope="loader_dispatch",
+                statement=(
+                    f"The analyzed CK registration binds {family.upper()} to its "
+                    "generic template receiver and family post-handler."
+                ),
+                coverage="complete",
+                evidence_refs=(dispatch_evidence_id,),
+            ),
+            SemanticClaim(
+                id=receiver_claim_id,
+                scope="receiver_transform",
+                statement=(
+                    "The receiver projects the fixed prefix, stores threat identity, "
+                    "conditionally interns the bounded object, and accepts bytes left "
+                    "after the registered descriptors."
+                ),
+                coverage="subset",
+                evidence_refs=(receiver_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The conditional object's application-level semantics and "
+                        "all indirect consumers of its stored handle remain unknown.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=consumer_claim_id,
+                scope="runtime_consumer",
+                statement=(
+                    "The analyzed family scanner filters on ck_type and requires its "
+                    "lookup key/callback comparisons to match; callback domain and "
+                    "subject interpretation are supplied by the caller."
+                ),
+                coverage="subset",
+                evidence_refs=(consumer_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The complete set of caller-selected callback domains is not closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=predicate_claim_id,
+                scope="detection_predicate",
+                statement=(
+                    "Within the analyzed CK search path, a candidate requires the "
+                    "type/key gates and both callback-result comparisons to pass."
+                ),
+                coverage="subset",
+                evidence_refs=(consumer_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Caller preconditions and downstream policy gates are not a "
+                        "closed scan-level predicate.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=report_claim_id,
+                scope="report_mapping",
+                statement=(
+                    "A passing CK candidate is mapped through its stored threat ID, "
+                    "record identity, ShouldContinueScanning, and search_epilogue."
+                ),
+                coverage="subset",
+                evidence_refs=(report_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "Continuation, clearing, aggregation, and outer reply policy "
+                        "are not fully modeled.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=final_claim_id,
+                scope="final_verdict",
+                statement="A CK callback candidate does not establish the final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final scan arbitration remains outside the modeled path.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id=receiver_evidence_id,
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=receiver_locator,
+                supports=(wire_claim_id, receiver_claim_id),
+            ),
+            SemanticEvidence(
+                id=dispatch_evidence_id,
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=dispatch_locator,
+                supports=(dispatch_claim_id,),
+            ),
+            SemanticEvidence(
+                id=consumer_evidence_id,
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=consumer_locator,
+                supports=(consumer_claim_id, predicate_claim_id),
+            ),
+            SemanticEvidence(
+                id=report_evidence_id,
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    f"{consumer_locator}; ShouldContinueScanning @ 0x1801449E4; "
+                    "search_epilogue @ 0x180608784"
+                ),
+                supports=(report_claim_id,),
+            ),
+        ),
     )
 
 
