@@ -32,7 +32,7 @@ class GenSfxPayload:
 
     @property
     def name(self) -> str:
-        """Return the observed NUL-terminated ASCII name view."""
+        """Return the NUL-terminated byte-string view as lossy ASCII display."""
         return self.name_bytes.split(b"\0", 1)[0].decode("ascii", errors="replace")
 
 
@@ -74,7 +74,8 @@ def render_gensfx(parsed: GenSfxPayload) -> FormatResult:
                         "semantics_note",
                         (
                             "scan interval and 4-byte search pattern confirmed; "
-                            "lookup-key domain and delta purpose unresolved"
+                            "signed delta arithmetic confirmed, key domain and "
+                            "high-level delta purpose unresolved"
                         ),
                     ),
                 ),
@@ -97,10 +98,20 @@ def _raw_field(kind: str, raw: bytes, offset: int) -> JSONObject:
     )
 
 
+def _signed_i32(value: int) -> int:
+    """Interpret a raw DWORD as the signed offset used by the consumer."""
+    return value - (1 << 32) if value & 0x80000000 else value
+
+
 def export_gensfx_semantics(parsed: GenSfxPayload) -> RuleSemantics:
     """Export the confirmed GENSFX search fields without inventing a verdict."""
     name_prefix = parsed.name_bytes.split(b"\0", 1)[0]
     issues = (
+        SemanticIssue(
+            "name_encoding_unknown",
+            "The scanner passes the NUL-terminated name bytes to a %s format; "
+            "the text encoding is not established.",
+        ),
         SemanticIssue(
             "lookup_key_derivation_unknown",
             "The runtime lookup key is retained as a 32-bit value; its generation "
@@ -125,7 +136,7 @@ def export_gensfx_semantics(parsed: GenSfxPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status="confirmed_subset",
-        representation="gensfx.byte_search.ir.v1",
+        representation="gensfx.byte_search.ir.v2",
         data=JSONObject(
             (
                 ("type", "gensfx_byte_search"),
@@ -138,6 +149,11 @@ def export_gensfx_semantics(parsed: GenSfxPayload) -> RuleSemantics:
                             ("raw_hex", parsed.name_bytes.hex()),
                             ("c_string_prefix_raw_hex", name_prefix.hex()),
                             ("raw_span", _raw_span(0, NAME_SIZE)),
+                            ("encoding", "unknown"),
+                            (
+                                "runtime_interpretation",
+                                "NUL-terminated byte string passed to (%s)",
+                            ),
                             ("runtime_role", "result_label"),
                         )
                     ),
@@ -168,8 +184,15 @@ def export_gensfx_semantics(parsed: GenSfxPayload) -> RuleSemantics:
                                 "result_offset",
                                 JSONObject(
                                     (
-                                        ("expression", "hit_position + delta"),
+                                        (
+                                            "expression",
+                                            "hit_position + sign_extend_i32(delta)",
+                                        ),
                                         ("delta", parsed.match_offset_delta),
+                                        (
+                                            "delta_signed_i32",
+                                            _signed_i32(parsed.match_offset_delta),
+                                        ),
                                         (
                                             "delta_raw_hex",
                                             parsed.raw[0x50:0x54].hex(),
@@ -181,10 +204,50 @@ def export_gensfx_semantics(parsed: GenSfxPayload) -> RuleSemantics:
                         )
                     ),
                 ),
+                (
+                    "candidate_acceptance",
+                    JSONObject(
+                        (
+                            (
+                                "result_prepared_as",
+                                "label, result_offset, and file_size - result_offset",
+                            ),
+                            (
+                                "bounds_gate",
+                                "result_offset must be less than file_size",
+                            ),
+                            (
+                                "duplicate_interval_gate",
+                                (
+                                    "[result_offset, file_size) must not be burnt; "
+                                    "Burn(component_id=7) must succeed"
+                                ),
+                            ),
+                            ("callback_nonzero_requires_gates", True),
+                            (
+                                "threat_attribution_or_final_verdict",
+                                "unknown beyond this callback",
+                            ),
+                        )
+                    ),
+                ),
             )
         ),
         evidence=(
-            "GENSFX 0x56 wire layout and registered runtime lookup/search consumer",
+            (
+                "expk_init_module (0x180C45070) registers internal type 0x156 "
+                "with 0x54-byte rows and gsfxs_cmp (0x18058B6C0)"
+            ),
+            "gsfxs_keycmp (0x1806015E0) compares the runtime key with row +0x40",
+            (
+                "gsfx_ismine (0x180095070) reads the runtime key from file context "
+                "+0x20E8 and scans [row +0x44, row +0x48) for the exact 4 bytes "
+                "at row +0x4C"
+            ),
+            (
+                "gsfx_ismine (0x180095070) sign-extends row +0x50 and gates "
+                "callback success through UsedIntervals component 7"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=issues,
