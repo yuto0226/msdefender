@@ -132,7 +132,7 @@ def render_brute(parsed: BrutePayload) -> FormatResult:
 
 
 def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
-    """Export portable raw BM IR while withholding an engine verdict claim."""
+    """Export the confirmed BM candidate subset without claiming a verdict."""
     pattern_data, pattern_issues = serialize_bm_pattern(parsed.pattern)
     name_length = len(parsed.name_bytes)
     body_offset = 1 + name_length + 1 + 1 + 4 + 4
@@ -274,22 +274,25 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
     )
     data = JSONObject(pattern_data.items + (("outer", outer),))
     return RuleSemantics(
-        status="observed_only",
+        status="confirmed_subset",
         representation="brute.bm_candidate.ir.v2",
         data=data,
         evidence=(
             "BM wire framing and decoded fields for mpengine 1.443.903.0",
             "init_brute @ 0x180AFD578 and kcrce_pushBrute @ 0x1800FEE80",
             "Kcrce_SearchBrute @ 0x180131A38 calls BMMatchEx2 @ 0x1800EC420",
+            "Kcrce_SearchBrute applies the documented two-pass filters and match-end gate",
             "BM candidate success is followed by ValidateSignatureWithPcode @ 0x180135494",
+            "Kcrce_SearchBrute documents validator result routing without a final-verdict mapping",
         ),
         profile=f"mpengine-{parsed.pattern.profile}",
         issues=(
             SemanticIssue(
                 "outer_verdict_unknown",
-                "BM match is a candidate only. The two pass filters and the "
-                "second-pass match-end gate are observed, but fixed-position "
-                "semantics and final report policy are not fully resolved.",
+                "This export confirms only the modeled BM candidate subset. Raw "
+                "direction values have no domain names here, position's exact "
+                "payload meaning remains unresolved, and validator/report "
+                "branches do not establish an externally visible final verdict.",
                 (
                     ("direction_raw", parsed.direction_raw),
                     ("position_raw", parsed.position_raw),
