@@ -14,7 +14,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 from ..recid import RecIdTail, parse_recid_tail
 
@@ -393,14 +396,129 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             "A successful STATIC candidate comparison can populate detection "
             "state, but does not determine the outer scan or report verdict.",
         ),
-        SemanticIssue(
-            "allow_larger_gates_incomplete",
-            "Larger-file matches also depend on threat exceptions and "
-            "valid-signature checks.",
-        ),
     ]
+    if parsed.allow_larger:
+        issues.append(
+            SemanticIssue(
+                "allow_larger_gates_incomplete",
+                "allow_larger relaxes only the local size comparison; later "
+                "threat-exception and valid-signature gates still apply.",
+            )
+        )
+
+    wire_claim = SemanticClaim(
+        id="static_wire_layout",
+        scope="wire_layout",
+        statement=(
+            "STATIC begins with three little-endian CRC words, a file-size word, "
+            "a flags word, and a mode-dependent hash followed by an optional tail."
+        ),
+        coverage="complete" if parsed.mode is not None else "subset",
+        evidence_refs=("static_receiver",),
+        unknowns=(
+            ()
+            if parsed.mode is not None
+            else (
+                SemanticUnknown(
+                    "wire_layout",
+                    "The post-header width for mode values 5 through 7 is not an "
+                    "accepted STATIC comparison layout.",
+                ),
+            )
+        ),
+    )
+    dispatch_claim = SemanticClaim(
+        id="static_loader_dispatch",
+        scope="loader_dispatch",
+        statement="The analyzed registration path binds type 0x67 to STATIC.",
+        coverage="subset",
+        evidence_refs=("static_dispatch",),
+        unknowns=(
+            SemanticUnknown(
+                "loader_dispatch",
+                "Other database profiles and engine versions are not covered.",
+            ),
+        ),
+    )
+    if parsed.mode is None:
+        receiver_statement = (
+            "The loader reads the fixed header but does not accept this mode as a "
+            "complete STATIC comparison record."
+        )
+        receiver_evidence_refs = ("static_receiver",)
+        receiver_unknown_reason = "No accepted hash width or optional-tail boundary is established for this mode."
+    else:
+        receiver_statement = (
+            "The loader materializes the fixed header and accepted mode hash; an "
+            "optional bounded tail is converted to RecID metadata that may replace "
+            "the stored threat association but is not part of the hash predicate."
+        )
+        receiver_evidence_refs = ("static_receiver", "static_tail_receiver")
+        receiver_unknown_reason = (
+            "The producer meaning of the optional bounded tail object is unknown."
+        )
+    receiver_claim = SemanticClaim(
+        id="static_receiver_projection",
+        scope="receiver_transform",
+        statement=receiver_statement,
+        coverage="subset",
+        evidence_refs=receiver_evidence_refs,
+        unknowns=(SemanticUnknown("receiver_transform", receiver_unknown_reason),),
+    )
+    corpus_claim = SemanticClaim(
+        id="static_corpus_modes",
+        scope="corpus_observation",
+        statement=(
+            "The scanned mpas.sig and mpav.sig corpora contain STATIC modes 0, 1, "
+            "and 2; modes 3 through 7 were not observed."
+        ),
+        coverage="complete",
+        evidence_refs=("static_corpus",),
+    )
+    common_evidence = (
+        SemanticEvidence(
+            id="static_dispatch",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="staticrec_t::Register @ 0x180489A7C",
+            supports=(dispatch_claim.id,),
+        ),
+        SemanticEvidence(
+            id="static_receiver",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="staticrec_t::Load @ 0x1800FAABC",
+            supports=(wire_claim.id, receiver_claim.id),
+        ),
+        SemanticEvidence(
+            id="static_corpus",
+            axis="corpus",
+            kind="corpus",
+            source_ref="mpas.sig and mpav.sig exhaustive STATIC census",
+            locator="modes 0/1/2 observed; modes 3-7 absent",
+            supports=(corpus_claim.id,),
+        ),
+    )
     mode = parsed.mode
     if mode is None:
+        consumer_claim = SemanticClaim(
+            id="static_hash_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "The analyzed hash dispatcher names primitives for modes 5 through "
+                "7, but the complete STATIC comparison path rejects these modes."
+            ),
+            coverage="subset",
+            evidence_refs=("static_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "No accepted STATIC matcher semantics are established for this mode.",
+                ),
+            ),
+        )
         return RuleSemantics(
             status="unsupported",
             representation="static.match.ir.v2",
@@ -449,6 +567,63 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                     "Modes 5 through 7 are not accepted for complete STATIC hash "
                     "matching.",
                     (("mode", parsed.mode_value),),
+                ),
+            ),
+            claims=(
+                corpus_claim,
+                wire_claim,
+                dispatch_claim,
+                receiver_claim,
+                consumer_claim,
+                SemanticClaim(
+                    id="static_detection_predicate",
+                    scope="detection_predicate",
+                    statement="No accepted STATIC detection predicate is established for this mode.",
+                    coverage="unknown",
+                    unknowns=(
+                        SemanticUnknown(
+                            "detection_predicate",
+                            "The current comparison path rejects mode values 5 through 7.",
+                        ),
+                    ),
+                ),
+                SemanticClaim(
+                    id="static_report_mapping",
+                    scope="report_mapping",
+                    statement="STATIC report mapping is not established for a rejected mode.",
+                    coverage="unknown",
+                    unknowns=(
+                        SemanticUnknown(
+                            "report_mapping",
+                            "No accepted candidate reaches a confirmed report path.",
+                        ),
+                    ),
+                ),
+                SemanticClaim(
+                    id="static_final_verdict",
+                    scope="final_verdict",
+                    statement="The record does not establish a final scan verdict.",
+                    coverage="unknown",
+                    unknowns=(
+                        SemanticUnknown(
+                            "final_verdict",
+                            "Final scan-result arbitration is outside the analyzed path.",
+                        ),
+                    ),
+                ),
+            ),
+            claim_evidence=common_evidence
+            + (
+                SemanticEvidence(
+                    id="static_consumer",
+                    axis="consumer",
+                    kind="engine_static",
+                    source_ref="mpengine 1.443.903.0",
+                    locator=(
+                        "StaticHashProvider::CompareValues @ 0x1800F8490; "
+                        "GetHashes @ 0x1803B9F7C"
+                    ),
+                    supports=(consumer_claim.id,),
                 ),
             ),
         )
@@ -583,6 +758,46 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         parsed.recid_tail.has_object
         or bool(parsed.recid_tail.trailing_raw)
         or parsed.recid_tail.length_limit > len(parsed.recid_tail.raw) - 1
+    )
+    predicate_unknowns = [
+        SemanticUnknown(
+            "detection_predicate",
+            "Outer exception, signature-validity, and scan arbitration gates are not closed.",
+        )
+    ]
+    if parsed.allow_larger:
+        predicate_unknowns.append(
+            SemanticUnknown(
+                "detection_predicate",
+                "allow_larger only relaxes the local size comparison and remains conditional on later gates.",
+            )
+        )
+    consumer_claim = SemanticClaim(
+        id="static_hash_consumer",
+        scope="runtime_consumer",
+        statement=(
+            "The analyzed lookup and comparator consume the CRC candidate keys, "
+            "file-size policy, and mode-specific hash over the record-selected file range."
+        ),
+        coverage="subset",
+        evidence_refs=("static_consumer",),
+        unknowns=(
+            SemanticUnknown(
+                "runtime_consumer",
+                "Provider selection and all caller-specific input origins are not closed.",
+            ),
+        ),
+    )
+    predicate_claim = SemanticClaim(
+        id="static_detection_predicate",
+        scope="detection_predicate",
+        statement=(
+            "At the local STATIC matcher boundary, the staged CRC, size-policy, "
+            "and selected hash comparisons must succeed."
+        ),
+        coverage="subset",
+        evidence_refs=("static_consumer",),
+        unknowns=tuple(predicate_unknowns),
     )
     return RuleSemantics(
         status="unsupported" if recid_unsupported else "confirmed_subset",
@@ -753,6 +968,60 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            corpus_claim,
+            wire_claim,
+            dispatch_claim,
+            receiver_claim,
+            consumer_claim,
+            predicate_claim,
+            SemanticClaim(
+                id="static_report_mapping",
+                scope="report_mapping",
+                statement="A local STATIC match can update detection state, but its report mapping is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "No complete STATIC-to-report dataflow is established.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="static_final_verdict",
+                scope="final_verdict",
+                statement="A local STATIC match does not by itself establish the final scan verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final scan-result arbitration has not been followed to completion.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=common_evidence
+        + (
+            SemanticEvidence(
+                id="static_tail_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="createrecidpc @ 0x180435F74",
+                supports=(receiver_claim.id,),
+            ),
+            SemanticEvidence(
+                id="static_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "STATIC Lookup @ 0x1800F8C98; "
+                    "StaticHashProvider::CompareValues @ 0x1800F8490"
+                ),
+                supports=(consumer_claim.id, predicate_claim.id),
+            ),
+        ),
     )
 
 
