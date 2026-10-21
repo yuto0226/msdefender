@@ -12,7 +12,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 _PREVIEW = 64
@@ -582,21 +585,219 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             ("bm_pattern", pattern_data),
         )
     )
+    matcher_status = dict(candidate_matcher.items)["status"]
     if parsed.receiver_result.startswith("no_op."):
         status = "ignored"
     elif parsed.pattern is None:
         status = "unsupported"
     else:
-        matcher_status = dict(candidate_matcher.items)["status"]
         status = (
             "confirmed_subset"
             if matcher_status == "confirmed_subset"
             else "unsupported"
         )
 
+    if parsed.receiver_result == "added_candidate":
+        receiver_statement = (
+            "The checked flag, length, and BM-framing path accepts this payload "
+            "for trie-candidate insertion."
+        )
+    elif parsed.receiver_result.startswith("no_op."):
+        receiver_statement = (
+            "AddNewPattern accepts this payload without storing a pattern candidate "
+            f"({parsed.receiver_result})."
+        )
+    else:
+        receiver_statement = (
+            "AddNewPattern rejects this payload without storing a pattern candidate "
+            f"({parsed.receiver_result})."
+        )
+
+    operation_raw_ids: set[int] = set()
+    if pattern_data is not None:
+        serialized = dict(pattern_data.items)
+        operation_raw_ids = {
+            raw_id
+            for operation in serialized["operations"].items
+            if isinstance((raw_id := dict(operation.items)["raw_id"]), int)
+        }
+
+    runtime_unknowns: list[SemanticUnknown] = []
+    if parsed.pattern is None:
+        runtime_unknowns.append(
+            SemanticUnknown(
+                "runtime_consumer",
+                "This payload does not produce a validated BM candidate for the runtime matcher.",
+            )
+        )
+    else:
+        runtime_unknowns.extend(
+            (
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The candidate-specific guest address, mapped backing bytes, and trie eligibility are not observed.",
+                ),
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "P-code validation and scan arbitration occur outside this BM candidate projection.",
+                ),
+            )
+        )
+        if 0x04 in operation_raw_ids:
+            runtime_unknowns.append(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Raw operation 0x04 remains conditional on reader, translation, worker-mode, and pattern context.",
+                )
+            )
+        if 0x13 in operation_raw_ids:
+            runtime_unknowns.append(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Raw operation 0x13 remains conditional on displacement, reader state, captured state, and suffix behavior.",
+                )
+            )
+        if matcher_status in {"conditional", "unsupported"}:
+            runtime_unknowns.append(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "At least one decoded operation is conditional or unsupported in the candidate matcher projection.",
+                )
+            )
+
+    claims: list[SemanticClaim] = [
+        SemanticClaim(
+            id="pebmpat_wire_layout",
+            scope="wire_layout",
+            statement=(
+                "The checked payload consists of flags, one-byte name length, "
+                "little-endian pattern length, name bytes, and pattern bytes with "
+                "exact total length."
+            ),
+            coverage="complete",
+            evidence_refs=("pebmpat_add_pattern",),
+        ),
+        SemanticClaim(
+            id="pebmpat_receiver_disposition",
+            scope="receiver_transform",
+            statement=receiver_statement,
+            coverage="complete",
+            evidence_refs=("pebmpat_add_pattern",),
+        ),
+        SemanticClaim(
+            id="pebmpat_candidate_runtime",
+            scope="runtime_consumer",
+            statement=(
+                "A stored candidate is consumed through BMMatchPEMapper, BMMatchEx2, "
+                "and BMSBufferReader using a caller-selected PE mapping window."
+            ),
+            coverage=(
+                "subset"
+                if parsed.pattern is not None and matcher_status == "confirmed_subset"
+                else "unknown"
+            ),
+            evidence_refs=(
+                ("pebmpat_buffer_consumer",)
+                if parsed.pattern is not None and matcher_status == "confirmed_subset"
+                else ()
+            ),
+            unknowns=tuple(runtime_unknowns),
+        ),
+        SemanticClaim(
+            id="pebmpat_detection_predicate",
+            scope="detection_predicate",
+            statement=(
+                "The BM candidate result alone is not a complete PEBMPAT detection predicate."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Trie eligibility, mapped runtime input, P-code validation, and other candidate paths are not composed into a complete predicate.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="pebmpat_report_mapping",
+            scope="report_mapping",
+            statement="The observed ScanEx status branches do not establish report semantics.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "Status meanings and their outer policy/report mapping remain unresolved.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="pebmpat_final_verdict",
+            scope="final_verdict",
+            statement="A PEBMPAT candidate result is not a confirmed final verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Outer scan arbitration, reporting, and action policy remain unresolved.",
+                ),
+            ),
+        ),
+    ]
+    if 0x09 in operation_raw_ids:
+        claims.append(
+            SemanticClaim(
+                id="pebmpat_buffer_dispatch_09",
+                scope="runtime_consumer",
+                statement=(
+                    "When a decoded dispatch 0x09 operation executes in "
+                    "BMSBufferReader, it reaches the worker default-false branch."
+                ),
+                coverage="complete",
+                evidence_refs=("pebmpat_dispatch_09_consumer",),
+            )
+        )
+
+    claim_evidence = [
+        SemanticEvidence(
+            id="pebmpat_add_pattern",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "PEBMPatScanner::AddNewPattern @ 0x1804701C0; "
+                "BMGetPatternFlags @ 0x1800FEBF4"
+            ),
+            supports=("pebmpat_wire_layout", "pebmpat_receiver_disposition"),
+        ),
+    ]
+    if parsed.pattern is not None and matcher_status == "confirmed_subset":
+        claim_evidence.append(
+            SemanticEvidence(
+                id="pebmpat_buffer_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "PEBMPatScanner::ScanEx @ 0x1803D5A5C; "
+                    "BMMatchPEMapper @ 0x1803D5E44; BMMatchEx2 @ 0x1800EC420"
+                ),
+                supports=("pebmpat_candidate_runtime",),
+            )
+        )
+    if 0x09 in operation_raw_ids:
+        claim_evidence.append(
+            SemanticEvidence(
+                id="pebmpat_dispatch_09_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60",
+                supports=("pebmpat_buffer_dispatch_09",),
+            )
+        )
+
     return RuleSemantics(
         status=status,
-        representation="pebmpat.pattern.ir.v8",
+        representation="pebmpat.pattern.ir.v9",
         data=data,
         evidence=(
             (
@@ -616,6 +817,8 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=tuple(claims),
+        claim_evidence=tuple(claim_evidence),
     )
 
 
