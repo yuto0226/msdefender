@@ -189,11 +189,69 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
         )
     )
 
+    if parsed.type_byte == NID_TYPE:
+        provider_inputs = JSONArray(
+            (
+                JSONObject(
+                    (
+                        ("caller", "swf_scan_nid@0x180A5BF1C"),
+                        ("query_selector", 6),
+                        ("key_source", "context DWORDs at +0x60, +0x64, +0x68"),
+                        ("operation", "caller passes each present DWORD unchanged"),
+                        ("upstream_producer", "unknown"),
+                    )
+                ),
+            )
+        )
+    elif parsed.type_byte == SNID_TYPE:
+        provider_inputs = JSONArray(
+            (
+                JSONObject(
+                    (
+                        ("caller", "scan_imphash@0x1804A6370"),
+                        ("query_selector", 98),
+                        (
+                            "key_source",
+                            "context +0xAA018 (16 bytes) || context +0xAA028 (4 bytes)",
+                        ),
+                        ("operation", "copied unchanged to snidsearchrecidex"),
+                        ("upstream_producer", "unknown"),
+                    )
+                ),
+            )
+        )
+    else:
+        provider_inputs = JSONArray(
+            (
+                JSONObject(
+                    (
+                        ("caller", "IsHighlyTrustedPublisher@0x1805179D8"),
+                        ("query_selector", 132),
+                        ("key_source", "sigseqfromrecid(recid)"),
+                        ("operation", "existing signature sequence passed as uint64"),
+                    )
+                ),
+                JSONObject(
+                    (
+                        ("caller", "CheckPublisher@0x180298E3C"),
+                        ("query_selector", 133),
+                        (
+                            "key_source",
+                            "SCAN_REPLY +0x90 after trustedpublisher lookup",
+                        ),
+                        ("operation", "existing QWORD passed as uint64"),
+                    )
+                ),
+            )
+        )
+
     issues: list[SemanticIssue] = [
         SemanticIssue(
-            "key_derivation_unknown",
-            "The lookup key is retained as exact bytes without assigning a hash "
-            "or derivation algorithm.",
+            "upstream_key_generation_unknown",
+            "Provider-level caller inputs are recorded per family, but upstream "
+            "generation remains unknown: NID/SNID context-field producers are "
+            "unlocated; NID64 accepts RecID signature-sequence or existing reply "
+            "QWORD sources without establishing their common derivation.",
         ),
         SemanticIssue(
             "outer_verdict_unknown",
@@ -221,7 +279,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
-        representation="nid.exact_lookup.ir.v1",
+        representation="nid.exact_lookup.ir.v2",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
@@ -229,6 +287,20 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                 ("type_byte", parsed.type_byte),
                 ("family", _FAMILY_NAMES[parsed.type_byte]),
                 ("key_width", key_width),
+                (
+                    "metadata_source",
+                    JSONObject(
+                        (
+                            ("wire_payload_offset", key_width),
+                            ("raw_value", parsed.metadata_raw),
+                            (
+                                "lookup_role",
+                                "compared exactly with provider query_selector",
+                            ),
+                            ("normalization", "none confirmed at receiver/lookup"),
+                        )
+                    ),
+                ),
                 (
                     "lookup",
                     JSONObject(
@@ -239,6 +311,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                         )
                     ),
                 ),
+                ("provider_specific_key_inputs_confirmed_subset", provider_inputs),
                 (
                     "record_identity",
                     JSONObject(
@@ -255,7 +328,19 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
             )
         ),
         evidence=(
-            "NID-family receiver and exact lookup paths in mpengine 1.443.903.0",
+            (
+                "NID-family exact lookup wrappers: nidsearchrecidex@0x1800B01B0, "
+                "snidsearchrecidex@0x180145618, nid64searchrecid@0x1800AE690"
+            ),
+            (
+                "provider callers: swf_scan_nid@0x180A5BF1C, "
+                "scan_imphash@0x1804A6370, IsHighlyTrustedPublisher@0x1805179D8, "
+                "CheckPublisher@0x180298E3C"
+            ),
+            (
+                "receiver wire fields: NID RecordPush@0x180447AE4, "
+                "SNID RecordPush@0x1800FA5F0, NID64 RecordPush@0x180497874"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
