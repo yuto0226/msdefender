@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 from ..recid import RecIdTail, parse_recid_tail
 
@@ -179,14 +182,6 @@ def export_friendlyfile_sha256_semantics(
             "The exact digest lookup does not by itself define the final scan verdict.",
         )
     )
-    issues.append(
-        SemanticIssue(
-            "original_threat_attribution_unknown",
-            "Runtime lookup uses an index-based synthetic identity; no confirmed "
-            "path restores the enclosing VDM threat ID or name for a digest hit.",
-        )
-    )
-
     if tail is not None and tail.length_limit > len(tail.raw) - 1:
         unsupported = True
         issues.append(
@@ -264,7 +259,8 @@ def export_friendlyfile_sha256_semantics(
                     (
                         ("kind", "index_based_synthetic_identity"),
                         ("threat_sentinel", 0x7FFFFFFF),
-                        ("original_threat_attribution", "not_established"),
+                        ("source", "matched_digest_and_lookup_index"),
+                        ("recid_tail_effect", "none_on_loaded_entry_or_lookup"),
                     )
                 ),
             ),
@@ -287,6 +283,151 @@ def export_friendlyfile_sha256_semantics(
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="friendlyfile_sha256_wire_layout",
+                scope="wire_layout",
+                statement=(
+                    "FRIENDLYFILE_SHA256 contains a 32-byte digest followed by an "
+                    "optional bounded RecID-construction tail."
+                ),
+                coverage="complete",
+                evidence_refs=("friendlyfile_sha256_receiver",),
+            ),
+            SemanticClaim(
+                id="friendlyfile_sha256_loader_dispatch",
+                scope="loader_dispatch",
+                statement=(
+                    "The analyzed registration path binds type 0xA0 to the "
+                    "friendly-file SHA-256 store."
+                ),
+                coverage="subset",
+                evidence_refs=("friendlyfile_sha256_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Other database profiles and engine versions are not covered.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="friendlyfile_sha256_receiver_projection",
+                scope="receiver_transform",
+                statement=(
+                    "RecordPush copies only the first 32 bytes into the digest table; "
+                    "an optional tail must pass RecID construction, but its successful "
+                    "return value is discarded and does not alter the stored entry."
+                ),
+                coverage="subset",
+                evidence_refs=("friendlyfile_sha256_receiver",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The producer meaning and any consumer outside this subtype for the tail object are unknown.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="friendlyfile_sha256_lookup_consumer",
+                scope="runtime_consumer",
+                statement=(
+                    "The analyzed lookup compares the provider digest with a stored "
+                    "32-byte entry using exact memcmp semantics; it does not read the tail."
+                ),
+                coverage="subset",
+                evidence_refs=("friendlyfile_sha256_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Provider digest generation and all lookup callers are not closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="friendlyfile_sha256_local_predicate",
+                scope="detection_predicate",
+                statement=(
+                    "At the local store boundary, the 32-byte provider digest must "
+                    "exactly equal the stored digest."
+                ),
+                coverage="subset",
+                evidence_refs=("friendlyfile_sha256_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Subsequent NID64, attribute, and scan-policy branches are not part of this local predicate.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="friendlyfile_sha256_report_branch",
+                scope="report_mapping",
+                statement=(
+                    "A matched digest can enter attribute aggregation or detection-data "
+                    "branches using a synthetic 0xA0 identity derived independently of the tail."
+                ),
+                coverage="subset",
+                evidence_refs=("friendlyfile_sha256_report",),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "NID64 and outer scan-policy outcomes are not closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="friendlyfile_sha256_final_verdict",
+                scope="final_verdict",
+                statement="An exact friendly-file digest lookup does not establish a final allow or scan verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final trust, scan, and remediation arbitration remains unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="friendlyfile_sha256_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="FRIENDLYFILE_SHA256 Register @ 0x18048ADC4",
+                supports=("friendlyfile_sha256_loader_dispatch",),
+            ),
+            SemanticEvidence(
+                id="friendlyfile_sha256_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="FRIENDLYFILE_SHA256 RecordPush @ 0x18040A300",
+                supports=(
+                    "friendlyfile_sha256_wire_layout",
+                    "friendlyfile_sha256_receiver_projection",
+                ),
+            ),
+            SemanticEvidence(
+                id="friendlyfile_sha256_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="FRIENDLYFILE_SHA256 Lookup @ 0x1802D6E60",
+                supports=(
+                    "friendlyfile_sha256_lookup_consumer",
+                    "friendlyfile_sha256_local_predicate",
+                ),
+            ),
+            SemanticEvidence(
+                id="friendlyfile_sha256_report",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="FRIENDLYFILE_SHA256 Lookup @ 0x1802D6E60 matched-entry branches",
+                supports=("friendlyfile_sha256_report_branch",),
+            ),
+        ),
     )
 
 
