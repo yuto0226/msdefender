@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 UFSP_DISABLE_TYPE: Final = 0x88
@@ -144,6 +147,68 @@ def export_ufsp_disable_semantics(parsed: UfspDisablePayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="ufsp_exact_plugin_removal",
+                scope="receiver_transform",
+                statement=(
+                    "The receiver removes the registered plugin whose DWORD ID "
+                    "matches exactly; 0xFFFFFFFF is not a wildcard."
+                ),
+                coverage="complete",
+                evidence_refs=("ufsp_removal_receiver",),
+            ),
+            SemanticClaim(
+                id="ufsp_detection_predicate",
+                scope="detection_predicate",
+                statement="UFSP_DISABLE is not a confirmed content-match predicate.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Plugin removal is loader state; resulting scan behavior is unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="ufsp_report_mapping",
+                scope="report_mapping",
+                statement="The post-removal report policy is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "No plugin-state-to-report mapping has been followed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="ufsp_final_verdict",
+                scope="final_verdict",
+                statement="UFSP_DISABLE does not establish a final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "The final scanner outcome after plugin removal is unknown.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="ufsp_removal_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "Ufs_init_module @ 0x180B44A80; "
+                    "DisableUfsPluginPushEnd @ 0x18055CF20; "
+                    "ComparePluginIDs @ 0x180534CA0"
+                ),
+                supports=("ufsp_exact_plugin_removal",),
+            ),
+        ),
     )
 
 
