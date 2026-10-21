@@ -491,6 +491,12 @@ _CONFIRMED_SCANNER_CONTEXTS = {
         "report_route": "CSMSSCANNER_CHECKDETECTION_FLAG_SELECTS_INDEX",
         "report_family_index": 7,
     },
+    0xD4: {
+        "family_index": 10,
+        "reader_kinds": ("INNO_UFS_FILE_CHUNKS",),
+        "report_route": "INNOSCAN_REPORT_INDEX",
+        "report_family_index": 10,
+    },
 }
 
 
