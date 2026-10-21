@@ -41,7 +41,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 
@@ -1200,6 +1203,330 @@ def _outer_verdict_issue(type_byte: int) -> SemanticIssue:
     return SemanticIssue("outer_verdict_unknown", message, details)
 
 
+_HSTR_FAMILY_INDEX = MappingProxyType(
+    {
+        0x61: 0,
+        0x78: 0,
+        0x85: 0,
+        0x8C: 3,
+        0x8D: 2,
+        0x8E: 4,
+        0x8F: 1,
+        0x92: 14,
+        0xBE: 5,
+        0xBF: 6,
+        0xC5: 7,
+        0xD1: 8,
+        0xD3: 9,
+        0xD4: 10,
+        0xD7: 11,
+        0xE4: 12,
+        0xEA: 13,
+        0xEF: 15,
+    }
+)
+
+_HSTR_CONSUMER_LOCATORS = MappingProxyType(
+    {
+        0x61: "scan_vmem @ 0x1801379A0; scan_vbuff @ 0x1801A2DFC",
+        0x78: "scan_vmem @ 0x1801379A0; scan_vbuff @ 0x1801A2DFC",
+        0x85: "scan_vmem @ 0x1801379A0; scan_vbuff @ 0x1801A2DFC",
+        0x8C: (
+            "elfscan_hstr_region @ 0x180A57EBC; segment_based_hstr_scan @ 0x180A58870"
+        ),
+        0x8D: "MachoParser::machoscan_hstr_region @ 0x1805E6674",
+        0x8F: "RpfAPI_hstr_macro_search_buff @ 0x1805167D0",
+        0x92: "macappl_scanfile_legacy @ 0x1803E8340",
+        0xBE: "dexscan_hstr_region @ 0x1805E6F1C",
+        0xBF: "javan_userdata_t::Scan @ 0x180298D88",
+        0xC5: "CSMSScanner::ScanWorker @ 0x1800E9698",
+        0xD1: "swf_scan_kpat @ 0x18042771C",
+        0xD3: "AutoitScan @ 0x1803DC8E0",
+        0xD4: "InnoScan @ 0x1803DC690",
+        0xD7: "cmd_search_buffer @ 0x1804AD2DC",
+        0xEA: "RpfAPI_dmg_hstrsearch @ 0x180A078E0",
+    }
+)
+
+_HSTR_REPORT_LOCATORS = MappingProxyType(
+    {
+        0x61: (
+            "scan_vmem @ 0x1801379A0; hstr_internal_report_match_worker @ 0x180136268"
+        ),
+        0x78: (
+            "scan_vmem @ 0x1801379A0; hstr_internal_report_match_worker @ 0x180136268"
+        ),
+        0x85: (
+            "scan_vmem @ 0x1801379A0; hstr_internal_report_match_worker @ 0x180136268"
+        ),
+        0x8C: "elffile_scan; hstr_internal_report_match_worker @ 0x180136268",
+        0xC5: (
+            "CSMSScanner::CheckDetection @ 0x1800BC730; "
+            "hstr_internal_report_match_worker @ 0x180136268"
+        ),
+        0xD3: (
+            "AutoitScan @ 0x1803DC8E0; hstr_internal_report_match_worker @ 0x180136268"
+        ),
+        0xD4: (
+            "InnoScan @ 0x1803DC690; hstr_internal_report_match_worker @ 0x180136268"
+        ),
+    }
+)
+
+
+def _hstr_loader_locator(type_byte: int) -> str:
+    if type_byte == 0x61:
+        wrapper = "hstr_push @ 0x180502B40"
+    elif type_byte == 0x78:
+        wrapper = "hstr_push_ext @ 0x1800FEBD0"
+    elif type_byte == 0x85:
+        wrapper = "hstr_push_ext2 @ 0x180BBBEA0"
+    else:
+        wrapper = "hstr_push_common @ 0x1800FEE50"
+    return (
+        f"pattsearch_init @ 0x1805653B8; {wrapper}; "
+        f"family index {_HSTR_FAMILY_INDEX[type_byte]}"
+    )
+
+
+def _hstr_typed_semantics(
+    parsed: HstrPayload,
+) -> tuple[tuple[SemanticClaim, ...], tuple[SemanticEvidence, ...]]:
+    """Build claims without projecting one family's caller facts onto another."""
+    type_byte = parsed.type_byte
+    prefix = f"hstr_{type_byte:02x}"
+    family = _FAMILY_NAMES[type_byte]
+    accepted = not parsed.receiver_ignored
+    wire_complete = not parsed.trailing_raw
+    consumer_locator = _HSTR_CONSUMER_LOCATORS.get(type_byte)
+    report_locator = _HSTR_REPORT_LOCATORS.get(type_byte)
+
+    claims: list[SemanticClaim] = [
+        SemanticClaim(
+            id=f"{prefix}_wire_layout",
+            scope="wire_layout",
+            statement=(
+                f"{family} uses the HSTR header, NUL-terminated name, ordered "
+                "subsignature records, and up to two trailing WORD fields; only "
+                "0x61 omits per-subsignature wire flags."
+            ),
+            coverage="complete" if wire_complete else "subset",
+            evidence_refs=(f"{prefix}_receiver",),
+            unknowns=(
+                ()
+                if wire_complete
+                else (
+                    SemanticUnknown(
+                        "wire_layout",
+                        "Bytes after the two recognized tail WORD fields remain uninterpreted.",
+                    ),
+                )
+            ),
+        ),
+        SemanticClaim(
+            id=f"{prefix}_loader_dispatch",
+            scope="loader_dispatch",
+            statement=(
+                f"Record type 0x{type_byte:02X} is registered to the HSTR "
+                f"receiver path for family index {_HSTR_FAMILY_INDEX[type_byte]}."
+            ),
+            coverage="complete",
+            evidence_refs=(f"{prefix}_dispatch",),
+        ),
+        SemanticClaim(
+            id=f"{prefix}_receiver_transform",
+            scope="receiver_transform",
+            statement=(
+                "The receiver rejects this record before registration because a "
+                "subsignature flag value exceeds 0x03FF."
+                if parsed.receiver_ignored
+                else "The receiver materializes the shared HSTR row and ordered "
+                "subsignature entries for this family."
+            ),
+            coverage="complete" if parsed.receiver_ignored else "subset",
+            evidence_refs=(f"{prefix}_receiver",),
+            unknowns=(
+                ()
+                if parsed.receiver_ignored
+                else (
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "Type-dependent signature-property metadata and unknown stored flag bits are not projected.",
+                    ),
+                )
+            ),
+        ),
+    ]
+    evidence: list[SemanticEvidence] = [
+        SemanticEvidence(
+            id=f"{prefix}_dispatch",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=_hstr_loader_locator(type_byte),
+            supports=(f"{prefix}_loader_dispatch",),
+        ),
+        SemanticEvidence(
+            id=f"{prefix}_receiver",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "hstr_internal_push_ex @ 0x1800FDA6C; "
+                "add_sstring_internal @ 0x1800FE008"
+            ),
+            supports=(f"{prefix}_wire_layout", f"{prefix}_receiver_transform"),
+        ),
+    ]
+
+    consumer_confirmed = accepted and consumer_locator is not None
+    if consumer_confirmed:
+        claims.extend(
+            (
+                SemanticClaim(
+                    id=f"{prefix}_runtime_consumer",
+                    scope="runtime_consumer",
+                    statement=(
+                        f"The confirmed {family} caller submits a family-specific "
+                        "buffer or region to the shared HSTR search worker."
+                    ),
+                    coverage="subset",
+                    evidence_refs=(f"{prefix}_consumer",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "The complete caller set, subject-selection policy, and invocation lifecycle are not closed.",
+                        ),
+                    ),
+                ),
+                SemanticClaim(
+                    id=f"{prefix}_candidate_predicate",
+                    scope="detection_predicate",
+                    statement=(
+                        "The shared worker compares literal or BM subsignatures, "
+                        "deduplicates logical hits, and accumulates tags into "
+                        "candidate state."
+                    ),
+                    coverage="subset",
+                    evidence_refs=(f"{prefix}_consumer",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "detection_predicate",
+                            "Opaque BM operations, contextual flags, scanner policy, and record-to-threat composition remain outside this subset.",
+                        ),
+                    ),
+                ),
+            )
+        )
+        evidence.append(
+            SemanticEvidence(
+                id=f"{prefix}_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    f"{consumer_locator}; hstr_internal_search_worker @ 0x1800E9F70"
+                ),
+                supports=(
+                    f"{prefix}_runtime_consumer",
+                    f"{prefix}_candidate_predicate",
+                ),
+            )
+        )
+    else:
+        reason = (
+            "Receiver rejection prevents this record from reaching a loaded matcher."
+            if not accepted
+            else "No family-specific scan consumer is encoded in the typed evidence table."
+        )
+        claims.extend(
+            (
+                SemanticClaim(
+                    id=f"{prefix}_runtime_consumer",
+                    scope="runtime_consumer",
+                    statement=f"The runtime consumer for this {family} record is unresolved.",
+                    coverage="unknown",
+                    unknowns=(SemanticUnknown("runtime_consumer", reason),),
+                ),
+                SemanticClaim(
+                    id=f"{prefix}_candidate_predicate",
+                    scope="detection_predicate",
+                    statement=(
+                        "The record cannot yet be projected as a complete detection predicate."
+                    ),
+                    coverage="unknown",
+                    unknowns=(
+                        SemanticUnknown(
+                            "detection_predicate",
+                            "A receiver or byte-level rendering does not establish a family scanner predicate.",
+                        ),
+                    ),
+                ),
+            )
+        )
+
+    if accepted and report_locator is not None:
+        claims.append(
+            SemanticClaim(
+                id=f"{prefix}_report_mapping",
+                scope="report_mapping",
+                statement=(
+                    f"The confirmed {family} scanner path passes accumulated HSTR "
+                    "state into a family-selected report route."
+                ),
+                coverage="subset",
+                evidence_refs=(f"{prefix}_report",),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "Cross-helper aggregation, policy filtering, or downstream report interpretation remains unresolved.",
+                    ),
+                ),
+            )
+        )
+        evidence.append(
+            SemanticEvidence(
+                id=f"{prefix}_report",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=report_locator,
+                supports=(f"{prefix}_report_mapping",),
+            )
+        )
+    else:
+        claims.append(
+            SemanticClaim(
+                id=f"{prefix}_report_mapping",
+                scope="report_mapping",
+                statement=f"The {family} candidate-to-report mapping is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "No record-specific report mapping is established by the available family evidence.",
+                    ),
+                ),
+            )
+        )
+
+    claims.append(
+        SemanticClaim(
+            id=f"{prefix}_final_verdict",
+            scope="final_verdict",
+            statement="An HSTR candidate or report result is not a confirmed final verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Outer scan arbitration and the host-visible verdict remain unresolved.",
+                ),
+            ),
+        )
+    )
+    return tuple(claims), tuple(evidence)
+
+
 def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
     """Export a lossless HSTR matcher subset, never a final engine verdict."""
     unsupported = False
@@ -1633,6 +1960,58 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             ("scanner_context", _hstr_scanner_context(parsed.type_byte)),
         )
     )
+    claims, claim_evidence = _hstr_typed_semantics(parsed)
+    legacy_evidence = [
+        "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
+        "mpengine 1.443.903.0 add_sstring_internal @ 0x1800FE008",
+    ]
+    consumer_locator = _HSTR_CONSUMER_LOCATORS.get(parsed.type_byte)
+    if consumer_locator is not None:
+        legacy_evidence.extend(
+            (
+                "mpengine 1.443.903.0 hstr_internal_search_worker @ 0x1800E9F70",
+                f"mpengine 1.443.903.0 family-specific consumer: {consumer_locator}",
+            )
+        )
+    has_bm_subsignature = any(
+        subsig.flags is not None and subsig.flags.value & 0x0002
+        for subsig in parsed.subsignatures
+    )
+    if consumer_locator is not None and has_bm_subsignature:
+        legacy_evidence.extend(
+            (
+                "mpengine 1.443.903.0 BMMatchEx2 @ 0x1800EC420",
+                (
+                    "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ "
+                    "@ 0x1800EDB60: raw opcode 0x03 reads two widths and tries "
+                    "non-overlapping chunks with a recursively matched shared "
+                    "suffix (0x1800EE4A1-0x1800EE55F)"
+                ),
+                (
+                    "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ "
+                    "@ 0x1800EDB60: dispatch 0x09 is absent from the handler "
+                    "cases and reaches default false at 0x1800EDECB; HSTR "
+                    "BMMatchEx2 at 0x1800EA2F9 uses this worker"
+                ),
+                "mpengine 1.443.903.0 BMPatternToLower @ 0x1800FECFC",
+                (
+                    "mpengine 1.443.903.0 BM_MAP_LOWCASE selected when HSTR "
+                    "flags bit0 is clear"
+                ),
+            )
+        )
+    report_locator = _HSTR_REPORT_LOCATORS.get(parsed.type_byte)
+    if report_locator is not None:
+        legacy_evidence.append(
+            f"mpengine 1.443.903.0 family-specific report route: {report_locator}"
+        )
+    if parsed.type_byte in {0x61, 0x78, 0x85}:
+        legacy_evidence.append(
+            "mpengine 1.443.903.0 "
+            "PefileExtendedAttributesValidator::ValidateAttribute "
+            "@ 0x1800E94C0: exact validator mask 0x10 calls "
+            "mmap_is_dynamic_page(pe_vars, base + match_offset)"
+        )
     return RuleSemantics(
         status=(
             "ignored"
@@ -1643,23 +2022,11 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         ),
         representation="hstr.matcher-subset.ir.v10",
         data=data,
-        evidence=(
-            "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
-            "mpengine 1.443.903.0 add_sstring_internal @ 0x1800FE008",
-            "mpengine 1.443.903.0 hstr_internal_search_worker @ 0x1800E9F70",
-            "mpengine 1.443.903.0 PefileExtendedAttributesValidator::ValidateAttribute @ 0x1800E94C0: exact validator mask 0x10 calls mmap_is_dynamic_page(pe_vars, base + match_offset)",
-            "mpengine 1.443.903.0 scan_vmem @ 0x1801379A0 and scan_vbuff @ 0x1801A2DFC pass the PE validator to HSTR family index 0 (0x78/0x85)",
-            "mpengine 1.443.903.0 BMMatchEx2 @ 0x1800EC420",
-            "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60: raw opcode 0x03 reads two widths and tries non-overlapping chunks with a recursively matched shared suffix (0x1800EE4A1-0x1800EE55F)",
-            "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60: dispatch 0x09 is absent from the handler cases and reaches default false at 0x1800EDECB; HSTR BMMatchEx2 at 0x1800EA2F9 uses this worker",
-            "mpengine 1.443.903.0 BMPatternToLower @ 0x1800FECFC",
-            "mpengine 1.443.903.0 BM_MAP_LOWCASE selected when HSTR flags bit0 is clear",
-            "mpengine 1.443.903.0 hstr_internal_report_match_worker @ 0x180136268",
-            "mpengine 1.443.903.0 scan_vmem @ 0x1801379A0 and VMM_range_iterator::get_next_range_ex @ 0x180138208",
-            "mpengine 1.443.903.0 elfscan_hstr_region @ 0x180A57EBC and segment_based_hstr_scan @ 0x180A58870",
-        ),
+        evidence=tuple(legacy_evidence),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=claims,
+        claim_evidence=claim_evidence,
     )
 
 
