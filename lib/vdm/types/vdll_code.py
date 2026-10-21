@@ -13,7 +13,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 VDLL_CODE_TYPES: Final = (0x79, 0x7C, 0x91, 0x9C, 0xC4)
@@ -359,6 +362,158 @@ def export_vdll_code(parsed: VdllCodePayload) -> ArtifactExport:
 def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
     """Describe receiver routing and PE observations, not detection policy."""
     host_selector = _HOST_SELECTOR[parsed.type]
+    runtime_claim = (
+        SemanticClaim(
+            id="vdll_runtime_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "BM export-address operands can resolve loaded VDLL addresses for "
+                f"host group {host_selector}."
+            ),
+            coverage="subset",
+            evidence_refs=("vdll_bm_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The evidence does not prove that this record supplied the "
+                    "resolved address or that its callback executed.",
+                ),
+            ),
+        )
+        if host_selector in {0, 1}
+        else SemanticClaim(
+            id="vdll_runtime_consumer",
+            scope="runtime_consumer",
+            statement="Runtime consumption of this architecture-specific record is unresolved.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "No ARM or ARM64 record-specific runtime handoff is established.",
+                ),
+            ),
+        )
+    )
+    claims = (
+        SemanticClaim(
+            id="vdll_receiver_registration",
+            scope="loader_dispatch",
+            statement=(
+                f"Type 0x{parsed.type:02X} is routed to host selector {host_selector}."
+            ),
+            coverage="complete",
+            evidence_refs=("vdll_registration",),
+        ),
+        SemanticClaim(
+            id="vdll_receiver_normalization",
+            scope="receiver_transform",
+            statement=(
+                "The receiver parses PE headers and directories and copies bounded "
+                "section bytes into its internal image."
+            ),
+            coverage="subset",
+            evidence_refs=("vdll_init",),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "Exact normalization of every field, relocation handling, and "
+                    "acceptance of this specific offline artifact are unresolved.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vdll_link_resolution",
+            scope="receiver_transform",
+            statement=(
+                "The finalizer resolves import hashes through the host metadata table "
+                "and then the dependency VDLL export index."
+            ),
+            coverage="subset",
+            evidence_refs=("vdll_finalizer",),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "No unique metadata-record to code-record pairing key was observed.",
+                ),
+            ),
+        ),
+        runtime_claim,
+        SemanticClaim(
+            id="vdll_detection_predicate",
+            scope="detection_predicate",
+            statement="A record-specific detection predicate is not established.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Load, link, or callback handoff does not establish a match condition.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vdll_report_mapping",
+            scope="report_mapping",
+            statement="Candidate-to-report mapping is not established.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "No policy or report path was closed for this record.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vdll_final_verdict",
+            scope="final_verdict",
+            statement="The final detection verdict is not established.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "No record-specific final verdict dataflow was observed.",
+                ),
+            ),
+        ),
+    )
+    claim_evidence = (
+        SemanticEvidence(
+            id="vdll_registration",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="dllsupp_init @ 0x180CA6240",
+            supports=("vdll_receiver_registration",),
+        ),
+        SemanticEvidence(
+            id="vdll_init",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=("vdll_receiver @ 0x1801028A4; vdll_data_t::init @ 0x1801043D0"),
+            supports=("vdll_receiver_normalization",),
+        ),
+        SemanticEvidence(
+            id="vdll_finalizer",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="vdll_receiver_end @ 0x1800FF328",
+            supports=("vdll_link_resolution",),
+        ),
+    ) + (
+        (
+            SemanticEvidence(
+                id="vdll_bm_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="BMMatchWorker_BMSBufferReader_ opcodes 0x20/0x21",
+                supports=("vdll_runtime_consumer",),
+            ),
+        )
+        if host_selector in {0, 1}
+        else ()
+    )
     return RuleSemantics(
         status="confirmed_subset",
         representation="vdll.receiver_load_link.ir.v3",
@@ -656,6 +811,8 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
                 "condition or final detection policy.",
             ),
         ),
+        claims=claims,
+        claim_evidence=claim_evidence,
     )
 
 
