@@ -384,6 +384,37 @@ def _export_sigtree_semantics(
                                         ),
                                     ),
                                     (
+                                        "unmatched_procedure_reset",
+                                        JSONObject(
+                                            (
+                                                (
+                                                    "confirmed_effect",
+                                                    "rebuilds per-entry eligibility and erases associated attribute-log and signature-sequence entries",
+                                                ),
+                                                (
+                                                    "selector_match",
+                                                    "runtime entry byte +0x07 equals procedure selector",
+                                                ),
+                                                (
+                                                    "early_stop_guard",
+                                                    "runtime entry byte +0x06 has bit 0x40",
+                                                ),
+                                                (
+                                                    "eligibility_set_guard",
+                                                    "when per-record procedure state exists, set eligibility to 1 if entry byte +0x06 has bit 0x04, or (byte +0x06 | byte +0x08) has bit 0x02",
+                                                ),
+                                                (
+                                                    "eligibility_clear_case",
+                                                    "when per-record procedure state exists and neither eligibility guard matches, write 0",
+                                                ),
+                                                (
+                                                    "boolean_condition_effect",
+                                                    "not established; observed effect is candidate eligibility/lifecycle",
+                                                ),
+                                            )
+                                        ),
+                                    ),
+                                    (
                                         "level_extension_adjustment_enabled",
                                         has_countdown_adjustment,
                                     ),
@@ -524,21 +555,26 @@ def _export_sigtree_semantics(
     )
     return RuleSemantics(
         status="unsupported" if parsed.trailing_raw else "confirmed_subset",
-        representation="sigtree.wire_storage_evaluator.ir.v2",
+        representation="sigtree.wire_storage_evaluator.ir.v3",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 SigtreeHandlerInstance::push",
             "mpengine 1.443.903.0 siga_cksig_impl and MatchParameter",
             "mpengine 1.443.903.0 refresh_cksig_data",
             "mpengine 1.443.903.0 SigtreeHandlerInstance::ResetRecord",
+            (
+                "mpengine 1.443.903.0 "
+                "SigtreeHandlerInstance::ResetUnmatchedProcedure @ 0x18032F170"
+            ),
             "mpengine 1.443.903.0 RuntimeAggregator::SetAttribute",
         ),
         profile="mpengine-1.443.903.0",
         issues=(
             SemanticIssue(
                 "sigtree_entry_state_flags_incomplete",
-                "The countdown reduction is confirmed, but every flag-dependent "
-                "entry grouping and reset case is not yet named.",
+                "Countdown and unmatched-procedure eligibility resets are "
+                "partially confirmed; remaining entry grouping flags and their "
+                "wire names are unknown.",
             ),
             SemanticIssue(
                 "sigtree_final_policy_context_dependent",
@@ -626,7 +662,11 @@ def _export_sigtree_artifact(
             "Parameter operands are preserved as bytes; their full portable "
             "semantics are unknown."
         ),
-        "Entry grouping and all flag-dependent state reset cases are not fully named.",
+        (
+            "ResetUnmatchedProcedure confirms partial eligibility-reset guards "
+            "at runtime entry +0x06/+0x08, but their wire flag names and full "
+            "grouping semantics are unknown."
+        ),
         (
             "Named-attribute DAG edges require cross-record/runtime attribute "
             "resolution and are not synthesized here."
