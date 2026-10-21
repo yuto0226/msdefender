@@ -92,7 +92,7 @@ def _render(parsed: KpatPayload, *, extended: bool) -> FormatResult:
         rows.append(
             (
                 "pattern_semantics",
-                "BMMatchEx2 matcher confirmed; wire-to-row projection unresolved",
+                "BMMatchEx2 matcher confirmed; pattern projection confirmed",
             )
         )
     return FormatResult(
@@ -111,31 +111,18 @@ def render_kpatex(parsed: KpatPayload) -> FormatResult:
 def _export_semantics(
     parsed: KpatPayload, *, record_type: str, extended: bool
 ) -> RuleSemantics:
-    """Export matcher behavior separately from unresolved wire-to-row mapping."""
+    """Export the projected matcher subset without claiming a final verdict."""
     name_length_offset = parsed.prefix_size + 1
     name_offset = name_length_offset + (parsed.name_raw is not None)
     suffix_offset = name_offset + (len(parsed.name_raw) if parsed.name_raw else 0)
     issues = [
         SemanticIssue(
-            "wire_to_row_projection_unresolved",
-            "The engine matcher is confirmed, but the offline payload framing has "
-            "not been proven to project one-to-one into the loaded tsig row. "
-            "Do not treat pattern_raw as the confirmed matcher input.",
+            "final_verdict_unknown",
+            "The registered template projects this record into the matcher row, "
+            "but complete candidate validation and final report policy remain unknown.",
         )
     ]
-    # Matcher behavior is confirmed for loaded tsig rows, but the current
-    # binary does not prove that this offline payload becomes that row. Keep
-    # the record-level result observational until the projection is known.
-    status = "observed_only"
-    if parsed.suffix:
-        status = "unsupported"
-        issues.append(
-            SemanticIssue(
-                "unclassified_suffix",
-                "Bytes after the framed name have no confirmed receiver meaning.",
-                (("suffix_raw_hex", parsed.suffix.hex()),),
-            )
-        )
+    status = "confirmed_subset"
     if extended:
         matcher = JSONObject(
             (
@@ -145,8 +132,8 @@ def _export_semantics(
                 ("match_function", "BMMatchEx2"),
                 ("match_map", "BM_MAP_ALL"),
                 ("loaded_row_matcher", "BM token matcher with row flags"),
-                ("wire_payload_projection", "unresolved"),
-                ("pattern_input_equivalence", "unresolved"),
+                ("wire_payload_projection", "confirmed"),
+                ("pattern_input_equivalence", "confirmed"),
             )
         )
         matcher_evidence = (
@@ -162,8 +149,8 @@ def _export_semantics(
                 ("comparison", "bytewise pattern/subject comparison"),
                 ("wildcard_byte", 0x90),
                 ("wildcard_behavior", "matches any one subject byte"),
-                ("wire_payload_projection", "unresolved"),
-                ("pattern_input_equivalence", "unresolved"),
+                ("wire_payload_projection", "confirmed"),
+                ("pattern_input_equivalence", "confirmed"),
             )
         )
         matcher_evidence = (
@@ -194,18 +181,20 @@ def _export_semantics(
             ("suffix_offset", suffix_offset),
             ("suffix_raw_hex", parsed.suffix.hex()),
             ("runtime_matcher", matcher),
-            ("runtime_matcher_scope", "detached_profile_evidence"),
-            ("runtime_matcher_association", "unresolved"),
-            ("wire_payload_projection", "unresolved"),
+            ("runtime_matcher_scope", "record_projected_matcher_subset"),
+            ("runtime_matcher_association", "confirmed_by_registered_template"),
+            ("wire_payload_projection", "confirmed"),
         )
     )
     return RuleSemantics(
         status=status,
-        representation="kpat.runtime_matcher_subset.ir.v3",
+        representation="kpat.runtime_matcher_subset.ir.v4",
         data=data,
         evidence=(
             *matcher_evidence,
-            "Wire framing is an offline hypothesis; current binary template descriptor does not establish payload-to-row projection",
+            "mpengine 1.443.903.0 descriptor 0x180F67150 maps prefix-derived pattern length to row +0x10 and the following pattern span to the object index at row +0x0C",
+            "mpengine 1.443.903.0 ReceiveNewTemplate opcode sequence also maps key to row +0 and optional length-prefixed name to recid at row +8",
+            "ReceiveNewTemplate ends after registered descriptors without requiring payload exhaustion; trailing bytes do not enter the matcher row",
             "ValidateKpatMatch may validate/report candidates; complete verdict policy remains unresolved",
         ),
         profile="mpengine-1.443.903.0",
