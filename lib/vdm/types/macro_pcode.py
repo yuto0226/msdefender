@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 MACRO_PCODE_TYPE: Final = 0x42
@@ -112,6 +115,22 @@ def export_macro_pcode_semantics(parsed: MacroPcodePayload) -> RuleSemantics:
     """Export neutral header fields and the confirmed RME key/report path."""
     header_size = parsed.wire_width * 3
     type_byte = MACRO_PCODE_TYPE if parsed.wire_width == 4 else MACRO_PCODE64_TYPE
+    family = "macro_pcode" if type_byte == MACRO_PCODE_TYPE else "macro_pcode64"
+    receiver_name = (
+        "macro_pcode_push" if type_byte == MACRO_PCODE_TYPE else "macro_pcode64_push"
+    )
+    receiver_address = "0x1804D7600" if type_byte == MACRO_PCODE_TYPE else "0x1804D7670"
+    wire_claim_id = f"{family}.wire"
+    dispatch_claim_id = f"{family}.dispatch"
+    receiver_claim_id = f"{family}.receiver"
+    consumer_claim_id = f"{family}.consumer"
+    predicate_claim_id = f"{family}.predicate"
+    report_claim_id = f"{family}.report"
+    final_claim_id = f"{family}.final"
+    wire_evidence_id = f"{family}.receiver.static"
+    dispatch_evidence_id = f"{family}.dispatch.static"
+    consumer_evidence_id = f"{family}.consumer.static"
+    report_evidence_id = f"{family}.report.static"
     header_raw = b"".join(
         value.to_bytes(parsed.wire_width, "little") for value in parsed.fields
     )
@@ -303,6 +322,167 @@ def export_macro_pcode_semantics(parsed: MacroPcodePayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id=wire_claim_id,
+                scope="wire_layout",
+                statement=(
+                    f"Type 0x{type_byte:02X} has three little-endian "
+                    f"{parsed.wire_width * 8}-bit fields followed by either an "
+                    "empty tail or a tail containing a NUL byte."
+                ),
+                coverage="complete",
+                evidence_refs=(wire_evidence_id,),
+            ),
+            SemanticClaim(
+                id=dispatch_claim_id,
+                scope="loader_dispatch",
+                statement=(
+                    f"The analyzed macro module registers type 0x{type_byte:02X} "
+                    f"to {receiver_name} and the shared pcode finalizer."
+                ),
+                coverage="subset",
+                evidence_refs=(dispatch_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Module/category availability and registration failure paths "
+                        "remain outside this type-to-callback mapping.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=receiver_claim_id,
+                scope="receiver_transform",
+                statement=(
+                    "The receiver widens or preserves the three wire fields in a "
+                    "32-byte pcode_virrec, selects the 32- or 64-bit family, and "
+                    "constructs its RecID from the optional NUL-bearing tail."
+                ),
+                coverage="subset",
+                evidence_refs=(wire_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The application-level meanings of the three key fields and "
+                        "bytes following the first NUL are unknown.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=consumer_claim_id,
+                scope="runtime_consumer",
+                statement=(
+                    "RME::find_pcrc searches the finalized ordered pcode records by "
+                    "their scalar key and derives per-candidate SigSha and SigSeq "
+                    "values before consulting scan policy."
+                ),
+                coverage="subset",
+                evidence_refs=(consumer_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The complete set of callers and all comparator field "
+                        "interpretations are not closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=predicate_claim_id,
+                scope="detection_predicate",
+                statement=(
+                    "Within the analyzed RME path, an ordered-key candidate is "
+                    "subject to sequence/SHA handling and ShouldContinueScanning; "
+                    "key equality alone is not a detection verdict."
+                ),
+                coverage="subset",
+                evidence_refs=(consumer_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "The O97 caller preconditions and complete scan-level "
+                        "predicate remain unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=report_claim_id,
+                scope="report_mapping",
+                statement=(
+                    "The analyzed O97 path carries the selected pcode candidate into "
+                    "RME::reportvirus, which updates RME-local best-detection state "
+                    "only after its own policy checks."
+                ),
+                coverage="subset",
+                evidence_refs=(report_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "Continuation, competing candidates, and outer reply mapping "
+                        "are not fully modeled.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=final_claim_id,
+                scope="final_verdict",
+                statement=(
+                    "An RME-local MACRO_PCODE candidate does not establish the final "
+                    "host-visible verdict."
+                ),
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final scan arbitration lies outside the analyzed path.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id=wire_evidence_id,
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    f"{receiver_name} @ {receiver_address}; MacroAddPcodeRecord "
+                    "@ 0x1804D76D8"
+                ),
+                supports=(wire_claim_id, receiver_claim_id),
+            ),
+            SemanticEvidence(
+                id=dispatch_evidence_id,
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "macro_init_module @ 0x180BE28B0; "
+                    "MacroEndPushPcodeRecord @ 0x18053A0E8"
+                ),
+                supports=(dispatch_claim_id,),
+            ),
+            SemanticEvidence(
+                id=consumer_evidence_id,
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "pcode_virrec::GetSigSha @ 0x18037320C; "
+                    "pcode_virrec::GetSigSeq @ 0x180373178; "
+                    "RME::find_pcrc @ 0x180372C5C"
+                ),
+                supports=(consumer_claim_id, predicate_claim_id),
+            ),
+            SemanticEvidence(
+                id=report_evidence_id,
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=("RME::O97Scan @ 0x180325588; RME::reportvirus @ 0x1805EBF24"),
+                supports=(report_claim_id,),
+            ),
+        ),
     )
 
 
