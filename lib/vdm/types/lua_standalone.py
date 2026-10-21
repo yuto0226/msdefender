@@ -618,10 +618,12 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
             profile="mpengine-1.443.903.0",
         )
 
+    lua_export = None
     if parsed.script_form == "raw_lua" and parsed.lua_chunk is not None:
         try:
-            export_lua51(parsed.lua_chunk)
+            lua_export = export_lua51(parsed.lua_chunk)
         except ValueError:
+            lua_export = None
             artifact_decode = "unsupported_lua51_chunk_export"
         else:
             artifact_decode = "lua51_chunk_export_supported"
@@ -708,9 +710,112 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
         or parsed.trailing_raw
         or artifact_decode in {"unsupported_lua51_chunk_export", "unavailable"}
     )
+    program_artifact: JSONObject | None = None
+    if parsed.script_form == "raw_lua" and parsed.lua_chunk is not None:
+        prototype_count, instruction_count, constant_count = _lua_tree_counts(
+            parsed.lua_chunk.prototype
+        )
+        header = parsed.lua_chunk.header_raw
+        repeated_export = (
+            export_lua51(parsed.lua_chunk).data if lua_export is not None else None
+        )
+        program_artifact = JSONObject(
+            (
+                ("status", "observed_only"),
+                (
+                    "scope",
+                    (
+                        "static LuaQ structure and deterministic Lua 5.1 "
+                        "serialization; no opcode, control-flow, host-effect, "
+                        "or execution semantics"
+                    ),
+                ),
+                ("source_raw_sha256", hashlib.sha256(parsed.raw).hexdigest()),
+                ("script_raw_sha256", hashlib.sha256(parsed.script).hexdigest()),
+                ("luaq_consumed_length", parsed.lua_chunk.consumed),
+                ("luaq_trailing_length", len(parsed.lua_chunk.trailing_raw)),
+                (
+                    "luaq_trailing_sha256",
+                    hashlib.sha256(parsed.lua_chunk.trailing_raw).hexdigest(),
+                ),
+                (
+                    "lua51_abi",
+                    JSONObject(
+                        (
+                            ("signature_hex", header[:4].hex()),
+                            ("version", header[4]),
+                            ("format", header[5]),
+                            ("endianness", "little" if header[6] == 1 else "big"),
+                            ("sizeof_int", header[7]),
+                            ("sizeof_size_t", header[8]),
+                            ("sizeof_instruction", header[9]),
+                            ("sizeof_lua_number", header[10]),
+                            ("lua_number_is_integral", bool(header[11])),
+                            ("header_raw_hex", header.hex()),
+                        )
+                    ),
+                ),
+                (
+                    "counts",
+                    JSONObject(
+                        (
+                            ("prototypes", prototype_count),
+                            ("instructions", instruction_count),
+                            ("constants", constant_count),
+                        )
+                    ),
+                ),
+                (
+                    "exported_lua51_chunk_sha256",
+                    hashlib.sha256(lua_export.data).hexdigest()
+                    if lua_export is not None
+                    else None,
+                ),
+                (
+                    "export_validation",
+                    JSONObject(
+                        (
+                            (
+                                "repeat_export_byte_identical",
+                                repeated_export == lua_export.data
+                                if lua_export is not None
+                                else None,
+                            ),
+                            ("round_trip_parser_available", False),
+                            (
+                                "round_trip_note",
+                                (
+                                    "No Lua 5.1 chunk parser exists in this codebase; "
+                                    "only deterministic re-export and output hashing "
+                                    "are checked."
+                                ),
+                            ),
+                            (
+                                "warnings",
+                                JSONArray(
+                                    tuple(
+                                        JSONObject(
+                                            (
+                                                ("code", warning.code),
+                                                ("message", warning.message),
+                                            )
+                                        )
+                                        for warning in (
+                                            lua_export.warnings
+                                            if lua_export is not None
+                                            else ()
+                                        )
+                                    )
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+            )
+        )
     return RuleSemantics(
         status="unsupported" if unsupported else "observed_only",
-        representation="luastandalone.record_runtime_effect.v3",
+        representation="luastandalone.record_runtime_effect.v4",
         data=JSONObject(
             (
                 ("signature_type", LUASTANDALONE_TYPE),
@@ -726,7 +831,9 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                 ("script_form", parsed.script_form),
                 ("script_raw_hex", parsed.script.hex()),
                 ("script_sha256", hashlib.sha256(parsed.script).hexdigest()),
+                ("source_raw_sha256", hashlib.sha256(parsed.raw).hexdigest()),
                 ("artifact_decode", artifact_decode),
+                ("program_artifact", program_artifact),
                 (
                     "execution_routing",
                     JSONObject(
