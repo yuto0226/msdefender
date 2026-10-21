@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 _FIELD_FAMILIES = {
@@ -291,6 +294,214 @@ def _export_sigtree_semantics(
         )
         for index, entry in enumerate(parsed.entries)
     )
+    claims = [
+        SemanticClaim(
+            id="sigtree_wire_projection",
+            scope="wire_layout",
+            statement=(
+                "The shared receiver parses the four-byte record header, bounded "
+                "NUL-terminated name, level-dependent record and entry extensions, "
+                "and the selected variable parameters in wire order B then A."
+            ),
+            coverage="subset",
+            evidence_refs=("sigtree_receiver",),
+            unknowns=(
+                SemanticUnknown(
+                    "wire_layout",
+                    "Unobserved accepted shapes and the meanings of remaining raw "
+                    "header, entry, and extension fields are unresolved.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="sigtree_dispatch_path",
+            scope="loader_dispatch",
+            statement=(
+                f"Type {record_type:#04x} is routed through its dedicated wrapper; "
+                "payload byte +0x03 selects one of seven handler instances, and the "
+                "wrapper calls the shared push/pushend path."
+            ),
+            coverage="complete",
+            evidence_refs=("sigtree_dispatch",),
+        ),
+        SemanticClaim(
+            id="sigtree_receiver_projection",
+            scope="receiver_transform",
+            statement=(
+                "The receiver projects fixed wire DWORDs at +0x00/+0x04/+0x08/+0x0C "
+                "to runtime entry +0x04/+0x00/+0x10/+0x28, optional DWORDs to "
+                "+0x08/+0x20, and initializes selected BM/extended or typed-hash "
+                "parameters through their dedicated helpers."
+            ),
+            coverage="subset",
+            evidence_refs=("sigtree_receiver",),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "Allocation, failure cleanup, every derived runtime field, and "
+                    "the full meanings of raw flag bits are not projected.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="sigtree_candidate_lookup",
+            scope="runtime_consumer",
+            statement=(
+                "The evaluator searches a sorted candidate index, applies fired/state "
+                "gates, and uses runtime entry +0x38 only as a same-group candidate "
+                "skip after a second-parameter failure."
+            ),
+            coverage="subset",
+            evidence_refs=("sigtree_evaluator",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Special-key routing, all state gates, and candidate index "
+                    "construction are not fully modeled.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="sigtree_entry_parameter_match",
+            scope="detection_predicate",
+            statement=(
+                "Within the selected per-entry branch, a two-parameter entry reaches "
+                "refresh only when both MatchParameter calls succeed; a "
+                "single-parameter branch requires its one call to succeed."
+            ),
+            coverage="subset",
+            evidence_refs=("sigtree_evaluator",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Parameter operand semantics and the complete branch-selection "
+                    "conditions remain unresolved; this is not a global all-entry AND.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="sigtree_candidate_reduction",
+            scope="detection_predicate",
+            statement=(
+                "An accepted ordinary contribution decrements a nonzero per-record "
+                "countdown initialized from wire byte +0x02; descriptor +0x0D and "
+                "the post-decrement odd adjustment determine whether refresh emits "
+                "a completed or incomplete candidate state."
+            ),
+            coverage="subset",
+            evidence_refs=("sigtree_evaluator",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Canonical guard operators, all contribution-eligibility flags, "
+                    "and downstream candidate policy remain unresolved.",
+                ),
+            ),
+        ),
+    ]
+    claim_evidence = [
+        SemanticEvidence(
+            id="sigtree_dispatch",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "sigtree_init_module @ 0x1805F3600; sigattr_push @ 0x1800F2410; "
+                "sigattr_push_bm @ 0x1800F2DA0; sigattr_push_ext @ 0x1800F3060"
+            ),
+            supports=("sigtree_dispatch_path",),
+        ),
+        SemanticEvidence(
+            id="sigtree_receiver",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "SigtreeHandlerInstance::push @ 0x1800F1D84; pushend @ 0x18032EB04"
+            ),
+            supports=("sigtree_wire_projection", "sigtree_receiver_projection"),
+        ),
+        SemanticEvidence(
+            id="sigtree_evaluator",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "SigtreeHandlerInstance::siga_cksig_impl @ 0x18013D6A0; "
+                "MatchParameter @ 0x1800EC6B0; refresh_cksig_data @ 0x180132630; "
+                "ResetRecord @ 0x18032F314; ResetUnmatchedProcedure @ 0x18032F170"
+            ),
+            supports=(
+                "sigtree_candidate_lookup",
+                "sigtree_entry_parameter_match",
+                "sigtree_candidate_reduction",
+            ),
+        ),
+    ]
+    if record_type == 0xB3 and parsed.handler_index == 2:
+        claims.append(
+            SemanticClaim(
+                id="sigtree_bm_report_path",
+                scope="report_mapping",
+                statement=(
+                    "For handler instance 2, conditional refresh branches can call "
+                    "the BMLua reporting hook or emit BMLua detection telemetry."
+                ),
+                coverage="subset",
+                evidence_refs=("sigtree_bm_report",),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "The exact branch predicates and mapping to a user-visible "
+                        "report are not fully modeled.",
+                    ),
+                ),
+            )
+        )
+        claim_evidence.append(
+            SemanticEvidence(
+                id="sigtree_bm_report",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="SigtreeHandlerInstance::refresh_cksig_data @ 0x180132630",
+                supports=("sigtree_bm_report_path",),
+            )
+        )
+    else:
+        claims.append(
+            SemanticClaim(
+                id="sigtree_report_mapping",
+                scope="report_mapping",
+                statement=(
+                    f"No record-type-specific report mapping is established for "
+                    f"type {record_type:#04x}."
+                ),
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "Candidate completion is separated from downstream report "
+                        "and policy processing.",
+                    ),
+                ),
+            )
+        )
+    claims.append(
+        SemanticClaim(
+            id="sigtree_final_verdict",
+            scope="final_verdict",
+            statement="A SIGTREE candidate state is not a confirmed final verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Validator, aggregation, scan-policy, low-fidelity, HIPS, and "
+                    "report arbitration remain outside the portable record rule.",
+                ),
+            ),
+        )
+    )
     data = JSONObject(
         (
             (
@@ -328,7 +539,7 @@ def _export_sigtree_semantics(
                 "runtime_evaluator",
                 JSONObject(
                     (
-                        ("graph_model", "named_attribute_dependency_dag"),
+                        ("candidate_index", "sorted attribute-key range"),
                         (
                             "named_attribute_lookup",
                             (
@@ -338,13 +549,16 @@ def _export_sigtree_semantics(
                         ),
                         (
                             "entry_parameter_combination",
-                            "all selected parameters must match",
+                            (
+                                "selected two-parameter branch requires both; selected "
+                                "single-parameter branch requires one"
+                            ),
                         ),
                         (
                             "parameter_dispatch",
                             (
-                                "BMSearchWorker, scalar/CRC equality, or strong-hash "
-                                "path according to runtime flags"
+                                "MatchParameter selects a runtime-specific helper "
+                                "from entry flags; exact operand behavior is unresolved"
                             ),
                         ),
                         (
@@ -531,38 +745,17 @@ def _export_sigtree_semantics(
                             "refresh_cksig_data may emit a named attribute",
                         ),
                         (
-                            "propagation",
-                            (
-                                "RuntimeAggregator::SetAttribute recursively invokes "
-                                "siga_cksig"
-                            ),
-                        ),
-                        (
                             "handler_instance_2_effect",
                             (
-                                "when handler_index is 2, refresh_cksig_data has "
-                                "BMLua reporting and telemetry branches"
+                                "conditional BMLua reporting/telemetry branches"
+                                if record_type == 0xB3 and parsed.handler_index == 2
+                                else "not established for this record type"
                             ),
                         ),
                         (
                             "downstream_policy",
                             JSONObject(
                                 (
-                                    (
-                                        "consumers",
-                                        JSONArray(
-                                            (
-                                                (
-                                                    "SignatureHasValidator / "
-                                                    "ValidateSignatureWithPcode"
-                                                ),
-                                                "MpAggregateAttributeEx",
-                                                "ShouldContinueScanning",
-                                                "MpReportLowfiMatch",
-                                                "HipsStreamScanCheck",
-                                            )
-                                        ),
-                                    ),
                                     (
                                         "final_threat_verdict",
                                         "context_dependent_unknown",
@@ -578,7 +771,7 @@ def _export_sigtree_semantics(
     )
     return RuleSemantics(
         status="unsupported" if parsed.trailing_raw else "confirmed_subset",
-        representation="sigtree.wire_storage_evaluator.ir.v4",
+        representation="sigtree.wire_storage_evaluator.ir.v5",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 SigtreeHandlerInstance::push",
@@ -589,7 +782,6 @@ def _export_sigtree_semantics(
                 "mpengine 1.443.903.0 "
                 "SigtreeHandlerInstance::ResetUnmatchedProcedure @ 0x18032F170"
             ),
-            "mpengine 1.443.903.0 RuntimeAggregator::SetAttribute",
         ),
         profile="mpengine-1.443.903.0",
         issues=(
@@ -618,6 +810,8 @@ def _export_sigtree_semantics(
                 else ()
             ),
         ),
+        claims=tuple(claims),
+        claim_evidence=tuple(claim_evidence),
     )
 
 
@@ -672,7 +866,10 @@ def _export_sigtree_artifact(
                 "level_extra_raw_hex": entry.level_extra_raw.hex(),
                 "parameter_a": _artifact_param(entry.param_a),
                 "parameter_b": _artifact_param(entry.param_b),
-                "parameter_combination": "all_selected_parameters_must_match",
+                "parameter_combination": (
+                    "selected_two_parameter_branch_requires_both;"
+                    "selected_single_parameter_branch_requires_one"
+                ),
             }
         )
 
@@ -692,10 +889,7 @@ def _export_sigtree_artifact(
             "entry-level DWORD; canonical flag names and full grouping "
             "semantics remain unknown."
         ),
-        (
-            "Named-attribute DAG edges require cross-record/runtime attribute "
-            "resolution and are not synthesized here."
-        ),
+        "Cross-record/runtime attribute propagation is not synthesized here.",
         (
             "A completed countdown is only a candidate state; final report "
             "policy is context-dependent."
@@ -711,7 +905,7 @@ def _export_sigtree_artifact(
         )
 
     manifest = {
-        "format": "vdm.sigtree.record.v1",
+        "format": "vdm.sigtree.record.v2",
         "record": {
             "type": record_type,
             "type_hex": f"0x{record_type:02X}",
@@ -737,15 +931,19 @@ def _export_sigtree_artifact(
             "trailing_raw_hex": parsed.trailing_raw.hex(),
         },
         "graph": {
-            "model": "named_attribute_dependency_dag",
+            "model": "unknown",
             "node_name_raw_hex": parsed.name_raw.hex(),
             "dependency_edges": None,
             "edge_boundary": (
-                "record-local payload does not resolve cross-record attribute edges"
+                "record-local payload does not establish a graph model or resolve "
+                "cross-record attribute edges"
             ),
         },
         "evaluator_shape": {
-            "entry_parameter_combination": "all selected parameters must match",
+            "entry_parameter_combination": (
+                "selected two-parameter branch requires both; selected "
+                "single-parameter branch requires one"
+            ),
             "reduction_model": "scan_time_countdown",
             "accepted_entry_contribution": "decrement nonzero countdown by one",
             "initial_countdown_source": "wire byte +0x02",
