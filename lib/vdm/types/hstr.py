@@ -139,6 +139,7 @@ _CONTEXTUAL_FLAG_EFFECTS = (
     (0x0200, "full_subject_copy_in_search_mode_1"),
 )
 _RECEIVER_FLAG_MASK = 0x03FF
+_PE_DYNAMIC_PAGE_HSTR_FAMILIES = frozenset({0x78, 0x85})
 
 
 def _text_display(data: bytes) -> tuple[Literal["ASCII", "UTF16LE", "HEX"], str | None]:
@@ -186,13 +187,24 @@ def classify_hstr_subsignature(
         and contextual_bits == (0x0080,)
         and not flags & 0x0002
     )
+    pe_dynamic_page_candidate = (
+        type_byte in _PE_DYNAMIC_PAGE_HSTR_FAMILIES
+        and contextual_bits == (0x0010,)
+        and not receiver_ignored
+    )
     # BM bytes stay hex even if every byte happens to be printable.
     if flags & 0x0002:
         kind = "BM_PATTERN"
         encoding, text = "HEX", None
         matching = "UNKNOWN" if unknown else "BM_PATTERN"
     elif (
-        unknown or (contextual_bits and not bit_0080_literal_neutral) or not subsig.data
+        unknown
+        or (
+            contextual_bits
+            and not bit_0080_literal_neutral
+            and not pe_dynamic_page_candidate
+        )
+        or not subsig.data
     ):
         kind, matching = "OPAQUE", "UNKNOWN"
     else:
@@ -621,6 +633,33 @@ def _hstr_contextual_disposition(
                     ("subsignature_scope_only", True),
                 )
             )
+    if (
+        type_byte in _PE_DYNAMIC_PAGE_HSTR_FAMILIES
+        and meaning.contextual_bits == (0x0010,)
+        and meaning.unknown_flag_bits == 0
+        and subsig.data
+    ):
+        return JSONObject(
+            (
+                ("status", "conditional_location_candidate"),
+                ("stage", "post_match_validator"),
+                ("predicate", "mmap_is_dynamic_page"),
+                ("arguments", "pe_vars, base + match_offset"),
+                ("true_disposition", "enters_location_candidate_management"),
+                ("false_disposition", "this_subsignature_match_not_inserted"),
+                (
+                    "preconditions",
+                    JSONObject(
+                        (
+                            ("subsignature_match_succeeded", True),
+                            ("matched_span_length_nonzero", True),
+                            ("match_offset_nonzero_required", False),
+                        )
+                    ),
+                ),
+                ("subsignature_scope_only", True),
+            )
+        )
     gate_bits = subsig.flags.value & 0x005C
     if not gate_bits or meaning.unknown_flag_bits:
         return None
@@ -915,6 +954,12 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
                 names.append(f"UNKNOWN_BITS(0x{meaning.unknown_flag_bits:04X})")
             flags_text = "|".join(names) or "NONE"
             flags_text += f"(0x{subsig.flags.value:04X})"
+        candidate = _hstr_contextual_disposition(parsed.type_byte, subsig, meaning)
+        if (
+            candidate is not None
+            and dict(candidate.items)["status"] == "conditional_location_candidate"
+        ):
+            flags_text += "; PE_DYNAMIC_PAGE_VALIDATOR"
         display, pattern, bm_yara, printable_preview, yara_unsupported = (
             _render_hstr_subsignature_display(subsig, meaning)
         )
@@ -926,6 +971,19 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
             ("display", display),
             ("raw", subsig.data.hex(" ").upper() or "(empty)"),
         ]
+        if candidate is not None and dict(candidate.items)["status"] == (
+            "conditional_location_candidate"
+        ):
+            rows.append(
+                (
+                    "candidate validator",
+                    (
+                        "mmap_is_dynamic_page(pe_vars, base + match_offset); "
+                        "requires nonzero matched span; offset may be 0; "
+                        "subsignature scope only"
+                    ),
+                )
+            )
         if pattern is not None and (pattern.issue is not None or pattern.remaining_raw):
             status = (
                 f"{pattern.issue.code}@+0x{pattern.issue.offset:X}"
@@ -1092,6 +1150,22 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                             (
                                 ("subsignature_index", index),
                                 ("gate_mask", 0x005C),
+                            ),
+                        )
+                    )
+                elif disposition_status == "conditional_location_candidate":
+                    issues.append(
+                        SemanticIssue(
+                            "candidate_dynamic_page_validator_condition",
+                            (
+                                "This PE subsignature match enters location-candidate "
+                                "management only when the dynamic-page validator "
+                                "returns true; this is not a final report verdict."
+                            ),
+                            (
+                                ("subsignature_index", index),
+                                ("predicate", "mmap_is_dynamic_page"),
+                                ("match_offset_zero_allowed", True),
                             ),
                         )
                     )
@@ -1341,12 +1415,14 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v8",
+        representation="hstr.matcher-subset.ir.v9",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
             "mpengine 1.443.903.0 add_sstring_internal @ 0x1800FE008",
             "mpengine 1.443.903.0 hstr_internal_search_worker @ 0x1800E9F70",
+            "mpengine 1.443.903.0 PefileExtendedAttributesValidator::ValidateAttribute @ 0x1800E94C0: exact validator mask 0x10 calls mmap_is_dynamic_page(pe_vars, base + match_offset)",
+            "mpengine 1.443.903.0 scan_vmem @ 0x1801379A0 and scan_vbuff @ 0x1801A2DFC pass the PE validator to HSTR family index 0 (0x78/0x85)",
             "mpengine 1.443.903.0 BMMatchEx2 @ 0x1800EC420",
             "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60: raw opcode 0x03 reads two widths and tries non-overlapping chunks with a recursively matched shared suffix (0x1800EE4A1-0x1800EE55F)",
             "mpengine 1.443.903.0 BMPatternToLower @ 0x1800FECFC",
