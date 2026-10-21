@@ -1,10 +1,13 @@
 """Parser and concise renderer for STATIC (0x67) payloads."""
 
+import json
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Final
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -184,6 +187,105 @@ def render_static(parsed: StaticPayload) -> FormatResult:
             identity_rows.append(("trailing_len", f"{len(tail.trailing_raw)} B"))
         sections.append(DisplaySection("Record Identity", rows=tuple(identity_rows)))
     return FormatResult(sections=tuple(sections))
+
+
+def export_static(parsed: StaticPayload) -> ArtifactExport:
+    """Export a lossless inventory manifest, never a standalone matcher."""
+    mode = parsed.mode
+    if mode is None:
+        mode_name = None
+        hash_data: dict[str, object] | None = None
+        matcher_status = "unsupported"
+        matcher_boundary = "STATIC modes 5-7 are rejected by the engine hash path"
+    else:
+        mode_name = mode.name
+        if mode is StaticHashMode.CRC_0:
+            hash_data = {
+                "algorithm": "CRC_0",
+                "value": int.from_bytes(parsed.hash_raw, "little"),
+                "raw_hex": parsed.hash_raw.hex(),
+            }
+        else:
+            algorithm = {
+                StaticHashMode.MD5: "MD5",
+                StaticHashMode.SHA1: "SHA1",
+                StaticHashMode.SHA1_PREFIX4: "SHA1_prefix4",
+                StaticHashMode.SHA256: "SHA256",
+            }[mode]
+            hash_data = {"algorithm": algorithm, "value_hex": parsed.hash_raw.hex()}
+        matcher_status = "not_emitted"
+        matcher_boundary = (
+            "Record-local manifest only; runtime file bytes and later conditions "
+            "are required for a match"
+        )
+
+    tail = parsed.recid_tail
+    tail_data: dict[str, object] | None = None
+    if tail is not None:
+        tail_data = {
+            "raw_hex": tail.raw.hex(),
+            "raw_offset": HEADER_SIZE + len(parsed.hash_raw),
+            "declared_length": tail.length_limit,
+            "object_raw_hex": tail.object_raw.hex(),
+            "object_registered": tail.has_object,
+            "trailing_raw_hex": tail.trailing_raw.hex(),
+            "bounded_object_truncated": tail.length_limit > len(tail.raw) - 1,
+            "object_meaning": "unknown",
+        }
+
+    manifest = {
+        "format": "vdm.static.record.v1",
+        "record": {
+            "type": STATIC_TYPE,
+            "type_hex": f"0x{STATIC_TYPE:02X}",
+            "name": "STATIC",
+            "scope": "record_local",
+            "threat_association": "not_included",
+            "portable_matcher": matcher_status,
+            "matcher_boundary": matcher_boundary,
+        },
+        "payload_length": len(parsed.raw),
+        "payload_raw_hex": parsed.raw.hex(),
+        "header": {
+            "first_page_crc": parsed.first_page_crc,
+            "first_page_crc_raw_hex": parsed.raw[0:4].hex(),
+            "tail_page_crc": parsed.tail_page_crc,
+            "tail_page_crc_raw_hex": parsed.raw[4:8].hex(),
+            "prefix_crc": parsed.prefix_crc,
+            "prefix_crc_raw_hex": parsed.raw[8:12].hex(),
+            "crc_parameters": "polynomial/init/final_xor_not_portably_confirmed",
+            "file_size": parsed.file_size,
+            "file_size_raw_hex": parsed.raw[12:16].hex(),
+            "file_size_policy": "at_least" if parsed.allow_larger else "exact",
+            "flags": parsed.flags,
+            "flags_raw_hex": parsed.raw[16:18].hex(),
+            "allow_larger": parsed.allow_larger,
+            "mode_value": parsed.mode_value,
+            "mode_name": mode_name,
+            "mode_corpus_status": (
+                "not_observed"
+                if mode in {StaticHashMode.SHA1_PREFIX4, StaticHashMode.SHA256}
+                else "not_applicable_unsupported"
+                if mode is None
+                else "observed"
+            ),
+            "loader_ignored_flags": parsed.ignored_flags,
+        },
+        "hash": hash_data,
+        "opaque_after_header_raw_hex": parsed.opaque_raw.hex(),
+        "recid_tail": tail_data,
+    }
+    encoded = json.dumps(manifest, ensure_ascii=True, separators=(",", ":"))
+    return ArtifactExport(
+        "ready",
+        artifacts=(
+            Artifact(
+                "static.json",
+                "static_record_manifest",
+                (encoded + "\n").encode("utf-8"),
+            ),
+        ),
+    )
 
 
 def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
@@ -495,5 +597,6 @@ SPEC = FamilySpec(
     "STATIC",
     parse_static,
     render_static,
+    exporter=export_static,
     semantic_exporter=export_static_semantics,
 )
