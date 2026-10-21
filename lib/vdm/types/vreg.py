@@ -13,7 +13,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 VREG_TYPE: Final = 0xB0
@@ -302,8 +305,8 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
         )
 
     return RuleSemantics(
-        status="unsupported" if unknown_hive else "confirmed_subset",
-        representation="vreg.virtual_registry_write.ir.v3",
+        status="confirmed_subset",
+        representation="vreg.virtual_registry_write.ir.v4",
         data=JSONObject(
             (
                 ("type", "VREG"),
@@ -489,7 +492,7 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
                         (
                             ("api_layer", "confirmed virtual-registry behavior"),
                             ("pe_or_pcode_caller_interpretation", None),
-                            ("direct_threat_report", False),
+                            ("direct_threat_report", None),
                             ("final_scan_verdict", None),
                         )
                     ),
@@ -508,6 +511,145 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="vreg_wire_layout",
+                scope="wire_layout",
+                statement=(
+                    "The receiver reads the hive byte, bounded UTF-16LE key and value "
+                    "name fields, raw value type, u16 data size, and ignores bytes "
+                    "after the declared value data."
+                ),
+                coverage="complete",
+                evidence_refs=("vreg_receiver",),
+            ),
+            SemanticClaim(
+                id="vreg_dispatch_path",
+                scope="loader_dispatch",
+                statement="vemulib initialization registers type 0xB0 to vregReceiver.",
+                coverage="subset",
+                evidence_refs=("vreg_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Outer database selection and virtual-emulation enablement "
+                        "gates are not modeled.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="vreg_receiver_write",
+                scope="receiver_transform",
+                statement=(
+                    "vregReceiver preserves the hive byte, attempts key creation, and "
+                    "calls SetValue only when data_size is nonzero; an unrecognized "
+                    "hive byte is not itself a receiver rejection."
+                ),
+                coverage="subset",
+                evidence_refs=("vreg_receiver",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "Allocation failures, mutation failure handling, and downstream "
+                        "normalization of hive values outside 0 through 5 are unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="vreg_runtime_query_surface",
+                scope="runtime_consumer",
+                statement=(
+                    "The confirmed emulated Win32 surface can open keys, query values "
+                    "and key information, and enumerate subkeys and values in the "
+                    "VirtualReg tree."
+                ),
+                coverage="subset",
+                evidence_refs=("vreg_query_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Other VirtualReg consumers and PE/P-code interpretation of API "
+                        "results are not traced.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="vreg_detection_predicate",
+                scope="detection_predicate",
+                statement=(
+                    "No threat-detection predicate is established by the registry API "
+                    "surface."
+                ),
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "PE/P-code caller logic that may turn registry results into a "
+                        "candidate remains unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="vreg_report_mapping",
+                scope="report_mapping",
+                statement=(
+                    "VirtualReg API results have no confirmed threat-report mapping."
+                ),
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "No caller was followed from a VirtualReg result into report policy.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="vreg_final_verdict",
+                scope="final_verdict",
+                statement=(
+                    "A virtual-registry write or query result is not a confirmed final "
+                    "verdict."
+                ),
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Outer emulation arbitration and final report policy remain unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="vreg_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="vregReceiver @ 0x180270110",
+                supports=("vreg_wire_layout", "vreg_receiver_write"),
+            ),
+            SemanticEvidence(
+                id="vreg_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="vemulib_init_module @ 0x18048B450",
+                supports=("vreg_dispatch_path",),
+            ),
+            SemanticEvidence(
+                id="vreg_query_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "VirtualReg::queryValue @ 0x1801A0FEC; "
+                    "VirtualReg::enumerateSubKey @ 0x18019DC58; "
+                    "VirtualReg::enumerateValue @ 0x18034BA10; "
+                    "VirtualReg::queryKey @ 0x18019E03C"
+                ),
+                supports=("vreg_runtime_query_surface",),
+            ),
+        ),
     )
 
 
