@@ -167,9 +167,15 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
     )
     issues: list[SemanticIssue] = [
         SemanticIssue(
+            "engine_candidate_decoder_required",
+            "The candidate predicate requires engine-equivalent x86 instruction "
+            "decoding and candidate-byte callbacks; the record alone is not a "
+            "raw-file matcher.",
+        ),
+        SemanticIssue(
             "final_verdict_unknown",
             "A PATTMATCH CRC match is not by itself a final threat verdict.",
-        )
+        ),
     ]
     unsupported = False
     if decode_error is not None:
@@ -192,6 +198,18 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
             ("metadata_high16_raw", parsed.metadata_high16),
             ("metadata_high16_raw_hex", parsed.raw[6:8].hex()),
             ("metadata_high16_role", "same_key_sort_tiebreak"),
+            (
+                "execution_boundary",
+                JSONObject(
+                    (
+                        ("input", "engine-provided decoded-instruction candidate"),
+                        ("decoder_callback_required", True),
+                        ("raw_file_byte_predicate", False),
+                        ("candidate_level_equivalence", "confirmed_subset"),
+                        ("threat_level_equivalence", False),
+                    )
+                ),
+            ),
             ("name_raw_hex", parsed.name_raw.hex()),
             (
                 "prefilter",
@@ -225,7 +243,7 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
-        representation="pattmatch.instruction_crc.ir.v1",
+        representation="pattmatch.instruction_crc.ir.v2",
         data=data,
         evidence=(
             (
