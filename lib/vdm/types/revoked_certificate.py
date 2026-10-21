@@ -16,7 +16,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 from ..recid import RecIdTail, parse_recid_tail
 from ._certificate_key import parse_certificate_key
@@ -239,9 +242,9 @@ def export_revoked_certificate_semantics(
     if parsed.recid_tail_raw:
         unsupported_reasons.append(
             SemanticIssue(
-                "recid_tail_semantics_unconfirmed",
-                "The trailing RecID bytes are preserved, but their gate and "
-                "effect are not confirmed for REVOKED_CERTIFICATE.",
+                "recid_metadata_meaning_unknown",
+                "The receiver uses the tail to derive the stored threat/RecID "
+                "association, but its producer-side object meaning is unknown.",
                 (("length", len(parsed.recid_tail_raw)),),
             )
         )
@@ -266,7 +269,7 @@ def export_revoked_certificate_semantics(
             SemanticIssue(
                 "key_type_not_used_by_confirmed_consumer",
                 "The loader recognizes BADHASH, but IsRevokedCert does not query "
-                "key type 4 in the confirmed certificate lookup path.",
+                "key type 4 and no type-4 consumer is confirmed in the analyzed paths.",
                 (("key_type", parsed.key_type),),
             )
         )
@@ -288,6 +291,98 @@ def export_revoked_certificate_semantics(
         )
 
     issues = list(unsupported_reasons)
+    if parsed.key_type in {1, 2, 3, 5}:
+        consumer_claim = SemanticClaim(
+            id="revoked_certificate_consumers",
+            scope="runtime_consumer",
+            statement=(
+                "IsRevokedCert queries key types 3, 2, 1, and 5 with policy 0; "
+                "ScanCertificate queries types 1, 2, and 3 with policy 1."
+            ),
+            coverage="subset",
+            evidence_refs=("revoked_certificate_consumers_evidence",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The analyzed paths do not cover every possible caller or key source.",
+                ),
+            ),
+        )
+        predicate_claim = SemanticClaim(
+            id="revoked_certificate_policy_predicate",
+            scope="detection_predicate",
+            statement=(
+                "Both analyzed paths require exact normalized-key equality and "
+                "query FILETIME at least the record FILETIME; policy 1 additionally "
+                "uses flag bit 0 to decide whether to skip the IsSignedFile gate."
+            ),
+            coverage="subset",
+            evidence_refs=("revoked_certificate_policy",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Unknown flag bits and outer caller arbitration remain unresolved.",
+                ),
+            ),
+        )
+    else:
+        consumer_claim = SemanticClaim(
+            id="revoked_certificate_consumers",
+            scope="runtime_consumer",
+            statement=(
+                "No runtime consumer is confirmed for this loader-recognized "
+                f"certificate key type ({parsed.key_type})."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The analyzed IsRevokedCert and ScanCertificate paths do not query this key type.",
+                ),
+            ),
+        )
+        predicate_claim = SemanticClaim(
+            id="revoked_certificate_policy_predicate",
+            scope="detection_predicate",
+            statement="No detection predicate is established for this key type.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Without a confirmed runtime consumer, the record policy cannot be applied to a query.",
+                ),
+            ),
+        )
+    if parsed.key_type in {1, 2, 3, 5}:
+        report_claim = SemanticClaim(
+            id="revoked_certificate_report_mapping",
+            scope="report_mapping",
+            statement=(
+                "The analyzed trust path can map an accepted revoked-certificate "
+                "result to the MpTrustCheck_RevokedCert attribute."
+            ),
+            coverage="subset",
+            evidence_refs=("revoked_certificate_report",),
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "The complete trust-result and scan-report arbitration is unresolved.",
+                ),
+            ),
+        )
+    else:
+        report_claim = SemanticClaim(
+            id="revoked_certificate_report_mapping",
+            scope="report_mapping",
+            statement="No report mapping is established for an unconsumed key type.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "No confirmed runtime match exists to enter the analyzed report branch.",
+                ),
+            ),
+        )
     return RuleSemantics(
         status="unsupported" if unsupported_reasons else "confirmed_subset",
         representation="revoked_certificate.raw_spans.ir.v1",
@@ -321,24 +416,65 @@ def export_revoked_certificate_semantics(
                             ("signature_type", REVOKED_CERTIFICATE_TYPE),
                             ("lookup_key_type", parsed.key_type),
                             (
-                                "lookup_match",
-                                "any matching certificate key query",
+                                "confirmed_consumers",
+                                JSONArray(
+                                    tuple(
+                                        path
+                                        for path in (
+                                            JSONObject(
+                                                (
+                                                    ("name", "IsRevokedCert"),
+                                                    ("policy", 0),
+                                                    (
+                                                        "queried_key_types",
+                                                        JSONArray((3, 2, 1, 5)),
+                                                    ),
+                                                    (
+                                                        "predicate",
+                                                        "exact_normalized_key_and_query_time_at_least_record_filetime",
+                                                    ),
+                                                    ("signed_file_gate", "not_called"),
+                                                )
+                                            )
+                                            if parsed.key_type in {1, 2, 3, 5}
+                                            else None,
+                                            JSONObject(
+                                                (
+                                                    ("name", "ScanCertificate"),
+                                                    ("policy", 1),
+                                                    (
+                                                        "queried_key_types",
+                                                        JSONArray((1, 2, 3)),
+                                                    ),
+                                                    (
+                                                        "predicate",
+                                                        "exact_normalized_key_and_query_time_at_least_record_filetime",
+                                                    ),
+                                                    (
+                                                        "signed_file_gate",
+                                                        "skipped_when_flag_bit0_set; otherwise_IsSignedFile",
+                                                    ),
+                                                )
+                                            )
+                                            if parsed.key_type in {1, 2, 3}
+                                            else None,
+                                        )
+                                        if path is not None
+                                    )
+                                ),
                             ),
                             (
-                                "minimum_signing_filetime",
-                                parsed.filetime,
+                                "type4_consumer",
+                                "unknown" if parsed.key_type == 4 else "not_applicable",
                             ),
+                            ("record_filetime", parsed.filetime),
                             (
-                                "do_not_report_before_minimum_time",
-                                parsed.filetime != 0,
-                            ),
-                            (
-                                "skip_signed_file_gate",
+                                "policy1_skips_signed_file_gate",
                                 parsed.skips_signed_file_gate,
                             ),
                             (
-                                "runtime_result",
-                                "match_subject_to_time_and_signed_file_gates",
+                                "recid_tail_role",
+                                "receiver_threat_association_metadata; not_a_policy_gate",
                             ),
                         )
                     ),
@@ -380,6 +516,112 @@ def export_revoked_certificate_semantics(
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="revoked_certificate_wire_layout",
+                scope="wire_layout",
+                statement=(
+                    "REVOKED_CERTIFICATE contains a u16-bounded key, an 8-byte "
+                    "FILETIME, a 4-byte flags word, and an optional RecID tail."
+                ),
+                coverage="complete",
+                evidence_refs=("revoked_certificate_receiver",),
+            ),
+            SemanticClaim(
+                id="revoked_certificate_loader_dispatch",
+                scope="loader_dispatch",
+                statement="The analyzed registration path binds type 0x6C to REVOKED_CERTIFICATE.",
+                coverage="subset",
+                evidence_refs=("revoked_certificate_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Other database profiles and engine versions are not covered.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="revoked_certificate_receiver_projection",
+                scope="receiver_transform",
+                statement=(
+                    "Load normalizes the certificate key, stores FILETIME and flags, "
+                    "and uses a present tail to derive the stored threat association."
+                ),
+                coverage="subset",
+                evidence_refs=("revoked_certificate_receiver",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The producer meaning of the optional RecID metadata object is unknown.",
+                    ),
+                ),
+            ),
+            consumer_claim,
+            predicate_claim,
+            report_claim,
+            SemanticClaim(
+                id="revoked_certificate_final_verdict",
+                scope="final_verdict",
+                statement="A local revoked-certificate match does not establish the final product verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final scan, UI, and remediation arbitration has not been followed to completion.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="revoked_certificate_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="REVOKED_CERTIFICATE Register @ 0x1805DF5F0",
+                supports=("revoked_certificate_loader_dispatch",),
+            ),
+            SemanticEvidence(
+                id="revoked_certificate_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "REVOKED_CERTIFICATE RecordPush @ 0x180320624; "
+                    "revokedcert_t::Load @ 0x180320808"
+                ),
+                supports=(
+                    "revoked_certificate_wire_layout",
+                    "revoked_certificate_receiver_projection",
+                ),
+            ),
+            SemanticEvidence(
+                id="revoked_certificate_consumers_evidence",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=("IsRevokedCert @ 0x1802D816C; ScanCertificate @ 0x1802952B0"),
+                supports=("revoked_certificate_consumers",),
+            ),
+            SemanticEvidence(
+                id="revoked_certificate_policy",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "RevokedCertProvider::CompareValues; ShouldReport @ 0x18057971C"
+                ),
+                supports=("revoked_certificate_policy_predicate",),
+            ),
+            SemanticEvidence(
+                id="revoked_certificate_report",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="IsTrustedFile @ 0x1802D8950; AddMpAttributes",
+                supports=("revoked_certificate_report_mapping",),
+            ),
+        ),
     )
 
 
