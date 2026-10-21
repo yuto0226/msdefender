@@ -109,6 +109,9 @@ def export_vdll_meta(
     variant: str,
 ) -> RuleSemantics:
     """Export observed VDLL metadata fields without inventing rule semantics."""
+    table_index = {0xB5: 0, 0xE1: 1, 0xE2: 2}.get(type_byte)
+    host_selector = table_index if table_index is not None else None
+    packed_lookup_value = ((parsed.optional_value or 0) << 32) | parsed.field0
     boundary_issues = (
         SemanticIssue(
             code="vdll_metadata_record_pairing_unknown",
@@ -118,10 +121,17 @@ def export_vdll_meta(
             ),
         ),
         SemanticIssue(
-            code="vdll_metadata_detection_role_unknown",
+            code="vdll_metadata_lookup_value_meaning_unknown",
             message=(
-                "Table insertion and linker lookup are confirmed; callback execution, "
-                "scan matching, and final verdict causality are not."
+                "The receiver and lookup expose a packed 64-bit value, but its use "
+                "as a VA, RVA, callback, or other value is not established."
+            ),
+        ),
+        SemanticIssue(
+            code="vdll_metadata_final_verdict_unknown",
+            message=(
+                "Metadata insertion and linker lookup do not establish callback "
+                "execution, scan matching, or final verdict causality."
             ),
         ),
     )
@@ -152,6 +162,89 @@ def export_vdll_meta(
                         ("table_scope", "type-specific VDLL metadata table"),
                         ("bucket_key", "hash_key modulo bucket_count"),
                         ("internal_entry", "receiver-converted; not a wire struct"),
+                    )
+                ),
+            ),
+            (
+                "metadata_index_ir",
+                JSONObject(
+                    (
+                        ("version", 1),
+                        (
+                            "host_routing",
+                            JSONObject(
+                                (
+                                    ("host_selector", host_selector),
+                                    ("table_index", table_index),
+                                    ("registered_type", f"0x{type_byte:02X}"),
+                                )
+                            ),
+                        ),
+                        (
+                            "key",
+                            JSONObject(
+                                (
+                                    ("wire_field", "hash_key"),
+                                    ("node_offset", 8),
+                                    ("kind", "api_id"),
+                                    ("bucket_formula", "api_id % bucket_count"),
+                                )
+                            ),
+                        ),
+                        (
+                            "chain",
+                            JSONObject(
+                                (
+                                    ("bucket_head_width_bits", 16),
+                                    ("empty_sentinel", 0xFFFF),
+                                    ("slot_size", 16),
+                                    ("next_index_offset", 8),
+                                    (
+                                        "duplicate_match",
+                                        "last_matching_node_in_traversal",
+                                    ),
+                                )
+                            ),
+                        ),
+                        (
+                            "node_layout",
+                            JSONObject(
+                                (
+                                    ("size", 24),
+                                    ("field0_offset", 0),
+                                    ("optional_value_offset", 4),
+                                    ("api_id_offset", 8),
+                                    ("control_offset", 12),
+                                    ("count_flags_offset", 13),
+                                    ("field10_offset", 14),
+                                    ("items_pointer_offset", 16),
+                                )
+                            ),
+                        ),
+                        (
+                            "lookup_result",
+                            JSONObject(
+                                (
+                                    ("node_offset", 0),
+                                    ("width_bits", 64),
+                                    ("packed_value", packed_lookup_value),
+                                    ("low32_source", "field0"),
+                                    ("high32_source", "optional_value_or_zero"),
+                                    ("meaning", None),
+                                    ("meaning_status", "unknown"),
+                                )
+                            ),
+                        ),
+                        (
+                            "entry_pairing",
+                            JSONObject(
+                                (("status", "unknown"), ("unique_code_record", None))
+                            ),
+                        ),
+                        (
+                            "final_verdict",
+                            JSONObject((("status", "unknown"), ("value", None))),
+                        ),
                     )
                 ),
             ),
@@ -239,7 +332,7 @@ def export_vdll_meta(
     if parsed.trailing:
         return RuleSemantics(
             status="unsupported",
-            representation="vdll_metadata_record.v2",
+            representation="vdll_metadata_index_ir.v1",
             data=data,
             evidence=(
                 (
@@ -265,29 +358,38 @@ def export_vdll_meta(
             ),
         )
     return RuleSemantics(
-        status="observed_only",
-        representation="vdll_metadata_record.v2",
+        status="confirmed_subset" if table_index is not None else "observed_only",
+        representation="vdll_metadata_index_ir.v1",
         data=data,
         evidence=(
             (
                 "mpengine 1.443.903.0 vdll_metadata_receiver @ 0x1804C7B80 "
-                "inserts parsed fields into a type-specific metadata table "
-                "using hash_key modulo bucket_count."
+                "stores hash_key as the node api_id at +8 and links the node into "
+                "bucket api_id modulo bucket_count; it copies the bounded fields "
+                "into a 24-byte zero-initialized node."
             ),
             (
                 "mpengine 1.443.903.0 load_vdll_metadata @ 0x18048A27C "
                 "initializes the per-type metadata contexts and bucket counts."
             ),
             (
-                "mpengine 1.443.903.0 vdll_receiver_end @ 0x1800FF328 "
-                "queries get_address_from_meta_id(type_index, hash), which indexes "
-                "qword_1812748E0[type_index], then falls back to the current "
-                "vdll_data_t PE export index. get_meta_type_from_vtype maps "
-                "host selectors 0/1/2/3 to metadata indexes 0/1/2/3."
+                "mpengine 1.443.903.0 get_meta_id @ 0x1804DEBAC searches the "
+                "bucket chain by node +8 api_id; get_address_from_meta_id @ "
+                "0x1804DEB74 returns node +0 as a packed 64-bit value."
+            ),
+            (
+                "mpengine 1.443.903.0 get_meta_type_from_vtype @ 0x180D26DC8 "
+                "maps host selectors 0/1/2 to metadata indexes 0/1/2, matching "
+                "registered types 0xB5/0xE1/0xE2."
+            ),
+            (
+                "The packed value meaning, unique metadata-to-code pairing, and "
+                "final scan verdict remain unknown."
             ),
             (
                 "The metadata receiver's observed role is table insertion; this "
-                "record is not a confirmed detection expression or final verdict."
+                "confirmed subset covers the table index lookup and receiver node "
+                "layout only, not code-record pairing or a detection verdict."
             ),
         ),
         profile="mpengine-1.443.903.0",
