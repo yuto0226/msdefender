@@ -159,7 +159,9 @@ def _text_display(data: bytes) -> tuple[Literal["ASCII", "UTF16LE", "HEX"], str 
     return "HEX", None
 
 
-def classify_hstr_subsignature(subsig: HstrSubsignature) -> HstrSubsignatureMeaning:
+def classify_hstr_subsignature(
+    subsig: HstrSubsignature, *, type_byte: int | None = None
+) -> HstrSubsignatureMeaning:
     """Classify display bytes without deriving matcher behavior from their shape."""
     flags = subsig.flags.value if subsig.flags is not None else 0
     names = tuple(name for mask, name in _FLAG_NAMES if flags & mask)
@@ -179,12 +181,19 @@ def classify_hstr_subsignature(subsig: HstrSubsignature) -> HstrSubsignatureMean
         )
         unknown = flags & ~_RECEIVER_FLAG_MASK
     encoding, text = _text_display(subsig.data)
+    bit_0080_literal_neutral = (
+        type_byte in _CONFIRMED_MATCHER_FAMILIES
+        and contextual_bits == (0x0080,)
+        and not flags & 0x0002
+    )
     # BM bytes stay hex even if every byte happens to be printable.
     if flags & 0x0002:
         kind = "BM_PATTERN"
         encoding, text = "HEX", None
         matching = "UNKNOWN" if unknown else "BM_PATTERN"
-    elif unknown or contextual_bits or not subsig.data:
+    elif (
+        unknown or (contextual_bits and not bit_0080_literal_neutral) or not subsig.data
+    ):
         kind, matching = "OPAQUE", "UNKNOWN"
     else:
         kind = "BINARY" if encoding == "HEX" else "LITERAL"
@@ -377,7 +386,8 @@ def _combined_condition(
 def summarize_hstr_scores(parsed: HstrPayload) -> HstrScoreThresholds:
     """Report score classification eligibility, independent of final verdict policy."""
     meanings = tuple(
-        classify_hstr_subsignature(subsig) for subsig in parsed.subsignatures
+        classify_hstr_subsignature(subsig, type_byte=parsed.type_byte)
+        for subsig in parsed.subsignatures
     )
     identifiers = _semantic_identifiers(meanings)
     weights = tuple(meaning.score_add for meaning in meanings)
@@ -572,12 +582,45 @@ def _hstr_scanner_context(type_byte: int) -> JSONObject | None:
     )
 
 
-def _hstr_no_candidate_disposition(
+def _hstr_contextual_disposition(
     type_byte: int, subsig: HstrSubsignature, meaning: HstrSubsignatureMeaning
 ) -> JSONObject | None:
-    """Prove a subsig cannot be retained when every caller passes null validator."""
+    """Project only contextual effects closed through the selected worker path."""
     if subsig.flags is None:
         return None
+    if type_byte in _CONFIRMED_MATCHER_FAMILIES and meaning.contextual_bits == (
+        0x0080,
+    ):
+        bm_pattern = bool(subsig.flags.value & 0x0002)
+        if not bm_pattern:
+            return JSONObject(
+                (
+                    ("status", "exact_matcher_neutral"),
+                    ("reason", "literal_compare_does_not_read_bit_0080"),
+                    ("subsignature_scope_only", True),
+                )
+            )
+        pattern = decode_bm_pattern(subsig.data)
+        if (
+            pattern.issue is None
+            and pattern.ended
+            and not pattern.remaining_raw
+            and b"\x90\x1b" not in pattern.raw
+        ):
+            return JSONObject(
+                (
+                    ("status", "exact_matcher_neutral"),
+                    (
+                        "reason",
+                        "bm_mode_bit_1_only_changes_backref_setup_without_raw_90_1b",
+                    ),
+                    (
+                        "confirmed_scope",
+                        JSONArray(("match", "cursor", "match_end", "bmMatchOffset")),
+                    ),
+                    ("subsignature_scope_only", True),
+                )
+            )
     gate_bits = subsig.flags.value & 0x005C
     if not gate_bits or meaning.unknown_flag_bits:
         return None
@@ -708,7 +751,7 @@ def _hstr_bm_runtime_context(
     )
     if identity:
         translation = bytes(range(256))
-    capture_opcode_present = any(token.raw_id == 0x1B for token in pattern.tokens)
+    capture_marker_bytes_present = b"\x90\x1b" in pattern.raw
     worker_mode = ((flags >> 6) & 2) | 1
     display = JSONObject(
         (
@@ -716,11 +759,11 @@ def _hstr_bm_runtime_context(
             ("translation", "identity" if identity else "ascii_lowercase"),
             ("worker_mode", worker_mode),
             ("offsets_argument_present", False),
-            ("capture_opcode_present", capture_opcode_present),
+            ("capture_marker_bytes_present", capture_marker_bytes_present),
         )
     )
     match_context = None
-    if not capture_opcode_present:
+    if not capture_marker_bytes_present:
         match_context = BmMatchContext(
             reader_kind="BUFFER",
             translation=translation if identity else "ascii_lowercase",
@@ -730,7 +773,6 @@ def _hstr_bm_runtime_context(
     complete_single_segment = (
         pattern.issue is None and pattern.ended and not pattern.remaining_raw
     )
-    capture_marker_bytes_present = b"\x90\x1b" in pattern.raw
     semantic_context = BmSemanticContext(
         reader_kind="BUFFER",
         translation="identity" if identity else "ascii_lowercase",
@@ -857,7 +899,7 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
     sections = [DisplaySection(title="Score Thresholds", rows=tuple(threshold_rows))]
 
     for index, subsig in enumerate(parsed.subsignatures):
-        meaning = classify_hstr_subsignature(subsig)
+        meaning = classify_hstr_subsignature(subsig, type_byte=parsed.type_byte)
         tag_note = (
             f"score +{meaning.score_add}"
             if meaning.score_add is not None
@@ -998,11 +1040,11 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         flags_length = len(subsig.flags.raw) if subsig.flags is not None else 0
         flags_offset = start + 3
         data_offset = flags_offset + flags_length
-        meaning = classify_hstr_subsignature(subsig)
+        meaning = classify_hstr_subsignature(subsig, type_byte=parsed.type_byte)
         pattern_data = None
         bm_runtime_context = None
         bm_yara_data = None
-        candidate_disposition = _hstr_no_candidate_disposition(
+        candidate_disposition = _hstr_contextual_disposition(
             parsed.type_byte, subsig, meaning
         )
 
@@ -1037,20 +1079,33 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     )
                 )
             else:
-                issues.append(
-                    SemanticIssue(
-                        "candidate_no_match_validator_missing",
-                        (
-                            "The shared 0x005C gate requires a validator; all confirmed "
-                            "readers for this family pass null, so this subsignature "
-                            "cannot be retained as a candidate."
-                        ),
-                        (
-                            ("subsignature_index", index),
-                            ("gate_mask", 0x005C),
-                        ),
+                disposition_status = dict(candidate_disposition.items)["status"]
+                if disposition_status == "exact_no_candidate":
+                    issues.append(
+                        SemanticIssue(
+                            "candidate_no_match_validator_missing",
+                            (
+                                "The shared 0x005C gate requires a validator; all "
+                                "confirmed readers for this family pass null, so this "
+                                "subsignature cannot be retained as a candidate."
+                            ),
+                            (
+                                ("subsignature_index", index),
+                                ("gate_mask", 0x005C),
+                            ),
+                        )
                     )
-                )
+                else:
+                    issues.append(
+                        SemanticIssue(
+                            "contextual_flag_matching_neutral",
+                            (
+                                "HSTR bit 0x0080 has no matcher effect in the "
+                                "confirmed literal or no-backref BM subset."
+                            ),
+                            (("subsignature_index", index), ("bit", 0x0080)),
+                        )
+                    )
         if not subsig.data:
             unsupported = True
             issues.append(
@@ -1286,12 +1341,13 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v7",
+        representation="hstr.matcher-subset.ir.v8",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
             "mpengine 1.443.903.0 add_sstring_internal @ 0x1800FE008",
             "mpengine 1.443.903.0 hstr_internal_search_worker @ 0x1800E9F70",
+            "mpengine 1.443.903.0 BMMatchEx2 @ 0x1800EC420",
             "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60: raw opcode 0x03 reads two widths and tries non-overlapping chunks with a recursively matched shared suffix (0x1800EE4A1-0x1800EE55F)",
             "mpengine 1.443.903.0 BMPatternToLower @ 0x1800FECFC",
             "mpengine 1.443.903.0 BM_MAP_LOWCASE selected when HSTR flags bit0 is clear",
