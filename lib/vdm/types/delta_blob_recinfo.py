@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 DELTA_BLOB_RECINFO_TYPE: Final = 0x74
@@ -242,6 +245,108 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
                     "template or handler slot; the type is not proven globally "
                     "ignored."
                 ),
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                id="delta_recinfo_corpus_presence",
+                scope="corpus_observation",
+                statement="The current mpas/mpav corpus snapshot contains two type 0x74 records.",
+                coverage="subset",
+                evidence_refs=("delta_recinfo_corpus",),
+                unknowns=(
+                    SemanticUnknown(
+                        "corpus_observation",
+                        "This count does not cover other databases or engine versions.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="delta_recinfo_loader_dispatch",
+                scope="loader_dispatch",
+                statement=(
+                    "DispatchRecords has a mode- and gate-dependent 0x74 path: an "
+                    "empty break in one mode-0 branch and generic DispatchRecord in "
+                    "the other observed branches."
+                ),
+                coverage="subset",
+                evidence_refs=("delta_recinfo_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "The conclusion is limited to the documented 1.443.903.0 branches.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="delta_recinfo_receiver",
+                scope="receiver_transform",
+                statement="The runtime receiver and normalized storage are unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "No registration-complete 0x74 gktab slot or receiver trace exists.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="delta_recinfo_runtime_consumer",
+                scope="runtime_consumer",
+                statement="A runtime consumer for the projected entries is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "No entry-field-to-storage-or-consumer dataflow is established.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="delta_recinfo_detection_predicate",
+                scope="detection_predicate",
+                statement="No type 0x74 detection predicate is established.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "The current evidence stops at loader dispatch.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="delta_recinfo_final_verdict",
+                scope="final_verdict",
+                statement="No type 0x74 final-verdict role is established.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "No consumer, report, or verdict path has been identified.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="delta_recinfo_corpus",
+                axis="corpus",
+                kind="corpus",
+                source_ref="mpas.sig + mpav.sig",
+                locator="semantic inventory corpus count for type 0x74: 2",
+                supports=("delta_recinfo_corpus_presence",),
+            ),
+            SemanticEvidence(
+                id="delta_recinfo_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "DispatchRecords @ 0x1800F99A8; branches at "
+                    "0x1800F9AE5/0x1800F9AEF; dispatch calls at "
+                    "0x1800FA010/0x1800F9C90"
+                ),
+                supports=("delta_recinfo_loader_dispatch",),
             ),
         ),
     )
