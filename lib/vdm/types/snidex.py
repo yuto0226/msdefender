@@ -210,7 +210,7 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="confirmed_subset",
-        representation="snidex.exact_match_entry.v1",
+        representation="snidex.exact_match_entry.v2",
         data=JSONObject(
             (
                 ("type", record_name),
@@ -240,8 +240,11 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
                             ("exact_raw_key_compare", "memcmp"),
                             ("exact_raw_key_length", len(raw_key)),
                             ("exact_category_compare", "single_byte_equality"),
+                            ("exact_category_value", parsed.category_value),
+                            ("query_selector_width", 32),
                             ("provider_selector_source", "unknown"),
                             ("raw_key_generation", "unknown"),
+                            ("raw_key_byte_order", "unknown"),
                         )
                     ),
                 ),
@@ -280,9 +283,11 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
         issues=(
             SemanticIssue(
                 "snidex_key_inputs_unknown",
-                "The provider selector source and raw-key generation algorithm "
-                "are not established; hash meaning, category meaning, and final "
-                "scan verdict also remain unknown.",
+                "Lookup confirms a 32-bit selector, exact raw-key comparison, "
+                "and exact category-byte comparison, but this bounded caller "
+                "search did not locate the selector/key producer. Hash family, "
+                "normalization, byte order, category meaning, and final scan "
+                "verdict remain unknown.",
             ),
         ),
     )
