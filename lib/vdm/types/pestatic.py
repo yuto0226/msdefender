@@ -19,6 +19,15 @@ from ..recid import RecIdTail, parse_recid_tail
 
 PESTATIC_TYPE: Final = 0x87
 BASE_SIZE: Final = 16
+CRC_PARAMETERS: Final = {
+    "width": 32,
+    "polynomial": 0x04C11DB7,
+    "reflected_polynomial": 0xEDB88320,
+    "refin": True,
+    "refout": True,
+    "initial_value": 0xFFFFFFFF,
+    "final_xor": 0,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +118,7 @@ def export_pestatic(parsed: PeStaticPayload) -> ArtifactExport:
         }
 
     manifest = {
-        "format": "vdm.pestatic.record.v1",
+        "format": "vdm.pestatic.record.v2",
         "record": {
             "type": PESTATIC_TYPE,
             "type_hex": f"0x{PESTATIC_TYPE:02X}",
@@ -130,21 +139,21 @@ def export_pestatic(parsed: PeStaticPayload) -> ArtifactExport:
                 "raw_hex": parsed.raw[0:4].hex(),
                 "input_length": 64,
                 "algorithm": "mpengine.CRC_1",
-                "parameters": "polynomial/init/final_xor_not_portably_confirmed",
+                "parameters": CRC_PARAMETERS,
             },
             "crc_first_512": {
                 "value": parsed.crc_first_512,
                 "raw_hex": parsed.raw[4:8].hex(),
                 "input_length": 512,
                 "algorithm": "mpengine.CRC_1",
-                "parameters": "polynomial/init/final_xor_not_portably_confirmed",
+                "parameters": CRC_PARAMETERS,
             },
             "content_crc": {
                 "value": parsed.content_crc,
                 "raw_hex": parsed.raw[8:12].hex(),
                 "input_length": parsed.content_size,
                 "algorithm": "mpengine.CRC_0",
-                "parameters": "polynomial/init/final_xor_not_portably_confirmed",
+                "parameters": CRC_PARAMETERS,
             },
             "content_size": {
                 "value": parsed.content_size,
@@ -191,7 +200,7 @@ def _crc_stage(
             ("source_start", "provider_selected_start"),
             ("input_length", input_length),
             ("algorithm", algorithm),
-            ("algorithm_parameters", "opaque"),
+            ("algorithm_parameters", JSONObject(tuple(CRC_PARAMETERS.items()))),
             ("expected", expected),
             (
                 "expected_raw_span",
@@ -278,13 +287,7 @@ def export_pestatic_semantics(parsed: PeStaticPayload) -> RuleSemantics:
             ),
         )
     )
-    issues = [
-        SemanticIssue(
-            "crc_algorithm_parameters_opaque",
-            "CRC_0 and CRC_1 identify mpengine routines; their portable parameters "
-            "are not confirmed.",
-        )
-    ]
+    issues: list[SemanticIssue] = []
     status = "confirmed_subset"
     if parsed.recid_tail is not None and parsed.recid_tail.trailing_raw:
         status = "unsupported"
@@ -310,12 +313,16 @@ def export_pestatic_semantics(parsed: PeStaticPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status=status,
-        representation="pestatic.staged_fingerprint.ir.v1",
+        representation="pestatic.staged_fingerprint.ir.v2",
         data=data,
         evidence=(
             (
                 "mpengine 1.443.903.0 PESTATIC RecordPush, Lookup, and "
                 "PeStaticHashProvider::CompareValues data flow"
+            ),
+            (
+                "mpengine 1.443.903.0 CRC_0/CRC_1 and table @ 0x180DBC0D0: "
+                "reflected polynomial 0xEDB88320, init 0xFFFFFFFF, raw return"
             ),
         ),
         profile="mpengine-1.443.903.0",
