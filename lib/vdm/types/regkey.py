@@ -10,10 +10,27 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 REGKEY_TYPE: Final = 0x63
+REGKEY_HIVES: Final = ("HKCR", "HKCU", "HKLM", "HKCC")
+REGKEY_PREFIXES: Final = (
+    "software\\microsoft\\windows\\currentversion\\run",
+    "software\\microsoft\\windows\\currentversion\\explorer",
+    "software\\microsoft\\windows\\currentversion",
+    "software\\microsoft\\",
+    "software\\classes\\clsid",
+    "software\\classes\\interface",
+    "software\\classes\\typelib",
+    "software\\classes\\software\\microsoft\\windows\\currentversion\\explorer",
+    "software\\classes",
+    "software",
+    "system\\currentcontrolset",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,19 +139,57 @@ def render_regkey(parsed: RegKeyPayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
+def _project_receiver_fields(parsed: RegKeyPayload) -> JSONObject:
+    effective_path = parsed.key_path_raw.split(b"\0", 1)[0]
+    prefix_index = next(
+        (
+            index
+            for index, prefix in enumerate(REGKEY_PREFIXES)
+            if effective_path[: len(prefix)].lower() == prefix.encode("ascii").lower()
+        ),
+        None,
+    )
+    stored_path = (
+        effective_path
+        if prefix_index is None
+        else effective_path[len(REGKEY_PREFIXES[prefix_index]) :]
+    )
+    separator = stored_path.find(b"\\\\")
+    key_path = stored_path if separator < 0 else stored_path[:separator]
+    value_name = None if separator < 0 else stored_path[separator + 2 :]
+    storage = "asep" if value_name is None and parsed.value_raw else "general"
+    return JSONObject(
+        (
+            (
+                "hive",
+                REGKEY_HIVES[parsed.key_type - 1]
+                if 1 <= parsed.key_type <= len(REGKEY_HIVES)
+                else None,
+            ),
+            ("prefix_index", prefix_index),
+            (
+                "prefix",
+                None if prefix_index is None else REGKEY_PREFIXES[prefix_index],
+            ),
+            ("stored_path_hex", stored_path.hex()),
+            ("key_path_hex", key_path.hex()),
+            ("value_name_hex", None if value_name is None else value_name.hex()),
+            ("expected_content_hex", parsed.value_raw.hex()),
+            ("storage_table", storage),
+        )
+    )
+
+
 def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
-    """Export the confirmed REGKEY wire fields without guessing selector meaning."""
+    """Export the confirmed REGKEY receiver and candidate-matcher subset."""
     selector_accepted = 1 <= parsed.key_type <= 4
+    receiver_fields = _project_receiver_fields(parsed)
+    receiver_values = dict(receiver_fields.items)
     issues = [
         SemanticIssue(
-            "regkey_selector_names_unknown",
-            "The receiver stores selectors 1 through 4 as internal values 0 through 3; "
-            "the binary does not establish symbolic names or hive identities.",
-        ),
-        SemanticIssue(
-            "regkey_prefix_table_unexpanded",
-            "Store_UTF8_Reg strips the first matching entry from an 11-entry, "
-            "case-insensitive prefix table; the table strings are not named here.",
+            "final_verdict_unknown",
+            "A successful registry resource match is a gated candidate, not a "
+            "confirmed outer scan verdict.",
         ),
         SemanticIssue(
             "regkey_expansion_comparator_unknown",
@@ -176,7 +231,7 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status=status,
-        representation="regkey.registry_matcher_subset.v2",
+        representation="regkey.registry-match-candidate.ir.v3",
         data=JSONObject(
             (
                 ("type", "regkey"),
@@ -188,12 +243,17 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                             ("wire_offset", 0),
                             ("raw_u16", parsed.key_type),
                             ("registration_accepted", selector_accepted),
-                            ("semantic_name", None),
+                            (
+                                "hive",
+                                REGKEY_HIVES[parsed.key_type - 1]
+                                if selector_accepted
+                                else None,
+                            ),
                             (
                                 "internal_value",
                                 parsed.key_type - 1 if selector_accepted else None,
                             ),
-                            ("hive_mapping", "not-established"),
+                            ("mapping", "wire 1..4 -> internal 0..3"),
                         )
                     ),
                 ),
@@ -207,7 +267,7 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                             ("decoded_utf8", parsed.key_path),
                             (
                                 "runtime_normalization",
-                                "strip-first-case-insensitive-prefix; split-at-first-double-backslash",
+                                receiver_fields,
                             ),
                         )
                     ),
@@ -221,7 +281,7 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                             ("printable_utf8_preview", parsed.value_utf8_preview),
                             (
                                 "runtime_role",
-                                "registry value name (when path splits); otherwise absent",
+                                "expected registry value content",
                             ),
                         )
                     ),
@@ -234,7 +294,7 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                             ("possible_tables", JSONArray(("general", "ASEP"))),
                             (
                                 "record_assignment",
-                                "ASEP when no double-backslash separator is found and a value field exists; general otherwise",
+                                receiver_values["storage_table"],
                             ),
                         )
                     ),
@@ -243,16 +303,15 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                     "matcher",
                     JSONObject(
                         (
-                            ("candidate_lookup", "confirmed"),
                             (
-                                "comparison",
-                                (
-                                    "REG_SZ/EXPAND_SZ case-insensitive text "
-                                    "(then expansion helper); REG_BINARY exact bytes; "
-                                    "DWORD/BIG_ENDIAN decimal text"
-                                ),
+                                "candidate_lookup",
+                                "MatchResource -> reg_key_in_Registry",
                             ),
-                            ("selector_to_hive_mapping", None),
+                            (
+                                "roles",
+                                "key path + optional value name + expected content",
+                            ),
+                            ("selector_to_hive_mapping", receiver_values["hive"]),
                         )
                     ),
                 ),
@@ -268,6 +327,182 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=_regkey_claims(parsed, selector_accepted),
+        claim_evidence=_regkey_evidence(),
+    )
+
+
+def _regkey_claims(
+    parsed: RegKeyPayload, selector_accepted: bool
+) -> tuple[SemanticClaim, ...]:
+    return (
+        SemanticClaim(
+            id="regkey_wire_layout",
+            scope="wire_layout",
+            statement=(
+                "REGKEY contains a u16 hive selector, a u16-length-prefixed UTF-8 "
+                "path, a u16-length-prefixed expected-content field, and an optional "
+                "RecID program tail."
+            ),
+            coverage="subset",
+            evidence_refs=("regkey_receiver",),
+            unknowns=(
+                SemanticUnknown(
+                    "wire_layout",
+                    "The optional RecID program tail grammar remains unresolved.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="regkey_dispatch_path",
+            scope="loader_dispatch",
+            statement="Type 0x63 is registered to reg_key_DB_receiver.",
+            coverage="subset",
+            evidence_refs=("regkey_dispatch",),
+            unknowns=(
+                SemanticUnknown(
+                    "loader_dispatch",
+                    "Outer database-selection and product enablement gates are not modeled.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="regkey_receiver_projection",
+            scope="receiver_transform",
+            statement=(
+                "Accepted selectors 1..4 map to HKCR/HKCU/HKLM/HKCC; the receiver "
+                "strips the first matching prefix from an ordered 11-entry table, "
+                "splits an optional value name at the first double backslash, and "
+                "keeps the separate value field as expected content."
+            ),
+            coverage="subset" if selector_accepted else "unknown",
+            evidence_refs=("regkey_receiver", "regkey_tables")
+            if selector_accepted
+            else (),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    (
+                        "This selector is accepted-and-ignored by the receiver."
+                        if not selector_accepted
+                        else "RecID program construction and allocation-failure state are not projected."
+                    ),
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="regkey_runtime_candidate",
+            scope="runtime_consumer",
+            statement=(
+                "GetRegKeyFromRecord reconstructs hive/prefix/path, and "
+                "reg_key_in_Registry expands logical-user keys before passing the "
+                "key, optional value name, and expected content to ResutilsRegKeyInHive."
+            ),
+            coverage="subset" if selector_accepted else "unknown",
+            evidence_refs=("regkey_consumer",) if selector_accepted else (),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    (
+                        "Ignored selectors do not reach this registered-record consumer."
+                        if not selector_accepted
+                        else "All registry value-type comparison branches are not projected into portable IR."
+                    ),
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="regkey_detection_predicate",
+            scope="detection_predicate",
+            statement=(
+                "MatchResource emits candidate metadata after the registry predicate "
+                "matches and the selected signature/threat is not expired or disabled."
+            ),
+            coverage="subset" if selector_accepted else "unknown",
+            evidence_refs=("regkey_candidate",) if selector_accepted else (),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    (
+                        "Ignored selectors have no registered matcher predicate."
+                        if not selector_accepted
+                        else "RecID validator effects and outer resource-search arbitration remain unresolved."
+                    ),
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="regkey_report_mapping",
+            scope="report_mapping",
+            statement="The registry candidate has no confirmed user-visible report mapping.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "No caller was followed from MatchResource output into report policy.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="regkey_final_verdict",
+            scope="final_verdict",
+            statement="A REGKEY resource candidate is not a confirmed final verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Outer scan arbitration and final report policy remain unresolved.",
+                ),
+            ),
+        ),
+    )
+
+
+def _regkey_evidence() -> tuple[SemanticEvidence, ...]:
+    return (
+        SemanticEvidence(
+            id="regkey_receiver",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="reg_key_DB_receiver @ 0x180320BF0; Store_UTF8_Reg @ 0x180321440",
+            supports=("regkey_wire_layout", "regkey_receiver_projection"),
+        ),
+        SemanticEvidence(
+            id="regkey_tables",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="prefix table @ 0x180DD8600; hive table @ 0x180E65630",
+            supports=("regkey_receiver_projection",),
+        ),
+        SemanticEvidence(
+            id="regkey_dispatch",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="register_DB_receiver_t_reg_key_record",
+            supports=("regkey_dispatch_path",),
+        ),
+        SemanticEvidence(
+            id="regkey_consumer",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "GetRegKeyFromRecord @ 0x180224628; reg_key_in_Registry @ "
+                "0x180223A20; ResutilsRegKeyInHive @ 0x1800BE408"
+            ),
+            supports=("regkey_runtime_candidate",),
+        ),
+        SemanticEvidence(
+            id="regkey_candidate",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="MatchResource @ 0x1802228A0",
+            supports=("regkey_detection_predicate",),
+        ),
     )
 
 
