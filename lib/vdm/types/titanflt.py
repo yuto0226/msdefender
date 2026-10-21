@@ -9,7 +9,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 TITANFLT_TYPE: Final = 0x30
@@ -274,6 +277,59 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
         )
     )
     reporting = JSONObject((("status", "unknown"),))
+    corpus_claims = (
+        (
+            SemanticClaim(
+                id="titanflt_corpus_sample",
+                scope="corpus_observation",
+                statement=(
+                    "The current mpas.sig snapshot contains one 331-byte type 0x30 "
+                    "payload with printable pipe-separated fragments and a terminal NUL."
+                ),
+                coverage="subset",
+                evidence_refs=("titanflt_corpus",),
+                unknowns=(
+                    SemanticUnknown(
+                        "corpus_observation",
+                        "This single sample is not a wire grammar or cross-version profile.",
+                    ),
+                ),
+            ),
+        )
+        if corpus_profile_observed
+        else ()
+    )
+    consumer_claim = (
+        SemanticClaim(
+            id="titanflt_name_filter_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "CompileVNFlts resolves a packed object into a regex, and "
+                "CK_IsVnameFiltered applies regex_search to virinfo names."
+            ),
+            coverage="subset",
+            evidence_refs=("titanflt_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The record's packed object has not been resolved to runtime regex bytes.",
+                ),
+            ),
+        )
+        if not payload_short
+        else SemanticClaim(
+            id="titanflt_name_filter_consumer",
+            scope="runtime_consumer",
+            statement="The rejected short payload has no confirmed runtime projection.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Receiver rejection prevents a loaded-row consumer claim.",
+                ),
+            ),
+        )
+    )
     return RuleSemantics(
         status="unsupported" if payload_short else "observed_only",
         representation="titanflt.packed_object_candidate.v4",
@@ -368,6 +424,96 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
             SemanticIssue(
                 "corpus_profile_only",
                 "Pipe-delimited printable segments describe one corpus profile, not a validated wire grammar; the template consumes only the first eight payload bytes.",
+            ),
+        ),
+        claims=corpus_claims
+        + (
+            SemanticClaim(
+                id="titanflt_receiver_projection",
+                scope="receiver_transform",
+                statement=(
+                    "ReceiveNewTemplate rejects payloads shorter than eight bytes."
+                    if payload_short
+                    else "ReceiveNewTemplate copies payload[0:8] to row[0:8] and "
+                    "leaves the remaining payload bytes unconsumed by this descriptor."
+                ),
+                coverage="complete",
+                evidence_refs=("titanflt_receiver",),
+            ),
+            consumer_claim,
+            SemanticClaim(
+                id="titanflt_detection_predicate",
+                scope="detection_predicate",
+                statement="TITANFLT is not a confirmed file or threat detection predicate.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Virinfo name filtering has not been closed into scan matching.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="titanflt_report_mapping",
+                scope="report_mapping",
+                statement="TITANFLT filter-to-report mapping is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "No name-filter result to report policy path was followed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="titanflt_final_verdict",
+                scope="final_verdict",
+                statement="TITANFLT does not establish a final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final scan arbitration remains unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            (
+                SemanticEvidence(
+                    id="titanflt_corpus",
+                    axis="corpus",
+                    kind="corpus",
+                    source_ref="mpas.sig",
+                    locator="record offset 0x0742E7AB; payload length 331",
+                    supports=("titanflt_corpus_sample",),
+                ),
+            )
+            if corpus_profile_observed
+            else ()
+        )
+        + (
+            SemanticEvidence(
+                id="titanflt_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "cksig_init_module @ 0x180564A9F; "
+                    "ReceiveNewTemplate @ 0x1803224D0 opcode 0x1005"
+                ),
+                supports=("titanflt_receiver_projection",),
+            ),
+            SemanticEvidence(
+                id="titanflt_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "CompileVNFlts @ 0x1805B0370; CK_IsVnameFiltered @ "
+                    "0x180BBADC4; kvirinfo @ 0x180551320"
+                ),
+                supports=("titanflt_name_filter_consumer",),
             ),
         ),
     )
