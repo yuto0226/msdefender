@@ -14,7 +14,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 RPF_ROUTINE_TYPE: Final = 0x53
@@ -400,6 +403,10 @@ def export_rpf_routine_semantics(parsed: RpfRoutinePayload) -> RuleSemantics:
         or has_entry_tails
         or parsed.tail_raw
     )
+    bounded_coverage = "unknown" if fail_closed else "subset"
+    receiver_refs = () if fail_closed else ("rpf_receiver_publish",)
+    runtime_refs = () if fail_closed else ("rpf_runtime_dispatch",)
+    policy_refs = () if fail_closed else ("rpf_candidate_policy",)
     return RuleSemantics(
         status="unsupported" if fail_closed else "observed_only",
         representation="rpf_routine.load_invoke_result_boundary.v2",
@@ -604,6 +611,124 @@ def export_rpf_routine_semantics(parsed: RpfRoutinePayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="rpf_receiver_publish",
+                scope="receiver_transform",
+                statement=(
+                    "The receiver validates and stores RPFM rows, and the end callback "
+                    "can publish a DynamicModule."
+                ),
+                coverage=bounded_coverage,
+                evidence_refs=receiver_refs,
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        (
+                            "This payload contains fail-closed structure or integrity gaps."
+                            if fail_closed
+                            else "Routine bodies and section business meanings are opaque."
+                        ),
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="rpf_runtime_dispatch",
+                scope="runtime_consumer",
+                statement=(
+                    "Published routines may be dispatched through interpreter, JIT, or "
+                    "configuration-gated native paths."
+                ),
+                coverage=bounded_coverage,
+                evidence_refs=runtime_refs,
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        (
+                            "This payload is not eligible for a bounded runtime projection."
+                            if fail_closed
+                            else "No payload was executed and method-body semantics remain "
+                            "uninterpreted."
+                        ),
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="rpf_candidate_arbitration",
+                scope="report_mapping",
+                statement=(
+                    "RPF results can enter continue, delayed-detection, better-match, "
+                    "and SCAN_REPLY candidate arbitration."
+                ),
+                coverage=bounded_coverage,
+                evidence_refs=policy_refs,
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        (
+                            "This payload has no bounded candidate projection."
+                            if fail_closed
+                            else "A candidate may be rejected or replaced; outer report "
+                            "mapping remains unresolved."
+                        ),
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="rpf_detection_predicate",
+                scope="detection_predicate",
+                statement="RPF routine-body detection semantics are unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Routine bodies are not interpreted by the exporter or static trace.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="rpf_final_verdict",
+                scope="final_verdict",
+                statement="RPF candidate arbitration does not establish a final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "The outer scan and reporting path is not closed.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="rpf_receiver_publish",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=("nvsig_push @ 0x18032C230; nvsig_pushend @ 0x18032E850"),
+                supports=("rpf_receiver_publish",),
+            ),
+            SemanticEvidence(
+                id="rpf_runtime_dispatch",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=("rpf_pInvoke @ 0x180120660; netvm_loadmodule2 @ 0x180121CF0"),
+                supports=("rpf_runtime_dispatch",),
+            ),
+            SemanticEvidence(
+                id="rpf_candidate_policy",
+                axis="policy",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "ShouldContinueScanning @ 0x1801449E4; "
+                    "IsDelayedDetection @ 0x1800A9F4C; "
+                    "IsBetterMatch @ 0x1800F8308"
+                ),
+                supports=("rpf_candidate_arbitration",),
+            ),
+        ),
     )
 
 
