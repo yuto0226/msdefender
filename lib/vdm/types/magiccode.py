@@ -1,4 +1,4 @@
-"""Corpus-profile decoder for the unloadable MAGICCODE record 0xC0."""
+"""Decoder for the unloadable MAGICCODE record 0xC0."""
 
 from dataclasses import dataclass
 
@@ -43,12 +43,11 @@ def _take(payload: bytes, cursor: int, size: int, label: str) -> tuple[bytes, in
 
 
 def parse_magiccode(payload: bytes) -> MagicCodePayload:
-    """Decode the three length-prefixed fields observed in the local corpus.
+    """Decode the four descriptor operations used by the C0 template.
 
-    This framing is a corpus profile, not an engine-confirmed receiver
-    grammar. The current binary's module initializer registers database
-    storage for this signature family, but this audit did not identify a
-    C0-specific receiver acceptance path.
+    The engine reads a u8-length byte string, a u32le value, that many raw
+    bytes, then a u16-length byte string. It stops after those fields and
+    does not require the payload cursor to reach the record end.
     """
     if not payload:
         raise ValueError("truncated MAGICCODE field 00 length")
@@ -84,9 +83,13 @@ def _text_preview(data: bytes) -> str:
 
 def render_magiccode(parsed: MagicCodePayload) -> FormatResult:
     rows = (
-        ("semantic_status", "corpus profile; engine receiver acceptance unresolved"),
-        ("profile", "u8-length field, u32-length field, u16-length field"),
+        ("semantic_status", "engine-confirmed generic template receiver"),
+        ("profile", "u8-length bytes, u32le length, length bytes, u16-length bytes"),
         ("registered_storage_stride", "32 bytes (current engine registration)"),
+        (
+            "registered_field_projection",
+            "+0 pointer, +8 u32 length, +16 bytes pointer, +24 pointer",
+        ),
         ("confirmed_lookup_consumer", "GetMagicCodeSignatures: fixed UpxEP prefix"),
         ("field_00_length", str(len(parsed.field_00_raw))),
         ("field_00_text", _text_preview(parsed.field_00_c_string)),
@@ -103,7 +106,7 @@ def render_magiccode(parsed: MagicCodePayload) -> FormatResult:
 
 
 def export_magiccode_semantics(parsed: MagicCodePayload) -> RuleSemantics:
-    """Export observed framing separately from the confirmed runtime consumer."""
+    """Export receiver framing, projected row fields, and runtime consumer."""
     fields = (
         ("field_00", parsed.field_00_raw),
         ("field_01", parsed.field_01_raw),
@@ -111,8 +114,8 @@ def export_magiccode_semantics(parsed: MagicCodePayload) -> RuleSemantics:
         ("trailing", parsed.trailing_raw),
     )
     return RuleSemantics(
-        status="observed_only",
-        representation="magiccode.corpus_manifest.ir.v1",
+        status="confirmed_subset",
+        representation="magiccode.receiver_matcher_subset.v2",
         data=JSONObject(
             (
                 ("type", "MAGICCODE"),
@@ -121,7 +124,30 @@ def export_magiccode_semantics(parsed: MagicCodePayload) -> RuleSemantics:
                     "corpus_manifest",
                     JSONObject(
                         (
-                            ("profile", "u8-length, u32le-length, u16le-length"),
+                            (
+                                "profile",
+                                "u8-length bytes, u32le length + bytes, u16-length bytes",
+                            ),
+                            (
+                                "engine_receiver",
+                                JSONObject(
+                                    (
+                                        ("function", "ReceiveNewTemplate"),
+                                        (
+                                            "descriptor_tags",
+                                            JSONArray((0x100C, 0x1000, 0x100F, 0x100D)),
+                                        ),
+                                        (
+                                            "descriptor_row_offsets",
+                                            JSONArray((0, 8, 16, 24)),
+                                        ),
+                                        (
+                                            "trailing_bytes",
+                                            "not checked after descriptors",
+                                        ),
+                                    )
+                                ),
+                            ),
                             (
                                 "fields",
                                 JSONArray(
@@ -158,6 +184,27 @@ def export_magiccode_semantics(parsed: MagicCodePayload) -> RuleSemantics:
                             ("lookup_function", "GetMagicCodeSignatures"),
                             ("lookup_key", "UpxEP"),
                             ("lookup_behavior", "fixed-prefix range lookup"),
+                            (
+                                "unpacker_consumer",
+                                JSONObject(
+                                    (
+                                        (
+                                            "function",
+                                            "Upxw60Unpacker::ResolveEntryPoint",
+                                        ),
+                                        ("address", "0x180269D10"),
+                                        ("pattern_length_offset", 8),
+                                        ("pattern_bytes_offset", 16),
+                                        ("pattern_matcher", "MatchNopSignature"),
+                                        ("expression_offset", 24),
+                                        ("expression_evaluator", "EvaluateExpression"),
+                                        (
+                                            "behavior",
+                                            "match pattern then evaluate expression",
+                                        ),
+                                    )
+                                ),
+                            ),
                         )
                     ),
                 ),
@@ -166,19 +213,20 @@ def export_magiccode_semantics(parsed: MagicCodePayload) -> RuleSemantics:
         evidence=(
             "mpas.sig contains 9 MAGICCODE records; mpav.sig contains none",
             "magiccode_init_module registers 32-byte storage and MagicCodeSort",
+            "ReceiveNewTemplate consumes the four registered C0 descriptors",
             "GetMagicCodeSignatures performs a fixed UpxEP prefix range lookup",
         ),
         profile="mpengine-1.443.903.0",
         issues=(
             SemanticIssue(
-                "receiver_grammar_unresolved",
-                "The u8/u32/u16 field framing is a corpus profile; the C0-specific "
-                "receiver acceptance grammar is not identified.",
+                "magiccode_expression_grammar_unknown",
+                "The expression bytes are passed to EvaluateExpression, but their "
+                "portable grammar and evaluation semantics are not established.",
             ),
             SemanticIssue(
-                "registered_record_field_semantics_unknown",
-                "The registered 32-byte MagicCode storage fields have no confirmed "
-                "field-level semantics.",
+                "magiccode_final_effect_unknown",
+                "The pattern/evaluation path is confirmed locally, but the complete "
+                "unpacker state change and any final detection effect are unresolved.",
             ),
         ),
     )
