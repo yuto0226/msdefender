@@ -166,8 +166,10 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
             "At the observed kcrce_scanfile callsite, context byte +1 is initialized to 1 and makes a match return 0x29; its business/report label remains unknown.",
         ),
         SemanticIssue(
-            "scan_result_semantics_unknown",
-            "The hosts-file enumerator consumes callback results, but the final SCAN_REPLY meaning is not established.",
+            "final_scan_report_policy_unknown",
+            "The observed path maps callback 0x29 to a nonzero enumerator result "
+            "and then to scanresult 0xFE; the final SCAN_REPLY/report meaning of "
+            "that control-flow value is not established.",
         ),
         SemanticIssue(
             "hosts_file_format_and_scope_unknown",
@@ -234,7 +236,7 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
             if parsed.trailing_raw or (wildcard and hosts_domain is None)
             else "confirmed_subset"
         ),
-        representation="hostsentry.map-lookup.ir.v3",
+        representation="hostsentry.map-lookup.ir.v4",
         data=JSONObject(
             (
                 ("type", "HOSTSENTRY"),
