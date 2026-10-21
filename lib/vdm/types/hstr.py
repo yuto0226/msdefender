@@ -1360,7 +1360,39 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     )
                 )
 
-            unsupported_render_diagnostic = bool(bm_render.diagnostics)
+            rejecting_scans = tuple(
+                operation
+                for operation in interpret_bm_pattern(pattern).operations
+                if isinstance(operation, BmScan)
+                and operation.token.raw_id == 0x09
+                and operation.token.dispatch_id == 0x09
+            )
+            rejection_dominates_render_diagnostics = (
+                bm_candidate_disposition is not None
+                and dict(bm_candidate_disposition.items)["status"]
+                == "exact_no_candidate"
+                and dict(bm_candidate_disposition.items)["stage"] == "matcher"
+                and bool(bm_render.diagnostics)
+                and not pattern_issues
+                and not bm_render.requirements
+                and all(
+                    diagnostic.code == "unsupported.backward_scan"
+                    and diagnostic.raw_id == 0x09
+                    for diagnostic in bm_render.diagnostics
+                )
+                and {
+                    (diagnostic.offset, diagnostic.raw_id)
+                    for diagnostic in bm_render.diagnostics
+                }
+                == {
+                    (operation.offset, operation.token.raw_id)
+                    for operation in rejecting_scans
+                }
+            )
+            unsupported_render_diagnostic = (
+                bool(bm_render.diagnostics)
+                and not rejection_dominates_render_diagnostics
+            )
             if (
                 any(
                     isinstance(operation, BmOpaque)
