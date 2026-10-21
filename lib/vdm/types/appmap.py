@@ -21,8 +21,8 @@ _STRING_SECTION_TYPES: Final = frozenset((*range(0x04, 0x0C), *range(0x0D, 0x11)
 _PREVIEW_BYTES: Final = 32
 _SECTION_ROLES: Final = {
     0x01: "path_id_to_current_record_ordinal_mapping",
-    0x02: "file_hash_or_key_matcher_input",
-    0x03: "three_field_metadata_matcher_input",
+    0x02: "threat_info_u64_matcher_input",
+    0x03: "pua_file_info_triplet_matcher_input",
     0x04: "version_or_certificate_metadata_matcher_input",
     0x05: "app_file_path_matcher_input",
     0x06: "app_folder_path_matcher_input",
@@ -204,7 +204,7 @@ def export_appmap_semantics(parsed: AppMapPayload) -> RuleSemantics:
         if opcode == 0x01:
             section_data.append(("path_ids", JSONArray(tuple(section.u32_values))))
             section_data.append(("mapping_target", "current_record_ordinal"))
-            section_issues.append("path_id_namespace_and_runtime_mapping_not_resolved")
+            section_issues.append("path_id_namespace_not_resolved")
         elif opcode in _FIXED_ITEM_SIZES:
             for item_index, raw in enumerate(section.items_raw):
                 item_values.append(
@@ -217,6 +217,21 @@ def export_appmap_semantics(parsed: AppMapPayload) -> RuleSemantics:
                 )
             section_data.append(("stride", _FIXED_ITEM_SIZES[opcode]))
             section_data.append(("items", JSONArray(tuple(item_values))))
+            if opcode == 0x02:
+                section_data.append(("runtime_compare_source", "ThreatInfo+0x10 u64"))
+            elif opcode == 0x03:
+                section_data.append(
+                    (
+                        "runtime_compare_sources",
+                        JSONArray(
+                            (
+                                "PUAFileInfo+0x30 u64",
+                                "PUAFileInfo+0x38 u64",
+                                "PUAFileInfo+0x40 u32",
+                            )
+                        ),
+                    )
+                )
             section_issues.append("fixed_item_field_semantics_unresolved")
         elif opcode in _STRING_SECTION_TYPES:
             for item_index, raw in enumerate(section.items_raw):
@@ -274,21 +289,48 @@ def export_appmap_semantics(parsed: AppMapPayload) -> RuleSemantics:
                 (("length", len(parsed.trailing_raw)),),
             )
         )
+    issues.append(
+        SemanticIssue(
+            "appmap_final_report_policy_unknown",
+            "Record matching feeds PUA ignore/policy and latent/resource report paths; "
+            "a matcher hit is not established as a final external verdict.",
+        )
+    )
 
     return RuleSemantics(
         status="observed_only",
-        representation="pua_appmap.manifest.v1",
+        representation="pua_appmap.manifest.v2",
         data=_json_object(
             raw_hex=parsed.raw.hex(),
             sections=JSONArray(tuple(sections)),
             terminator=terminator,
             trailing_raw_hex=parsed.trailing_raw.hex(),
+            runtime_lookup=_json_object(
+                type_01_storage=(
+                    "FNV1a-keyed path-key map to current record ordinals; reorganized "
+                    "into path-key to RecID ordinal ranges"
+                ),
+                query_key_flow=("SCAN_REPLY/SCANSTRUCT+0x84 to ThreatInfo+0x04"),
+                query_key_namespace=None,
+            ),
+            report_boundary=_json_object(
+                match_is_final_verdict=False,
+                process_path=(
+                    "ProcessPUADetection applies ignore/policy and trace/latent handling"
+                ),
+                resource_path=(
+                    "ResfileReportPUA checks ignored state before threat/resource report"
+                ),
+            ),
         ),
         evidence=(
             "mpengine 1.443.903.0 PUA_appmap_receiver",
             "mpengine 1.443.903.0 LoadAppmapSection",
             "mpengine 1.443.903.0 isAppmapRecMatch",
             "mpengine 1.443.903.0 GetAppmapInfo",
+            "mpengine 1.443.903.0 ReorgThreat2Appmap",
+            "mpengine 1.443.903.0 AppmapPUAFile",
+            "mpengine 1.443.903.0 ProcessPUADetection and ResfileReportPUA",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
