@@ -122,19 +122,14 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     issues = [
         SemanticIssue(
             "runtime_region_unknown",
-            "ScanContext supplies guest VAs to PEEmuMapper. A conditional x86 file-backed "
-            "VMM path is recovered, but this candidate's actual source bytes and mapping "
-            "row are not identified; direct-buffer provenance and x64 mapping also remain unknown.",
+            "ScanContext supplies guest VAs to PEEmuMapper. Conditional x86/x64 file-backed "
+            "VMM interval paths are recovered, but this candidate's source bytes and actual "
+            "mapping row are not identified; direct-buffer provenance remains unknown.",
         ),
         SemanticIssue(
             "pe_mapping_metadata_unknown",
-            "The x86 interval formula is known, but row field names and the interval row "
-            "selected for a concrete candidate are not established.",
-        ),
-        SemanticIssue(
-            "x64_mapping_unknown",
-            "The x64 page loader has VFS_Read/UfsSeekRead branches, but its guest-VA to "
-            "file-position formula is not recovered.",
+            "The x86/x64 interval formulas are known, but row field names and the interval "
+            "row selected for a concrete candidate are not established.",
         ),
         SemanticIssue(
             "final_detection_policy_unknown",
@@ -201,7 +196,8 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         (
                             "address_translation_status",
                             (
-                                "conditional x86 file-backed VMM translation is recovered "
+                                "conditional x86 and x64 file-backed VMM interval translations "
+                                "are recovered "
                                 "below; a candidate-specific RVA/file mapping is not established"
                             ),
                         ),
@@ -268,10 +264,30 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                             JSONObject(
                                 (
                                     (
+                                        "condition",
+                                        (
+                                            "PEVAMap query returns an image region and the x64 loader "
+                                            "selects the file-backed interval branch"
+                                        ),
+                                    ),
+                                    (
+                                        "input_memory_offset",
+                                        "guest_va - *(uint64_t *)(pe_vars+0x83798)",
+                                    ),
+                                    ("interval_table_base_offset", 0x4040),
+                                    ("interval_entry_stride", 0x28),
+                                    (
+                                        "guest_va_to_file_position_formula",
+                                        (
+                                            "memory_offset + *(uint32_t *)(row+0x08) "
+                                            "- *(uint32_t *)(row+0x00)"
+                                        ),
+                                    ),
+                                    ("read_position_consumer", "UfsSeekRead"),
+                                    (
                                         "observed_readers",
                                         JSONArray(("VFS_Read", "UfsSeekRead")),
                                     ),
-                                    ("guest_va_to_file_position_formula", None),
                                     ("row_field_names", None),
                                     ("actual_interval_row", None),
                                 )
@@ -290,7 +306,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         ("runtime_bytes_observed", False),
                         (
                             "file_or_rva_translation",
-                            "conditional x86 file-backed VMM path only; candidate-specific mapping unknown",
+                            "conditional x86 and x64 file-backed VMM interval paths; candidate-specific mapping unknown",
                         ),
                     )
                 ),
@@ -366,7 +382,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             "VMM_x32_context::load_page @ 0x180040DD0",
             "pe_mofs_to_fofs_ex @ 0x1800E9DA0",
             "UfsSeekRead @ 0x18014A724",
-            "VMM_x64_context::load_page @ 0x1800424D0 (mapping formula unresolved)",
+            "VMM_x64_context::load_page @ 0x1800424D0 (x64 file-backed interval formula)",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
