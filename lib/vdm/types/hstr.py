@@ -512,6 +512,33 @@ def _hstr_scanner_context(type_byte: int) -> JSONObject | None:
     )
 
 
+def _hstr_no_candidate_disposition(
+    type_byte: int, subsig: HstrSubsignature, meaning: HstrSubsignatureMeaning
+) -> JSONObject | None:
+    """Prove a subsig cannot be retained when every caller passes null validator."""
+    if subsig.flags is None:
+        return None
+    gate_bits = subsig.flags.value & 0x005C
+    if not gate_bits or meaning.unknown_flag_bits:
+        return None
+    validator_gate_bits = (0x0004, 0x0008, 0x0010, 0x0040)
+    if any(bit not in validator_gate_bits for bit in meaning.contextual_bits):
+        return None
+    if type_byte not in _CONFIRMED_SCANNER_CONTEXTS:
+        return None
+    return JSONObject(
+        (
+            ("status", "exact_no_candidate"),
+            (
+                "reason",
+                "validator_required_but_null_at_all_confirmed_readers",
+            ),
+            ("gate_mask", 0x005C),
+            ("subsignature_scope_only", True),
+        )
+    )
+
+
 def _read_u16(payload: bytes, cursor: int, label: str) -> tuple[int, int]:
     end = cursor + 2
     if end > len(payload):
@@ -894,6 +921,9 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         pattern_data = None
         bm_runtime_context = None
         bm_yara_data = None
+        candidate_disposition = _hstr_no_candidate_disposition(
+            parsed.type_byte, subsig, meaning
+        )
 
         if meaning.unknown_flag_bits:
             unsupported = True
@@ -908,22 +938,38 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                 )
             )
         if meaning.contextual_bits:
-            unsupported = True
-            issues.append(
-                SemanticIssue(
-                    "contextual_subsignature_flags",
-                    (
-                        "Contextual HSTR flags require validator, offset-vector, "
-                        "BM option, or full-subject match context."
-                    ),
-                    (
-                        ("subsignature_index", index),
-                        ("bits", sum(meaning.contextual_bits)),
-                        ("contextual_bits", JSONArray(meaning.contextual_bits)),
-                        ("effects", JSONArray(meaning.contextual_effects)),
-                    ),
+            if candidate_disposition is None:
+                unsupported = True
+                issues.append(
+                    SemanticIssue(
+                        "contextual_subsignature_flags",
+                        (
+                            "Contextual HSTR flags require validator, offset-vector, "
+                            "BM option, or full-subject match context."
+                        ),
+                        (
+                            ("subsignature_index", index),
+                            ("bits", sum(meaning.contextual_bits)),
+                            ("contextual_bits", JSONArray(meaning.contextual_bits)),
+                            ("effects", JSONArray(meaning.contextual_effects)),
+                        ),
+                    )
                 )
-            )
+            else:
+                issues.append(
+                    SemanticIssue(
+                        "candidate_no_match_validator_missing",
+                        (
+                            "The shared 0x005C gate requires a validator; all confirmed "
+                            "readers for this family pass null, so this subsignature "
+                            "cannot be retained as a candidate."
+                        ),
+                        (
+                            ("subsignature_index", index),
+                            ("gate_mask", 0x005C),
+                        ),
+                    )
+                )
         if not subsig.data:
             unsupported = True
             issues.append(
@@ -1086,6 +1132,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     ("data_shape", meaning.display_encoding),
                     ("bm_pattern", pattern_data),
                     ("bm_runtime_context", bm_runtime_context),
+                    ("candidate_disposition", candidate_disposition),
                     ("bm_yara", bm_yara_data),
                 )
             )
