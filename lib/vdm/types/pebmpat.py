@@ -122,7 +122,8 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     issues = [
         SemanticIssue(
             "runtime_region_unknown",
-            "Static flow establishes a PEMapper guest-address window, but not its runtime backing bytes or file/RVA translation.",
+            "ScanContext supplies guest VAs to PEEmuMapper; static flow does not identify "
+            "the mapped subject's backing file bytes or file/RVA translation.",
         ),
         SemanticIssue(
             "final_detection_policy_unknown",
@@ -170,17 +171,30 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                 "mapping_strategy",
                 JSONObject(
                     (
-                        ("coordinate", "PEMapper guest address passed to __mmap_ex"),
+                        (
+                            "coordinate",
+                            (
+                                "mapper address argument from ScanEx passed to "
+                                "PEEmuMapper::mmap / __mmap_ex"
+                            ),
+                        ),
                         ("primary_request_length", "prefix + 2048"),
-                        ("primary_request_start", "scan_va - prefix"),
+                        ("primary_request_start", "mapper_address - prefix"),
                         ("bm_match_length_argument", 2048),
                         ("bm_match_start_argument", "mapped_pointer + prefix"),
                         (
                             "bm_start_argument_interpretation",
-                            "offset within the mapped PEMapper subject; backing file/RVA coordinate unknown",
+                            "mapped subject pointer plus requested prefix; backing file/RVA coordinate unknown",
                         ),
-                        ("translation", "identity"),
-                        ("translation_symbol", "BM_MAP_ALL"),
+                        ("address_translation", None),
+                        (
+                            "address_translation_status",
+                            (
+                                "not recovered; BM_MAP_ALL is BM byte translation, "
+                                "not a file/RVA mapping"
+                            ),
+                        ),
+                        ("bm_byte_translation", "BM_MAP_ALL"),
                         (
                             "bm_match_flags",
                             "(2 * !trie_flags_bit1) | 1",
@@ -203,6 +217,41 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                             "matcher_stage",
                             "trie prefix candidate -> BMMatchPEMapper -> P-code validation",
                         ),
+                        (
+                            "post_bm_behavior",
+                            (
+                                "with SCAN_REPLY, ValidateSignatureWithPcode may "
+                                "update recid/status; without it, a BM hit is returned "
+                                "as a candidate entry"
+                            ),
+                        ),
+                        (
+                            "observed_status_routes",
+                            JSONObject(
+                                (
+                                    ("3,6,8", "MpReportLowfiMatch"),
+                                    ("10,11", "HipsManager::OnStreamDetection"),
+                                    (
+                                        "1,2",
+                                        (
+                                            "candidate-entry states when returned by "
+                                            "P-code or when SCAN_REPLY is absent"
+                                        ),
+                                    ),
+                                    (
+                                        "0",
+                                        "no report or candidate-entry branch in ScanEx",
+                                    ),
+                                )
+                            ),
+                        ),
+                        (
+                            "status_interpretation",
+                            (
+                                "ScanEx branch behavior only; status names and final "
+                                "policy are not established"
+                            ),
+                        ),
                         ("pcode_context", "trie_flags_bit0 selects context 1 or 2"),
                         ("final_verdict", None),
                     )
@@ -215,7 +264,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         status=(
             "ignored" if parsed.receiver_result.startswith("no_op.") else "unsupported"
         ),
-        representation="pebmpat.pattern.ir.v2",
+        representation="pebmpat.pattern.ir.v3",
         data=data,
         evidence=(
             (
@@ -225,6 +274,9 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             "PEBMPatScanner::ScanEx @ 0x1803D5A5C",
             "BMMatchPEMapper @ 0x1803D5E44",
             "BMMatchEx2 @ 0x1800EC420",
+            "ScanContext::GetChar @ 0x180250F0C",
+            "PEEmuMapper::mmap @ 0x180251080",
+            "__mmap_ex @ 0x180035ED0",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
