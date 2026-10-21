@@ -260,8 +260,9 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
             "This receiver analysis does not establish path matching or final verdict semantics.",
         ),
         SemanticIssue(
-            "csidl_mapping_result_unknown",
-            "The CSIDL value is passed to CSIDL_2_ix; the resulting runtime index is not encoded here.",
+            "csidl_table_entry_semantics_unknown",
+            "CSIDL_2_ix maps the selector to an engine table index, but the "
+            "selected row and runtime path-expansion semantics are unresolved.",
         ),
     ]
     if parsed.pipe_offset is not None:
@@ -288,11 +289,14 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
     evidence = (
         f"mpengine 1.443.903.0 {type_name} receiver registration and storage wrapper",
         "mpengine 1.443.903.0 shared FILEPATH/FOLDERNAME receiver path handling",
-        "mpengine 1.443.903.0 CSIDL_2_ix mapping call",
+        (
+            "mpengine 1.443.903.0 CSIDL_2_ix @ 0x180321810 bsearches 49 "
+            "entries of stride 0x28 and returns 0x7fffffff on a miss"
+        ),
     )
     return RuleSemantics(
         status="unsupported" if parsed.tail_raw or pipe_suffix else "confirmed_subset",
-        representation="fpath.receiver-storage.ir.v1",
+        representation="fpath.receiver-storage.ir.v2",
         data=JSONObject(
             (
                 ("type", type_name),
@@ -305,6 +309,18 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
                             ("value", parsed.csidl_value),
                             ("wire", _wire_field("csidl_value", parsed.raw[:2], 0)),
                             ("consumer", "CSIDL_2_ix"),
+                            (
+                                "mapping",
+                                JSONObject(
+                                    (
+                                        ("kind", "sorted_table_lookup"),
+                                        ("entry_count", 49),
+                                        ("entry_stride", 0x28),
+                                        ("miss_sentinel", 0x7FFFFFFF),
+                                        ("selected_index", "runtime_only"),
+                                    )
+                                ),
+                            ),
                         )
                     ),
                 ),
