@@ -132,6 +132,7 @@ def build_semantic_inventory(
     sources = tuple(Path(path).resolve(strict=True) for path in paths)
     if not sources:
         raise ValueError("at least one .sig path is required")
+    source_identities = [_source_identity(path) for path in sources]
 
     counts: Counter[int] = Counter()
     samples: dict[int, list[tuple[str, int, bytes]]] = defaultdict(list)
@@ -167,6 +168,10 @@ def build_semantic_inventory(
                     source=source,
                     offset=offset,
                 )
+
+    final_source_identities = [_source_identity(path) for path in sources]
+    if final_source_identities != source_identities:
+        raise OSError("a source file changed while the inventory was being built")
 
     type_results: dict[str, object] = {}
     total_failure_count = 0
@@ -208,7 +213,7 @@ def build_semantic_inventory(
     ]
     return {
         "schema": "vdm-semantic-evidence-inventory.v1",
-        "sources": [_source_identity(path) for path in sources],
+        "sources": source_identities,
         "sampling": {
             "scope": "all_records"
             if sample_limit_per_type == 0

@@ -38,10 +38,14 @@ def main() -> int:
         return 2
 
     rendered = json.dumps(inventory, indent=2, ensure_ascii=False) + "\n"
-    if args.output is None:
-        sys.stdout.write(rendered)
-    else:
-        args.output.write_text(rendered, encoding="utf-8")
+    try:
+        if args.output is None:
+            sys.stdout.write(rendered)
+        else:
+            args.output.write_text(rendered, encoding="utf-8")
+    except OSError as error:
+        print(f"semantic inventory failed: {error}", file=sys.stderr)
+        return 2
     return 0
 
 
