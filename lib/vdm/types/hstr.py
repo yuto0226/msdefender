@@ -533,6 +533,25 @@ _CONFIRMED_SCANNER_CONTEXTS = {
         "cross_boundary_pattern": "separate_subject_spans",
         "invocation_reset": "unknown",
     },
+    0x8D: {
+        "family_index": 2,
+        "reader_kinds": ("MACHO_REGION_WITH_OVERLAP",),
+        "report_route": "MACHO_REGION_STATE_WRITE_THROUGH",
+        "report_family_index": None,
+        "search_mode": 1,
+        "validator_argument": None,
+        "state_lifecycle": "caller_owned_state",
+        "cross_boundary_pattern": "helper_overlap",
+    },
+    0x8F: {
+        "family_index": 1,
+        "reader_kinds": ("MACRO_CALLER_BUFFER",),
+        "report_route": "MACRO_HSTR_SEARCH_API_ONLY",
+        "report_family_index": None,
+        "search_mode": 1,
+        "validator_argument": None,
+        "state_lifecycle": "caller_owned_unknown",
+    },
     0xD3: {
         "family_index": 9,
         "reader_kinds": ("AUTOIT_UFS_FILE_CHUNKS",),
@@ -1142,15 +1161,49 @@ def _raw_field(kind: str, raw: bytes, offset: int) -> JSONObject:
     )
 
 
+def _outer_verdict_issue(type_byte: int) -> SemanticIssue:
+    context = _CONFIRMED_SCANNER_CONTEXTS.get(type_byte)
+    details = (
+        ()
+        if context is None
+        else (
+            ("family_index", context["family_index"]),
+            ("report_route", context["report_route"]),
+        )
+    )
+    if type_byte in {0x61, 0x78, 0x85}:
+        message = (
+            "PE HSTR candidate scoring and the scan_vmem report route are "
+            "confirmed, but their result is not mapped to a final scan or "
+            "host-visible verdict."
+        )
+    elif type_byte == 0x8C:
+        message = (
+            "ELF helper searches and the post-helper report call are confirmed; "
+            "cross-helper aggregation and the final result policy are unknown."
+        )
+    elif type_byte == 0x8F:
+        message = (
+            "The Macro HSTR API is confirmed only through buffer search; its "
+            "result is not linked to RME reporting or an outer verdict."
+        )
+    elif type_byte == 0x8D:
+        message = (
+            "Mach-O region search writes caller-owned state, but the parser or "
+            "scanner path to a final verdict is not confirmed."
+        )
+    else:
+        message = (
+            "A candidate match does not establish this HSTR family's consumer, "
+            "report policy, or final verdict."
+        )
+    return SemanticIssue("outer_verdict_unknown", message, details)
+
+
 def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
     """Export a lossless HSTR matcher subset, never a final engine verdict."""
     unsupported = False
-    issues: list[SemanticIssue] = [
-        SemanticIssue(
-            "outer_verdict_unknown",
-            "Tag scoring, report gates, validators, and policy are outside this matcher subset.",
-        )
-    ]
+    issues: list[SemanticIssue] = [_outer_verdict_issue(parsed.type_byte)]
     if parsed.receiver_ignored:
         issues.append(
             SemanticIssue(
