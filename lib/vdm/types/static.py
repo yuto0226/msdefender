@@ -23,6 +23,24 @@ HEADER_SIZE: Final = 18
 ALLOW_LARGER_MASK: Final = 0x0001
 MODE_MASK: Final = 0x7000
 IGNORED_FLAGS_MASK: Final = 0x8FFE
+CRC_PARAMETERS: Final = {
+    "width": 32,
+    "polynomial": "0x04C11DB7",
+    "reflected_polynomial": "0xEDB88320",
+    "refin": True,
+    "refout": True,
+    "initial_value": "0xFFFFFFFF",
+    "final_xor": "0x00000000",
+    "state_contract": (
+        "STATIC call sites seed 0xFFFFFFFF; CRC_0 itself accepts caller state"
+    ),
+}
+
+_ENGINE_HASH_DISPATCH: Final = {
+    5: "SymCryptSha512",
+    6: "LSH",
+    7: "CTPH",
+}
 
 
 class StaticHashMode(IntEnum):
@@ -196,7 +214,10 @@ def export_static(parsed: StaticPayload) -> ArtifactExport:
         mode_name = None
         hash_data: dict[str, object] | None = None
         matcher_status = "unsupported"
-        matcher_boundary = "STATIC modes 5-7 are rejected by the engine hash path"
+        matcher_boundary = (
+            "STATIC modes 5-7 reach GetHashes dispatch but are rejected by the "
+            "complete STATIC comparison path"
+        )
     else:
         mode_name = mode.name
         if mode is StaticHashMode.CRC_0:
@@ -204,6 +225,8 @@ def export_static(parsed: StaticPayload) -> ArtifactExport:
                 "algorithm": "CRC_0",
                 "value": int.from_bytes(parsed.hash_raw, "little"),
                 "raw_hex": parsed.hash_raw.hex(),
+                "input_projection": "selected_file_range_of_record_file_size",
+                "parameters": CRC_PARAMETERS,
             }
         else:
             algorithm = {
@@ -212,7 +235,35 @@ def export_static(parsed: StaticPayload) -> ArtifactExport:
                 StaticHashMode.SHA1_PREFIX4: "SHA1_prefix4",
                 StaticHashMode.SHA256: "SHA256",
             }[mode]
-            hash_data = {"algorithm": algorithm, "value_hex": parsed.hash_raw.hex()}
+            digest_size = {
+                StaticHashMode.MD5: 16,
+                StaticHashMode.SHA1: 20,
+                StaticHashMode.SHA1_PREFIX4: 20,
+                StaticHashMode.SHA256: 32,
+            }[mode]
+            hash_data = {
+                "algorithm": algorithm,
+                "value_hex": parsed.hash_raw.hex(),
+                "input_projection": "selected_file_range_of_record_file_size",
+                "digest_size_bytes": digest_size,
+                "portable_definition": {
+                    StaticHashMode.MD5: "RFC 1321 MD5",
+                    StaticHashMode.SHA1: "FIPS 180-4 SHA-1",
+                    StaticHashMode.SHA1_PREFIX4: "FIPS 180-4 SHA-1",
+                    StaticHashMode.SHA256: "FIPS 180-4 SHA-256",
+                }[mode],
+                "compared_output": (
+                    "first_4_digest_bytes"
+                    if mode is StaticHashMode.SHA1_PREFIX4
+                    else "full_digest"
+                ),
+                "engine_primitive": {
+                    StaticHashMode.MD5: "SymCryptMd5",
+                    StaticHashMode.SHA1: "SymCryptSha1",
+                    StaticHashMode.SHA1_PREFIX4: "SymCryptSha1",
+                    StaticHashMode.SHA256: "SymCryptSha256",
+                }[mode],
+            }
         matcher_status = "not_emitted"
         matcher_boundary = (
             "Record-local manifest only; runtime file bytes and later conditions "
@@ -234,7 +285,7 @@ def export_static(parsed: StaticPayload) -> ArtifactExport:
         }
 
     manifest = {
-        "format": "vdm.static.record.v1",
+        "format": "vdm.static.record.v2",
         "record": {
             "type": STATIC_TYPE,
             "type_hex": f"0x{STATIC_TYPE:02X}",
@@ -253,7 +304,16 @@ def export_static(parsed: StaticPayload) -> ArtifactExport:
             "tail_page_crc_raw_hex": parsed.raw[4:8].hex(),
             "prefix_crc": parsed.prefix_crc,
             "prefix_crc_raw_hex": parsed.raw[8:12].hex(),
-            "crc_parameters": "polynomial/init/final_xor_not_portably_confirmed",
+            "crc_parameters": CRC_PARAMETERS,
+            "crc_input_projections": {
+                "first_page_crc": (
+                    "offset_zero:SCAN_REPLY+0xC0 exactly_4096_buffer_bytes "
+                    "(source-file equivalence not established); "
+                    "nonzero_offset:read_up_to_4096_then_zero_append"
+                ),
+                "prefix_crc": "provider_offset:first_min(record_file_size,65536)_bytes",
+                "tail_page_crc": "record_file_range_last_up_to_4096_bytes; zero_prefix_to_4096_when_short",
+            },
             "file_size": parsed.file_size,
             "file_size_raw_hex": parsed.raw[12:16].hex(),
             "file_size_policy": "at_least" if parsed.allow_larger else "exact",
@@ -263,15 +323,19 @@ def export_static(parsed: StaticPayload) -> ArtifactExport:
             "mode_value": parsed.mode_value,
             "mode_name": mode_name,
             "mode_corpus_status": (
-                "not_observed"
+                "not_observed_in_mpas_or_mpav"
                 if mode in {StaticHashMode.SHA1_PREFIX4, StaticHashMode.SHA256}
                 else "not_applicable_unsupported"
                 if mode is None
                 else "observed"
             ),
+            "engine_hash_dispatch_candidate": _ENGINE_HASH_DISPATCH.get(
+                parsed.mode_value
+            ),
             "loader_ignored_flags": parsed.ignored_flags,
         },
         "hash": hash_data,
+        "engine_hash_dispatch_candidate": _ENGINE_HASH_DISPATCH.get(parsed.mode_value),
         "opaque_after_header_raw_hex": parsed.opaque_raw.hex(),
         "recid_tail": tail_data,
     }
@@ -339,12 +403,23 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
     if mode is None:
         return RuleSemantics(
             status="unsupported",
-            representation="static.match.ir.v1",
+            representation="static.match.ir.v2",
             data=JSONObject(
                 (
                     ("type", "STATIC"),
                     ("raw_hex", parsed.raw.hex()),
                     ("mode_value", parsed.mode_value),
+                    (
+                        "engine_hash_dispatch",
+                        _ENGINE_HASH_DISPATCH.get(parsed.mode_value),
+                    ),
+                    (
+                        "engine_hash_input_projection",
+                        "provider_offset:file_start; length=record_file_size"
+                        if parsed.mode_value in _ENGINE_HASH_DISPATCH
+                        else None,
+                    ),
+                    ("comparison_supported", False),
                     ("hash", None),
                     (
                         "opaque_after_header",
@@ -353,11 +428,19 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 )
             ),
             evidence=(
-                "mpengine 1.443.903.0 staticrec_t::Load modes 5-7 assertion path",
                 (
-                    "mpengine 1.443.903.0 StaticHashProvider::CompareValues rejects "
-                    "modes 5-7"
+                    "mpengine 1.443.903.0 staticrec_t::Load "
+                    "(0x1800FAABC) modes 5-7 assertion path"
                 ),
+                (
+                    "mpengine 1.443.903.0 StaticHashProvider::CompareValues "
+                    "(0x1800F8490) rejects modes 5-7 after GetHashes dispatch"
+                ),
+                (
+                    "mpengine 1.443.903.0 GetHashes (0x1803B9F7C) dispatch: "
+                    "mode 5 SHA-512, mode 6 LSH, mode 7 CTPH"
+                ),
+                "mpas.sig/mpav.sig corpus: modes 0-2 observed; modes 3-7 absent",
             ),
             profile="mpengine-1.443.903.0",
             issues=(
@@ -437,6 +520,11 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         hash_data = JSONObject(
             (
                 ("algorithm", "CRC_0"),
+                (
+                    "input_projection",
+                    "provider_offset:file_start; length=record_file_size",
+                ),
+                ("parameters", JSONObject(tuple(CRC_PARAMETERS.items()))),
                 ("wire", _wire_field("crc_u32le", parsed.hash_raw, hash_offset)),
                 ("value", int.from_bytes(parsed.hash_raw, "little")),
             )
@@ -448,9 +536,44 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             StaticHashMode.SHA1_PREFIX4: "SHA1_prefix4",
             StaticHashMode.SHA256: "SHA256",
         }[mode]
+        digest_size = {
+            StaticHashMode.MD5: 16,
+            StaticHashMode.SHA1: 20,
+            StaticHashMode.SHA1_PREFIX4: 20,
+            StaticHashMode.SHA256: 32,
+        }[mode]
         hash_data = JSONObject(
             (
                 ("algorithm", algorithm),
+                (
+                    "input_projection",
+                    "provider_offset:file_start; length=record_file_size",
+                ),
+                ("digest_size_bytes", digest_size),
+                (
+                    "portable_definition",
+                    {
+                        StaticHashMode.MD5: "RFC 1321 MD5",
+                        StaticHashMode.SHA1: "FIPS 180-4 SHA-1",
+                        StaticHashMode.SHA1_PREFIX4: "FIPS 180-4 SHA-1",
+                        StaticHashMode.SHA256: "FIPS 180-4 SHA-256",
+                    }[mode],
+                ),
+                (
+                    "computed_primitive",
+                    {
+                        StaticHashMode.MD5: "SymCryptMd5",
+                        StaticHashMode.SHA1: "SymCryptSha1",
+                        StaticHashMode.SHA1_PREFIX4: "SymCryptSha1",
+                        StaticHashMode.SHA256: "SymCryptSha256",
+                    }[mode],
+                ),
+                (
+                    "compared_output",
+                    "first_4_digest_bytes"
+                    if mode is StaticHashMode.SHA1_PREFIX4
+                    else "full_digest",
+                ),
                 ("wire", _wire_field("hash_bytes", parsed.hash_raw, hash_offset)),
                 ("value_hex", parsed.hash_raw.hex()),
             )
@@ -463,7 +586,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status="unsupported" if recid_unsupported else "confirmed_subset",
-        representation="static.match.ir.v1",
+        representation="static.match.ir.v2",
         data=JSONObject(
             (
                 ("type", "STATIC"),
@@ -477,6 +600,21 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                                 JSONObject(
                                     (
                                         ("value", parsed.first_page_crc),
+                                        ("algorithm", "CRC_1"),
+                                        (
+                                            "input_projection",
+                                            (
+                                                "offset_zero:SCAN_REPLY+0xC0 "
+                                                "exactly_4096_buffer_bytes "
+                                                "(source-file equivalence not "
+                                                "established); nonzero_offset:"
+                                                "read_up_to_4096_then_zero_append"
+                                            ),
+                                        ),
+                                        (
+                                            "parameters",
+                                            JSONObject(tuple(CRC_PARAMETERS.items())),
+                                        ),
                                         (
                                             "wire",
                                             _wire_field(
@@ -493,6 +631,15 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                                 JSONObject(
                                     (
                                         ("value", parsed.tail_page_crc),
+                                        ("algorithm", "CRC_0"),
+                                        (
+                                            "input_projection",
+                                            "last_up_to_4096_record_file_bytes; zero_prefix_to_4096_when_short",
+                                        ),
+                                        (
+                                            "parameters",
+                                            JSONObject(tuple(CRC_PARAMETERS.items())),
+                                        ),
                                         (
                                             "wire",
                                             _wire_field(
@@ -509,6 +656,15 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                                 JSONObject(
                                     (
                                         ("value", parsed.prefix_crc),
+                                        ("algorithm", "CRC_1_or_incremental_CRC_0"),
+                                        (
+                                            "input_projection",
+                                            "provider_offset:first_min(record_file_size,65536)_bytes",
+                                        ),
+                                        (
+                                            "parameters",
+                                            JSONObject(tuple(CRC_PARAMETERS.items())),
+                                        ),
                                         (
                                             "wire",
                                             _wire_field(
@@ -566,7 +722,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                         (
                             "first_page_crc_candidate_key",
                             "prefix_crc_up_to_min(file_size, 65536)",
-                            "tail_crc_of_last_up_to_4096_bytes_zero_padded_when_short",
+                            "tail_crc_of_record_tail_up_to_4096_bytes_zero_prefixed_when_short",
                             "file_size_policy",
                             "mode_specific_hash_validation",
                         )
@@ -579,13 +735,21 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             )
         ),
         evidence=(
-            "mpengine 1.443.903.0 staticrec_t::Load mode lengths and hash storage",
             (
-                "mpengine 1.443.903.0 StaticHashProvider::CompareValues staged "
-                "CRC/size/hash flow"
+                "mpengine 1.443.903.0 staticrec_t::Load (0x1800FAABC) "
+                "mode lengths and hash storage"
             ),
-            "mpengine 1.443.903.0 GetHashes mode-to-algorithm mapping",
-            "mpas.sig/mpav.sig corpus: modes 0-2 observed; modes 3-4 absent",
+            (
+                "mpengine 1.443.903.0 StaticHashProvider::CompareValues "
+                "(0x1800F8490) staged CRC/size/hash flow"
+            ),
+            (
+                "mpengine 1.443.903.0 GetHashes (0x1803B9F7C), CompareHash "
+                "(0x18055D644), CRC_0 (0x180704738), and CRC_1 "
+                "(0x180705184) establish hash and CRC contracts"
+            ),
+            "mpas.sig STATIC modes 0/1/2 counts 66/17235/279357; modes 3/4 absent",
+            "mpav.sig STATIC modes 0/1/2 counts 52/73572/1866880; modes 3/4 absent",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
