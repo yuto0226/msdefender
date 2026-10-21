@@ -389,9 +389,9 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
     """Export the confirmed STATIC receiver and staged hash-match subset."""
     issues = [
         SemanticIssue(
-            "final_match_not_determined",
-            "This record alone cannot determine a match; file bytes and runtime "
-            "conditions are required.",
+            "outer_verdict_not_determined",
+            "A successful STATIC candidate comparison can populate detection "
+            "state, but does not determine the outer scan or report verdict.",
         ),
         SemanticIssue(
             "allow_larger_gates_incomplete",
