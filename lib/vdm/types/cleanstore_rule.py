@@ -16,7 +16,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 MAX_FIELD_COUNT = 256
@@ -334,6 +337,110 @@ def export_cleanstore_rule_semantics(parsed: CleanStoreRule) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=issues,
+        claims=(
+            SemanticClaim(
+                id="cleanstore_corpus_profile",
+                scope="corpus_observation",
+                statement=(
+                    "The current mpas.sig snapshot contains 61 type 0xC1 records "
+                    "fully partitioned by the local envelope parser."
+                ),
+                coverage="subset",
+                evidence_refs=("cleanstore_corpus",),
+                unknowns=(
+                    SemanticUnknown(
+                        "corpus_observation",
+                        "The envelope partition is not an engine ABI or cross-version grammar.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="cleanstore_dispatch_search",
+                scope="loader_dispatch",
+                statement=(
+                    "The bounded immediate/direct-caller audit did not locate a "
+                    "type-specific 0xC1 registration writer."
+                ),
+                coverage="subset",
+                evidence_refs=("cleanstore_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Indirect, helper-mediated, data-driven, and runtime slot writes "
+                        "were not excluded.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="cleanstore_receiver",
+                scope="receiver_transform",
+                statement="The type-specific receiver and normalized storage are unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "No registration-complete receiver trace or runtime slot exists.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="cleanstore_runtime_consumer",
+                scope="runtime_consumer",
+                statement="A CLEANSTORE_RULE runtime consumer is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "No parsed field has been followed into engine storage or a consumer.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="cleanstore_detection_predicate",
+                scope="detection_predicate",
+                statement="No CLEANSTORE_RULE detection predicate is established.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Tag, selector, and value bytes retain neutral raw names.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="cleanstore_final_verdict",
+                scope="final_verdict",
+                statement="No CLEANSTORE_RULE final-verdict path is established.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Consumer, policy, report, and verdict dataflow are unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="cleanstore_corpus",
+                axis="corpus",
+                kind="corpus",
+                source_ref="mpas.sig",
+                locator="type 0xC1 corpus count: 61; !InfrastructureShared",
+                supports=("cleanstore_corpus_profile",),
+            ),
+            SemanticEvidence(
+                id="cleanstore_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "DispatchRecord @ 0x1800FAF18; bounded intersection of 0xC1 "
+                    "immediate functions and direct regcntl callers"
+                ),
+                supports=("cleanstore_dispatch_search",),
+            ),
+        ),
     )
 
 
