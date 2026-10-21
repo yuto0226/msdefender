@@ -329,6 +329,10 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
         ),
         evidence=(
             (
+                "provider exact lookups: NidProvider@0x1800AF540, "
+                "SnidProvider@0x180145874, Nid64Provider@0x1800AE800"
+            ),
+            (
                 "NID-family exact lookup wrappers: nidsearchrecidex@0x1800B01B0, "
                 "snidsearchrecidex@0x180145618, nid64searchrecid@0x1800AE690"
             ),
