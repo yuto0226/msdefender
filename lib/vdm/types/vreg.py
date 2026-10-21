@@ -269,8 +269,8 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
     issues = [
         SemanticIssue(
             "query_policy_incomplete",
-            "VirtualReg query and enumeration consumers are confirmed, but their "
-            "fallback and reporting policies are not fully modeled.",
+            "Win32-emulation query fallback and buffer/error rules are modeled; "
+            "unexamined registry APIs and final scan/report policy remain unknown.",
         ),
         SemanticIssue(
             "value_type_is_raw",
@@ -302,7 +302,7 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="unsupported" if unknown_hive else "confirmed_subset",
-        representation="vreg.virtual_registry_write.ir.v1",
+        representation="vreg.virtual_registry_write.ir.v2",
         data=JSONObject(
             (
                 ("type", "VREG"),
@@ -382,7 +382,98 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
                         )
                     ),
                 ),
-                ("query_policy", None),
+                (
+                    "query_policy",
+                    JSONObject(
+                        (
+                            (
+                                "hive_roots",
+                                JSONObject(
+                                    (
+                                        (
+                                            "selector_0",
+                                            "Registry\\Machine\\SOFTWARE\\Classes",
+                                        ),
+                                        (
+                                            "selector_1",
+                                            "Registry\\Users\\Charlie",
+                                        ),
+                                        ("selector_2", "Registry\\Machine"),
+                                        ("selector_3", "Registry\\Users"),
+                                        (
+                                            "selector_4",
+                                            "Registry\\PerformanceData",
+                                        ),
+                                        (
+                                            "selector_5",
+                                            "Registry\\Machine\\SYSTEM\\CurrentControlSet\\Hardware Profiles\\Current",
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "open_key",
+                                JSONObject(
+                                    (
+                                        ("mode", "open_only; no key creation"),
+                                        ("missing_key_error", 2),
+                                        ("null_root_error", 6),
+                                        ("null_output_handle_error", 87),
+                                    )
+                                ),
+                            ),
+                            (
+                                "query_value",
+                                JSONObject(
+                                    (
+                                        (
+                                            "missing_key_or_named_value_error",
+                                            2,
+                                        ),
+                                        (
+                                            "missing_default_value",
+                                            "existing key + empty value name returns type 1 and two zero bytes",
+                                        ),
+                                        (
+                                            "buffer_too_small",
+                                            "required size is reported; no bytes copied; ERROR_MORE_DATA (234) when data buffer is supplied",
+                                        ),
+                                        (
+                                            "value_type_and_data",
+                                            "returned without type-specific validation",
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "enumeration",
+                                JSONObject(
+                                    (
+                                        ("index_base", "zero-based"),
+                                        ("index_miss_error", 259),
+                                        ("name_or_data_buffer_too_small_error", 234),
+                                    )
+                                ),
+                            ),
+                            (
+                                "key_info",
+                                JSONObject(
+                                    (
+                                        ("missing_key_error", 2),
+                                        (
+                                            "outputs",
+                                            "subkey/value counts and maximum name/data sizes from current virtual tree",
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "boundary",
+                                "These are emulated PE Win32 registry API results, not direct threat reports or final scan verdicts.",
+                            ),
+                        )
+                    ),
+                ),
                 (
                     "trailing",
                     _wire_field(
@@ -394,16 +485,14 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
             )
         ),
         evidence=(
-            (
-                "mpengine 1.443.903.0 vregReceiver framing, key creation, and "
-                "conditional setValue call"
-            ),
-            "mpengine 1.443.903.0 VirtualReg::setValue stores raw type and data bytes",
-            (
-                "mpengine 1.443.903.0 VirtualReg::queryValue/queryKey/"
-                "enumerateSubKey/enumerateValue consumers"
-            ),
-            "mpengine 1.443.903.0 VirtualReg::createKey and hive-handle normalization",
+            "vregReceiver@0x180270110 creates key and conditionally writes value",
+            "vemulib_init_module@0x18048B450 initializes six hive roots and registers receiver",
+            "VirtualReg::translateHiveRoots@0x1804F4A28 maps pseudo selectors 0..5",
+            "ADVAPI32_DLL_RegOpenKeyExW@0x1801A15D0 uses open_only=true",
+            "VirtualReg::queryValue@0x1801A0FEC; ADVAPI32_DLL_RegQueryValueExW@0x1801A1380",
+            "VirtualReg::enumerateSubKey@0x18019DC58; ADVAPI32_DLL_RegEnumKeyExW@0x1801A0610",
+            "VirtualReg::enumerateValue@0x18034BA10; ADVAPI32_DLL_RegEnumValueW@0x180CB5640",
+            "VirtualReg::queryKey@0x18019E03C; ADVAPI32_DLL_RegQueryInfoKeyW@0x180568760",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
