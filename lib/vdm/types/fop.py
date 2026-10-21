@@ -260,30 +260,35 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
     representation = "fop.trie_matcher_subset.ir.v2"
     if parsed.pattern_options is not None:
         assert parsed.section1 is not None and parsed.section2 is not None
+        data_items[2] = (
+            "semantic_scope",
+            "wire_route_runtime_effects_and_core_trie_matcher_shape",
+        )
         data_items.extend(
             (
                 ("section1_raw_hex", parsed.section1.hex()),
                 ("section2_raw_hex", parsed.section2.hex()),
                 ("pattern_options_raw", parsed.pattern_options),
                 (
-                    "runtime_effects_observed",
+                    "runtime_effects_confirmed_subset",
                     JSONObject(
                         (
                             (
                                 "section1",
-                                "BMGetPatternFlags validation; stored kernel object",
+                                "section1 bytes are validated by BMGetPatternFlags and stored as a kernel object",
                             ),
                             (
                                 "section2",
-                                "optional kernel object; updates handle byte table",
+                                "nonempty section2 is stored as a kernel object; each section2 byte clears its handle-associated byte-table entry",
                             ),
-                            ("pattern_options", "copied to trie metadata low word"),
+                            (
+                                "pattern_options",
+                                "the raw u16 value is copied to the low word of trie metadata",
+                            ),
                             (
                                 "candidate_gate",
                                 (
-                                    "AddToResults calls BMMatchPEMapper when metadata "
-                                    "bit 2 is set; AddNewPatternCommon sets this bit "
-                                    "for prefix_len > 8; false rejects candidate"
+                                    "AddNewPatternCommon sets metadata bit 2 when prefix_len > 8; AddToResults then calls BMMatchPEMapper and skips the candidate when it returns false. Static evidence does not map this gate input to a specific wire section"
                                 ),
                             ),
                         )
@@ -291,15 +296,16 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                 ),
             )
         )
-        status = "observed_only"
-        representation = "fop.trie_matcher_subset.ir.v3"
+        status = "confirmed_subset"
+        representation = "fop.trie_matcher_subset.ir.v4"
         issues.append(
             SemanticIssue(
                 "extended_fields_uninterpreted",
-                "Runtime effects and the BMMatchPEMapper gate condition "
-                "(prefix_len > 8) are observed, but field domains and complete "
-                "subtype/report semantics are unresolved. Extended records are "
-                "not represented as matching-equivalent rules.",
+                "The recorded byte handling and gate condition are confirmed "
+                "runtime effects, but section domains, the meaning of "
+                "pattern_options, complete flag-bit semantics, processor-equivalent "
+                "matching, and subtype/report policy remain unresolved. This is a "
+                "bounded subset, not a matching-equivalent rule.",
             )
         )
     return RuleSemantics(
