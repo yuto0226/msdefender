@@ -222,11 +222,12 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         "mpengine 1.443.903.0 x86_fop_processor::GetCharAtAddr @ 0x180250F70",
         "mpengine 1.443.903.0 x64_fop_processor::GetCharAtAddr @ 0x180250500",
         "mpengine 1.443.903.0 vb_fop_processor::GetCharAtAddr @ 0x180555210",
+        "mpengine 1.443.903.0 msil_fop_processor::GetCharAtAddr @ 0x180481140",
     )
     if parsed.ignored_reason is not None:
         return RuleSemantics(
             status="ignored",
-            representation="fop.trie_matcher_subset.ir.v6",
+            representation="fop.trie_matcher_subset.ir.v7",
             data=JSONObject(
                 (
                     ("raw_hex", parsed.raw.hex()),
@@ -302,14 +303,84 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
             ),
         ),
         ("matcher", "processor_GetCharAtAddr_output_equals_trie_pattern_bytes"),
+        (
+            "processor_match_contract",
+            JSONObject(
+                (
+                    (
+                        "x86",
+                        JSONObject(
+                            (
+                                ("function", "x86_fop_processor::GetCharAtAddr"),
+                                ("address", "0x180250F70"),
+                                ("match_value", "mapped_byte_0"),
+                                ("advance", "successful_decode_length_1_to_32"),
+                                ("decode_failure", "-1_with_zero_consumed"),
+                            )
+                        ),
+                    ),
+                    (
+                        "x64",
+                        JSONObject(
+                            (
+                                ("function", "x64_fop_processor::GetCharAtAddr"),
+                                ("address", "0x180250500"),
+                                ("match_value", "mapped_byte_0"),
+                                ("advance", "successful_decode_length_1_to_32"),
+                                ("decode_failure", "-1_with_zero_consumed"),
+                            )
+                        ),
+                    ),
+                    (
+                        "vb",
+                        JSONObject(
+                            (
+                                ("function", "vb_fop_processor::GetCharAtAddr"),
+                                ("address", "0x180555210"),
+                                (
+                                    "match_value",
+                                    "mapped_byte_1_when_mapped_byte_0_is_0xFB_to_0xFF_else_mapped_byte_0",
+                                ),
+                                (
+                                    "advance",
+                                    "VBpCode_table_length_plus_operand_adjustment; zero_byte_skips_two_addresses",
+                                ),
+                                ("decode_failure", "-1_with_zero_consumed"),
+                            )
+                        ),
+                    ),
+                    (
+                        "msil",
+                        JSONObject(
+                            (
+                                (
+                                    "function",
+                                    "msil_fop_processor::GetCharAtAddr",
+                                ),
+                                ("address", "0x180481140"),
+                                (
+                                    "match_value",
+                                    "mapped_byte_1_when_mapped_byte_0_is_0xFE_else_mapped_byte_0",
+                                ),
+                                (
+                                    "advance",
+                                    "token_length_table; byte_0_0x45_adds_4_times_operand_dword_plus_4",
+                                ),
+                                ("decode_failure", "-1_with_zero_consumed"),
+                            )
+                        ),
+                    ),
+                )
+            ),
+        ),
         ("engine_processor_required", True),
     ]
     issues = [
         SemanticIssue(
             "engine_processor_required",
-            "The scanner trie is evaluated through the type-specific engine "
-            "processor's GetCharAtAddr path; this export does not implement that "
-            "processor.",
+            "Route-specific token extraction and advance behavior are recorded, "
+            "but matching still depends on engine mapper and processor behavior; "
+            "this export does not execute those components.",
         ),
         SemanticIssue(
             "final_verdict_unknown",
@@ -319,9 +390,10 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         ),
         SemanticIssue(
             "flag_bit0_semantics_incomplete",
-            "The confirmed subset covers FopScanner::Scan candidate aggregation "
-            "and selection only; the product meaning, any other consumers, and "
-            "complete reporting semantics remain unresolved.",
+            "The confirmed subset covers processor token extraction and "
+            "FopScanner::Scan candidate aggregation/selection; the product "
+            "meaning, any other consumers, and complete reporting semantics "
+            "remain unresolved.",
         ),
     ]
     if parsed.pattern_options is not None:
@@ -444,7 +516,7 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         )
     return RuleSemantics(
         status="confirmed_subset",
-        representation="fop.trie_matcher_subset.ir.v6",
+        representation="fop.trie_matcher_subset.ir.v7",
         data=JSONObject(tuple(data_items)),
         evidence=evidence,
         profile="mpengine-1.443.903.0",
