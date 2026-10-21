@@ -17,7 +17,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 from ..lua51 import export_lua51
 from ..luaq import LuaQChunk, LuaQPrototype, parse_luaq
@@ -821,6 +824,125 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                 ),
             )
         )
+    validator_claim = (
+        SemanticClaim(
+            id="lua_validator_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "For category 0x15, the standalone worker can resolve a script by "
+                "SigSeq, execute includes and main, validate the result, and write a "
+                "status candidate."
+            ),
+            coverage="subset",
+            evidence_refs=("lua_validator_worker",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Per-record execution, host API effects, userdata effects, and "
+                    "all caller contexts remain unresolved.",
+                ),
+            ),
+        )
+        if parsed.category == 0x15
+        else SemanticClaim(
+            id="lua_validator_consumer",
+            scope="runtime_consumer",
+            statement="The category-specific consumer route is unresolved.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The category 0x15 validator contract cannot be generalized to "
+                    f"category 0x{parsed.category:02X}.",
+                ),
+            ),
+        )
+    )
+    claims = (
+        SemanticClaim(
+            id="lua_ingestion_contract",
+            scope="receiver_transform",
+            statement=(
+                "AddScript parses supported record categories into a processed-script "
+                "holder through a shared ingestion contract."
+            ),
+            coverage="subset",
+            evidence_refs=("lua_ingestion",),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "The payload does not encode whether the static or dynamic receiver "
+                    "route was used, and encoded-script decoding remains unresolved.",
+                ),
+            ),
+        ),
+        validator_claim,
+        SemanticClaim(
+            id="lua_detection_predicate",
+            scope="detection_predicate",
+            statement="A script status candidate is not a confirmed detection predicate.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Script-defined logic and host-side effects have not been modeled.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="lua_report_mapping",
+            scope="report_mapping",
+            statement="Lua status to report mapping is unresolved.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "ProcMatchLevel caller paths are not closed into report policy.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="lua_final_verdict",
+            scope="final_verdict",
+            statement="Lua execution does not establish a final verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "The final scan arbitration and action path remain unresolved.",
+                ),
+            ),
+        ),
+    )
+    claim_evidence = (
+        SemanticEvidence(
+            id="lua_ingestion",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "LuaStandalone::AddScript @ 0x18031DD00; "
+                "ProcessedLuaScript::Process @ 0x18031F7E0"
+            ),
+            supports=("lua_ingestion_contract",),
+        ),
+    ) + (
+        (
+            SemanticEvidence(
+                id="lua_validator_worker",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "ValidateSignatureWithPcodeStandaloneWorker2 @ 0x18002E670; "
+                    "IsValidScanStatus @ 0x1803D7A68"
+                ),
+                supports=("lua_validator_consumer",),
+            ),
+        )
+        if parsed.category == 0x15
+        else ()
+    )
     return RuleSemantics(
         status="unsupported" if unsupported else "observed_only",
         representation="luastandalone.record_runtime_effect.v4",
@@ -1128,6 +1250,8 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=claims,
+        claim_evidence=claim_evidence,
     )
 
 
