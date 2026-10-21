@@ -201,12 +201,12 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
     """Export the confirmed wire/route/matcher subset without verdict claims."""
     evidence = (
         "mpengine 1.443.903.0 FopScanner::Init @ 0x1805F0120",
-        "mpengine 1.443.903.0 FopScanner::AddNewPatternCommon @ 0x18046F9AC",
-        "mpengine 1.443.903.0 FopScanner::AddToResults @ 0x1802BC7BC",
+        "mpengine 1.443.903.0 FopScanner::AddNewPatternCommon @ 0x18046F9AC, wire flag mask 0x01 -> candidate metadata +0x12 mask 0x01",
+        "mpengine 1.443.903.0 FopScanner::AddToResults @ 0x1802BC7BC, candidate metadata +0x12 mask 0x01 -> result row byte +6",
         "mpengine 1.443.903.0 BMGetPatternFlags @ 0x1800FEBF4",
         "mpengine 1.443.903.0 BMMatchPEMapper @ 0x1803D5E44",
         "mpengine 1.443.903.0 FopScanner::ScanContext::GetChar @ 0x180250E5C",
-        "mpengine 1.443.903.0 FopScanner::Scan @ 0x18040AF48",
+        "mpengine 1.443.903.0 FopScanner::Scan @ 0x18040AF48, result row byte +6 gates candidate aggregation/selection",
         "mpengine 1.443.903.0 x86_fop_processor::GetCharAtAddr @ 0x180250F70",
         "mpengine 1.443.903.0 x64_fop_processor::GetCharAtAddr @ 0x180250500",
         "mpengine 1.443.903.0 vb_fop_processor::GetCharAtAddr @ 0x180555210",
@@ -214,7 +214,7 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
     if parsed.ignored_reason is not None:
         return RuleSemantics(
             status="ignored",
-            representation="fop.trie_matcher_subset.ir.v2",
+            representation="fop.trie_matcher_subset.ir.v3",
             data=JSONObject(
                 (
                     ("raw_hex", parsed.raw.hex()),
@@ -231,12 +231,33 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         ("raw_hex", parsed.raw.hex()),
         ("type_byte", parsed.type_byte),
         ("semantic_scope", "wire_route_and_core_trie_matcher_shape"),
+        (
+            "wire_layout",
+            "plain" if parsed.type_byte in FOP_PLAIN_TYPES else "extended",
+        ),
         ("route", _FOP_ROUTES[parsed.type_byte]),
         ("prefix_hex", parsed.prefix.hex()),
         ("pattern_hex", parsed.pattern.hex()),
         ("flag_bit0_raw", bool(parsed.flags & 1)),
         ("matcher", "processor_GetCharAtAddr_output_equals_trie_pattern_bytes"),
         ("engine_processor_required", True),
+        (
+            "flag_bit0_candidate_effects_confirmed_subset",
+            JSONObject(
+                (
+                    ("result_metadata_byte_offset", 6),
+                    (
+                        "hash_name_branch",
+                        "flag_set_skips_MpAggregateAttributeEx_for_!#_names",
+                    ),
+                    (
+                        "ordinary_name_branch",
+                        "flag_set_candidate_is_selected_only_when_no_prior_best_recid",
+                    ),
+                    ("selected_candidate_output", "copied_to_FopScanner_Scan_out_flag"),
+                )
+            ),
+        ),
     ]
     issues = [
         SemanticIssue(
@@ -251,13 +272,14 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
             "result selection and final detection/report policy are not modeled.",
         ),
         SemanticIssue(
-            "flag_bit0_semantics_unknown",
-            "flag bit 0 is propagated into trie/result metadata, but its complete "
-            "matching and reporting semantics are unresolved.",
+            "flag_bit0_semantics_incomplete",
+            "The confirmed subset covers FopScanner::Scan candidate aggregation "
+            "and selection only; the product meaning, any other consumers, and "
+            "complete reporting semantics remain unresolved.",
         ),
     ]
     status = "confirmed_subset"
-    representation = "fop.trie_matcher_subset.ir.v2"
+    representation = "fop.trie_matcher_subset.ir.v3"
     if parsed.pattern_options is not None:
         assert parsed.section1 is not None and parsed.section2 is not None
         data_items[2] = (
@@ -297,15 +319,16 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
             )
         )
         status = "confirmed_subset"
-        representation = "fop.trie_matcher_subset.ir.v4"
+        representation = "fop.trie_matcher_subset.ir.v5"
         issues.append(
             SemanticIssue(
                 "extended_fields_uninterpreted",
                 "The recorded byte handling and gate condition are confirmed "
                 "runtime effects, but section domains, the meaning of "
-                "pattern_options, complete flag-bit semantics, processor-equivalent "
-                "matching, and subtype/report policy remain unresolved. This is a "
-                "bounded subset, not a matching-equivalent rule.",
+                "pattern_options, remaining product meaning and consumers of "
+                "flag bit 0, processor-equivalent matching, and subtype/report "
+                "policy remain unresolved. This is a bounded subset, not a "
+                "matching-equivalent rule.",
             )
         )
     return RuleSemantics(
