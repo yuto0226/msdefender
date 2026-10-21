@@ -9,7 +9,10 @@ from ..core import (
     FormatResult,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 DBVAR_TYPE: Final = 0x5B
@@ -191,6 +194,59 @@ def export_dbvar_semantics(parsed: DbVarPayload) -> RuleSemantics:
                 "dbvar_consumer_semantics_unknown",
                 "The raw value is stored as bytes, but the purpose and meaning "
                 "of each named database variable are not established.",
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                id="dbvar_receiver_update",
+                scope="receiver_transform",
+                statement=(
+                    "The receiver performs an exact-length ASCII-insensitive name "
+                    "lookup and copies the declared bytes only into empty storage."
+                ),
+                coverage="subset",
+                evidence_refs=("dbvar_receiver",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "Behavior for other variable states or database combinations "
+                        "has not been closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="dbvar_detection_predicate",
+                scope="detection_predicate",
+                statement="The stored DBVAR value is not a confirmed detection predicate.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Named value consumers and their business meanings are unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="dbvar_final_verdict",
+                scope="final_verdict",
+                statement="DBVAR does not establish a final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "No value-consumer-to-report path has been followed.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="dbvar_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="ReceiveDatabaseVar; DBVarEntry::CopyData",
+                supports=("dbvar_receiver_update",),
             ),
         ),
     )
