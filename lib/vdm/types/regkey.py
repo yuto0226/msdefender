@@ -127,19 +127,19 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
     selector_accepted = 1 <= parsed.key_type <= 4
     issues = [
         SemanticIssue(
-            "regkey_selector_semantics_unknown",
-            "Accepted selector values 1 through 4 have no established enum names "
-            "or registry-hive mapping.",
+            "regkey_selector_names_unknown",
+            "The receiver stores selectors 1 through 4 as internal values 0 through 3; "
+            "the binary does not establish symbolic names or hive identities.",
         ),
         SemanticIssue(
-            "regkey_storage_route_unknown",
-            "The receiver chooses general versus ASEP storage using the path "
-            "after Store_UTF8_Reg processing; that normalization is not modeled.",
+            "regkey_prefix_table_unexpanded",
+            "Store_UTF8_Reg strips the first matching entry from an 11-entry, "
+            "case-insensitive prefix table; the table strings are not named here.",
         ),
         SemanticIssue(
-            "regkey_value_and_match_details_unknown",
-            "Matcher readers confirm an exact registry check, but the internal "
-            "comparison rules of reg_key_in_hive are not exported.",
+            "regkey_expansion_comparator_unknown",
+            "REG_SZ/REG_EXPAND_SZ may use expand_path_cmp after direct comparison; "
+            "that helper's expansion rules are not modeled.",
         ),
     ]
     if not selector_accepted:
@@ -176,7 +176,7 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status=status,
-        representation="regkey.raw_registry_matcher.v1",
+        representation="regkey.registry_matcher_subset.v2",
         data=JSONObject(
             (
                 ("type", "regkey"),
@@ -189,6 +189,11 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                             ("raw_u16", parsed.key_type),
                             ("registration_accepted", selector_accepted),
                             ("semantic_name", None),
+                            (
+                                "internal_value",
+                                parsed.key_type - 1 if selector_accepted else None,
+                            ),
+                            ("hive_mapping", "not-established"),
                         )
                     ),
                 ),
@@ -200,7 +205,10 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                             ("length", parsed.key_path_len),
                             ("raw_hex", parsed.key_path_raw.hex()),
                             ("decoded_utf8", parsed.key_path),
-                            ("runtime_normalization", "unknown"),
+                            (
+                                "runtime_normalization",
+                                "strip-first-case-insensitive-prefix; split-at-first-double-backslash",
+                            ),
                         )
                     ),
                 ),
@@ -211,7 +219,10 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                             ("length", parsed.value_len),
                             ("raw_hex", parsed.value_raw.hex()),
                             ("printable_utf8_preview", parsed.value_utf8_preview),
-                            ("runtime_role", "unknown"),
+                            (
+                                "runtime_role",
+                                "registry value name (when path splits); otherwise absent",
+                            ),
                         )
                     ),
                 ),
@@ -223,7 +234,7 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                             ("possible_tables", JSONArray(("general", "ASEP"))),
                             (
                                 "record_assignment",
-                                "unknown_without_runtime_path_normalization",
+                                "ASEP when no double-backslash separator is found and a value field exists; general otherwise",
                             ),
                         )
                     ),
@@ -233,7 +244,14 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                     JSONObject(
                         (
                             ("candidate_lookup", "confirmed"),
-                            ("exact_registry_check", "confirmed"),
+                            (
+                                "comparison",
+                                (
+                                    "REG_SZ/EXPAND_SZ case-insensitive text "
+                                    "(then expansion helper); REG_BINARY exact bytes; "
+                                    "DWORD/BIG_ENDIAN decimal text"
+                                ),
+                            ),
                             ("selector_to_hive_mapping", None),
                         )
                     ),
