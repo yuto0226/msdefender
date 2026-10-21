@@ -11,7 +11,7 @@ from ..bm import (
     interpret_bm_pattern,
     render_printable_bytes_preview,
 )
-from ..bm_semantic import serialize_bm_pattern
+from ..bm_semantic import BmSemanticContext, serialize_bm_pattern
 from ..bm_yara import (
     BmMatchContext,
     BmYaraRender,
@@ -698,7 +698,7 @@ def parse_hstr(payload: bytes, *, type_byte: int) -> HstrPayload:
 
 def _hstr_bm_runtime_context(
     subsig: HstrSubsignature, pattern: BmPattern
-) -> tuple[JSONObject, BmMatchContext | None]:
+) -> tuple[JSONObject, BmMatchContext | None, BmSemanticContext]:
     """Derive BM worker facts from an explicitly selected HSTR BM subsig."""
     assert subsig.flags is not None
     flags = subsig.flags.value
@@ -727,15 +727,33 @@ def _hstr_bm_runtime_context(
             worker_mode=worker_mode,
             capture_enabled=False,
         )
-    return display, match_context
+    complete_single_segment = (
+        pattern.issue is None and pattern.ended and not pattern.remaining_raw
+    )
+    capture_marker_bytes_present = b"\x90\x1b" in pattern.raw
+    semantic_context = BmSemanticContext(
+        reader_kind="BUFFER",
+        translation="identity" if identity else "ascii_lowercase",
+        worker_modes=(worker_mode,),
+        capture_enabled=(
+            False
+            if complete_single_segment
+            and worker_mode == 1
+            and not capture_marker_bytes_present
+            else None
+        ),
+    )
+    return display, match_context, semantic_context
 
 
 def _render_hstr_bm_yara(
     subsig: HstrSubsignature, pattern: BmPattern
-) -> tuple[BmYaraRender, JSONObject]:
-    runtime_context, match_context = _hstr_bm_runtime_context(subsig, pattern)
+) -> tuple[BmYaraRender, JSONObject, BmSemanticContext]:
+    runtime_context, match_context, semantic_context = _hstr_bm_runtime_context(
+        subsig, pattern
+    )
     rendered = render_bm_yara(pattern, context=match_context)
-    return rendered, runtime_context
+    return rendered, runtime_context, semantic_context
 
 
 def _render_hstr_subsignature_display(
@@ -744,7 +762,7 @@ def _render_hstr_subsignature_display(
     """Present wire bytes consistently; modifiers require confirmed semantics."""
     if meaning.kind == "BM_PATTERN":
         pattern = decode_bm_pattern(subsig.data)
-        rendered, _ = _render_hstr_bm_yara(subsig, pattern)
+        rendered, _, _ = _render_hstr_bm_yara(subsig, pattern)
         display = rendered.body or (
             "unsupported ("
             + ", ".join(issue.code for issue in rendered.diagnostics)
@@ -1047,10 +1065,14 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         # PEHSTR (0x61) has no flag field and is never shape-guessed as BM.
         if subsig.flags is not None and subsig.flags.value & 0x0002:
             pattern = decode_bm_pattern(subsig.data)
-            pattern_data, pattern_issues = serialize_bm_pattern(
-                pattern, explain_sequential_alternatives=True
+            bm_render, bm_runtime_context, semantic_context = _render_hstr_bm_yara(
+                subsig, pattern
             )
-            bm_render, bm_runtime_context = _render_hstr_bm_yara(subsig, pattern)
+            pattern_data, pattern_issues = serialize_bm_pattern(
+                pattern,
+                context=semantic_context,
+                explain_sequential_alternatives=True,
+            )
             bm_yara_data = JSONObject(
                 (
                     ("fidelity", bm_render.fidelity.value),
@@ -1264,7 +1286,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v6",
+        representation="hstr.matcher-subset.ir.v7",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",

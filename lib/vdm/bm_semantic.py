@@ -1,5 +1,6 @@
 """Portable, renderer-independent serialization of the decoded BM view."""
 
+from dataclasses import dataclass
 from typing import Literal
 
 from .bm import (
@@ -36,9 +37,55 @@ def _value(value: object):
 OperationFidelity = Literal["exact", "conditional", "unsupported"]
 
 
+@dataclass(frozen=True, slots=True)
+class BmSemanticContext:
+    """Caller-proven facts used for operation-specific IR fidelity."""
+
+    reader_kind: Literal["BUFFER", "FILE"] | None = None
+    translation: Literal["identity", "ascii_lowercase"] | None = None
+    worker_modes: tuple[int, ...] | None = None
+    capture_enabled: bool | None = None
+
+
+def _raw_04_byte_set(spec: bytes, *, lowercase_pattern: bool) -> bytes:
+    """Rebuild raw 0x04's accepted bitmap from its runtime class spec."""
+    if lowercase_pattern:
+        spec = bytes(byte + 0x20 if 0x41 <= byte <= 0x5A else byte for byte in spec)
+    accepted = bytearray(256)
+    cursor = 0
+    while cursor < len(spec):
+        if cursor + 2 < len(spec) and spec[cursor + 1] == 0x2D:
+            low, high = spec[cursor], spec[cursor + 2]
+            if low <= high:
+                accepted[low : high + 1] = b"\x01" * (high - low + 1)
+            cursor += 3
+        else:
+            accepted[spec[cursor]] = 1
+            cursor += 1
+    return bytes(index for index, present in enumerate(accepted) if present)
+
+
+def _raw_04_context_is_exact(
+    context: BmSemanticContext | None, pattern: BmPattern | None
+) -> bool:
+    return bool(
+        context is not None
+        and pattern is not None
+        and pattern.issue is None
+        and pattern.ended
+        and not pattern.remaining_raw
+        and b"\x90\x1b" not in pattern.raw
+        and context.reader_kind == "BUFFER"
+        and context.translation in ("identity", "ascii_lowercase")
+        and context.worker_modes == (1,)
+        and context.capture_enabled is False
+    )
+
+
 def _operation_ir(
     operation: BmSemanticOperation,
     *,
+    context: BmSemanticContext | None = None,
     pattern: BmPattern | None = None,
     explain_sequential_alternatives: bool = False,
     sequential_alternative_offsets: frozenset[int] = frozenset(),
@@ -86,8 +133,38 @@ def _operation_ir(
         result["requirements"] = [operation.support_note]
     elif isinstance(operation, BmClass):
         decoded.update(count=operation.count, spec_hex=operation.spec.hex())
-        result["fidelity"] = "conditional"
-        result["requirements"] = ["reader-specific class predicates are not modeled"]
+        if (
+            token is not None
+            and token.raw_id == 0x04
+            and token.dispatch_id == 0x04
+            and token.descriptor_flags == 0x02
+            and _raw_04_context_is_exact(context, pattern)
+        ):
+            assert context is not None
+            accepted = _raw_04_byte_set(
+                operation.spec,
+                lowercase_pattern=context.translation == "ascii_lowercase",
+            )
+            decoded["engine_predicate"] = {
+                "kind": "fixed_count_byte_class",
+                "accepted_bytes_hex": accepted.hex(),
+                "count": operation.count,
+                "count_source": "token_byte_2",
+                "cursor_advance_per_match": 1,
+                "subject_translation": context.translation,
+                "class_spec_normalization": (
+                    "BMPatternToLower_ascii_AZ"
+                    if context.translation == "ascii_lowercase"
+                    else "identity"
+                ),
+                "worker_modes": list(context.worker_modes),
+            }
+        else:
+            result["fidelity"] = "conditional"
+            result["requirements"] = [
+                "requires BUFFER reader, known translation, worker mode 1, and no raw 90 1B byte sequence in the full pattern",
+                "raw opcode 0x04 only; other class opcodes and aliases remain reader-specific",
+            ]
     elif isinstance(operation, BmExtension):
         decoded.update(
             name=operation.name, value=operation.value, bitmap=operation.bitmap
@@ -169,6 +246,7 @@ def _operation_ir(
 def serialize_bm_pattern(
     pattern: BmPattern,
     *,
+    context: BmSemanticContext | None = None,
     explain_sequential_alternatives: bool = False,
 ) -> tuple[JSONObject, tuple[SemanticIssue, ...]]:
     """Serialize one decoder view, including its exact unparsed remainder."""
@@ -189,6 +267,7 @@ def serialize_bm_pattern(
     operations = [
         _operation_ir(
             operation,
+            context=context,
             pattern=pattern,
             explain_sequential_alternatives=explain_sequential_alternatives,
             sequential_alternative_offsets=frozenset(sequential_alternative_offsets),
@@ -246,4 +325,4 @@ def serialize_bm_pattern(
     return data, tuple(semantic_issues)
 
 
-__all__ = ["serialize_bm_pattern"]
+__all__ = ["BmSemanticContext", "serialize_bm_pattern"]
