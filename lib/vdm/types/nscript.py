@@ -17,7 +17,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 _BYTE_PREVIEW = 64
@@ -489,12 +492,18 @@ def export_nscript_semantics(parsed: NScriptPayload) -> RuleSemantics:
                     parsed.match_flags if parsed.match_flags_raw is not None else None,
                 ),
                 (
-                    "consumer_functions",
-                    JSONArray(
+                    "confirmed_container_consumers",
+                    JSONObject(
                         (
-                            "nscript::EndRoutine",
-                            "nscript::SearchStdEndMatches",
-                            "nscript::AddToken",
+                            ("stdCrcArr", "nscript::EndRoutine"),
+                            ("stdAppendArr", "nscript::SearchStdEndMatches"),
+                            (
+                                "state_coordinator",
+                                (
+                                    "nscript::AddToken updates scan state and reaches "
+                                    "the container-specific searches"
+                                ),
+                            ),
                         )
                     ),
                 ),
@@ -509,14 +518,115 @@ def export_nscript_semantics(parsed: NScriptPayload) -> RuleSemantics:
             "counted u32 fields and optional groups decoded",
             "mode 0 entries go to stdCrcArr; nonzero mode adds first entry "
             "to stdAppendArr; low match-flags byte is stored",
-            "stdCrcArr/stdAppendArr are read by token/state search routines; "
-            "full interpreter policy is unknown",
+            "stdCrcArr is searched by EndRoutine and stdAppendArr by "
+            "SearchStdEndMatches; AddToken coordinates the surrounding state",
             "unknown",
+        ),
+    )
+    claims = (
+        SemanticClaim(
+            id="nscript_normal_wire_layout",
+            scope="wire_layout",
+            statement=(
+                "The NORMAL receiver decodes a counted primary DWORD vector, mode-"
+                "dependent anchor/length fields, and optional whole secondary and "
+                "match-flag groups."
+            ),
+            coverage="complete" if not parsed.trailing else "subset",
+            evidence_refs=("nscript_normal_receiver",),
+            unknowns=(
+                ()
+                if not parsed.trailing
+                else (
+                    SemanticUnknown(
+                        "wire_layout",
+                        "Receiver-accepted bytes after the optional groups remain uninterpreted.",
+                    ),
+                )
+            ),
+        ),
+        SemanticClaim(
+            id="nscript_normal_loader_dispatch",
+            scope="loader_dispatch",
+            statement="Type 0x27 is registered to pushNScriptWorker.",
+            coverage="complete",
+            evidence_refs=("nscript_normal_dispatch",),
+        ),
+        SemanticClaim(
+            id="nscript_normal_receiver_transform",
+            scope="receiver_transform",
+            statement=(
+                "The receiver writes ordinary pairs to stdCrcArr, writes the first "
+                "nonzero-mode entry to stdAppendArr, and stores only the low match-"
+                "flags byte."
+            ),
+            coverage="complete",
+            evidence_refs=("nscript_normal_receiver",),
+        ),
+        SemanticClaim(
+            id="nscript_normal_runtime_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "EndRoutine searches stdCrcArr candidates and SearchStdEndMatches "
+                "searches stdAppendArr candidates; AddToken coordinates the scan state."
+            ),
+            coverage="subset",
+            evidence_refs=("nscript_normal_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The complete tokenization, normalization, and caller lifecycle remain unresolved.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="nscript_normal_candidate_predicate",
+            scope="detection_predicate",
+            statement=(
+                "The confirmed consumers use CRC-indexed candidate searches and pass "
+                "qualifying rows to AddStdMatch."
+            ),
+            coverage="subset",
+            evidence_refs=("nscript_normal_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "AddStdMatch policy and the full record-to-detection condition are not closed.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="nscript_normal_report_mapping",
+            scope="report_mapping",
+            statement=(
+                "Selected validator result branches report lowfi matches or call "
+                "the HIPS stream-scan path."
+            ),
+            coverage="subset",
+            evidence_refs=("nscript_normal_report",),
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "Ordinary/attribute aggregation, all result-code meanings, and downstream reporting remain unresolved.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="nscript_normal_final_verdict",
+            scope="final_verdict",
+            statement="A NORMAL candidate is not a confirmed final verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Outer NSCRIPT arbitration and the host-visible verdict remain unresolved.",
+                ),
+            ),
         ),
     )
     return RuleSemantics(
         status="unsupported" if tail else "confirmed_subset",
-        representation="nscript.normal.receiver_runtime_candidates.v1",
+        representation="nscript.normal.receiver_runtime_candidates.v2",
         data=outer,
         evidence=(
             "pushNScriptWorker @ 0x1804A836C receiver layout and writes",
@@ -524,6 +634,54 @@ def export_nscript_semantics(parsed: NScriptPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=claims,
+        claim_evidence=(
+            SemanticEvidence(
+                id="nscript_normal_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="nscript_init_module @ 0x180BF6AD0",
+                supports=("nscript_normal_loader_dispatch",),
+            ),
+            SemanticEvidence(
+                id="nscript_normal_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="pushNScriptWorker @ 0x1804A836C",
+                supports=(
+                    "nscript_normal_wire_layout",
+                    "nscript_normal_receiver_transform",
+                ),
+            ),
+            SemanticEvidence(
+                id="nscript_normal_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "nscript::EndRoutine @ 0x18010B9D4; "
+                    "nscript::SearchStdEndMatches @ 0x18010A424; "
+                    "nscript::AddToken @ 0x18010C070"
+                ),
+                supports=(
+                    "nscript_normal_runtime_consumer",
+                    "nscript_normal_candidate_predicate",
+                ),
+            ),
+            SemanticEvidence(
+                id="nscript_normal_report",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "nscript::callLuaForStdSig @ 0x18010D4C8 result branches "
+                    "to MpReportLowfiMatch and HipsStreamScanCheck"
+                ),
+                supports=("nscript_normal_report_mapping",),
+            ),
+        ),
     )
 
 
@@ -566,9 +724,9 @@ def export_nscript_sp_semantics(parsed: NScriptSPPayload) -> RuleSemantics:
         issues.append(tail)
     issues.append(
         SemanticIssue(
-            "nscript_sp_pcode_and_verdict_policy_unknown",
-            "SearchExact candidate checks and PCode handoff are confirmed; "
-            "PCode result interpretation and final report policy remain unknown.",
+            "nscript_sp_validator_and_verdict_policy_unknown",
+            "SearchExact candidate checks and the separate validator handoff are "
+            "confirmed; complete result interpretation and final verdict policy remain unknown.",
         )
     )
     return RuleSemantics(
@@ -620,7 +778,7 @@ def export_nscript_sp_semantics(parsed: NScriptSPPayload) -> RuleSemantics:
                         ),
                     ),
                     (
-                        "post_crc_handoff",
+                        "post_candidate_validation",
                         "sigseqfromrecid -> ValidateSignatureWithPcode",
                     ),
                     ("lowfi_forwarded", parsed.lowfi),
@@ -630,17 +788,152 @@ def export_nscript_sp_semantics(parsed: NScriptSPPayload) -> RuleSemantics:
                 "fixed SP prefix decoded",
                 "spType appended; mode 1/2 with IRC name may be converted into NORMAL",
                 "SearchExact performs CRC/length/mode candidate checks then "
-                "PCode validation",
-                "unknown; validation result policy and final report are not "
-                "fully mapped",
+                "calls a separate sequence-selected validator",
+                "selected result branches report lowfi matches or notify the HIPS stream path; final verdict is unknown",
             ),
         ),
         evidence=(
             "pushSP @ 0x1804A7F90 receiver layout and spType writes",
-            "SearchExact @ 0x1803D5200 candidate and PCode dataflow",
+            "SearchExact @ 0x1803D5200 candidate, validator, and result-branch dataflow",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="nscript_sp_wire_layout",
+                scope="wire_layout",
+                statement=(
+                    "The SP receiver decodes the name, anchor CRC, mode/lowfi byte, "
+                    "full CRC, and normalized length in a fixed prefix."
+                ),
+                coverage="complete" if not parsed.trailing else "subset",
+                evidence_refs=("nscript_sp_receiver",),
+                unknowns=(
+                    ()
+                    if not parsed.trailing
+                    else (
+                        SemanticUnknown(
+                            "wire_layout",
+                            "Receiver-accepted bytes after the fixed prefix remain uninterpreted.",
+                        ),
+                    )
+                ),
+            ),
+            SemanticClaim(
+                id="nscript_sp_loader_dispatch",
+                scope="loader_dispatch",
+                statement="Type 0x28 is registered to pushSP.",
+                coverage="complete",
+                evidence_refs=("nscript_sp_dispatch",),
+            ),
+            SemanticClaim(
+                id="nscript_sp_receiver_transform",
+                scope="receiver_transform",
+                statement=(
+                    "The receiver stores an spArr row, except that mode 1/2 records "
+                    "whose unpacked name contains :IRC/ are synthesized into a NORMAL row."
+                ),
+                coverage="complete",
+                evidence_refs=("nscript_sp_receiver",),
+            ),
+            SemanticClaim(
+                id="nscript_sp_runtime_consumer",
+                scope="runtime_consumer",
+                statement="SearchExact consumes stored spArr rows in forward and reverse scan passes.",
+                coverage="subset",
+                evidence_refs=("nscript_sp_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The complete scan invocation lifecycle and input-region selection remain unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="nscript_sp_candidate_predicate",
+                scope="detection_predicate",
+                statement=(
+                    "SearchExact gates candidates by mapped anchor CRC, pass-dependent "
+                    "mode, normalized length, full CRC, and a separate sequence-selected validator."
+                ),
+                coverage="subset",
+                evidence_refs=("nscript_sp_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Validator result policy and the complete threat condition remain unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="nscript_sp_report_mapping",
+                scope="report_mapping",
+                statement=(
+                    "Selected SearchExact result branches report lowfi matches or call "
+                    "the HIPS stream-detection path."
+                ),
+                coverage="subset",
+                evidence_refs=("nscript_sp_report",),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "The meanings of all validator result codes and ordinary-result branches remain unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="nscript_sp_final_verdict",
+                scope="final_verdict",
+                statement="An SP candidate or report branch is not a confirmed final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Outer NSCRIPT arbitration and the host-visible verdict remain unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="nscript_sp_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="nscript_init_module @ 0x180BF6AD0",
+                supports=("nscript_sp_loader_dispatch",),
+            ),
+            SemanticEvidence(
+                id="nscript_sp_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="pushSP @ 0x1804A7F90",
+                supports=("nscript_sp_wire_layout", "nscript_sp_receiver_transform"),
+            ),
+            SemanticEvidence(
+                id="nscript_sp_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="SearchExact @ 0x1803D5200",
+                supports=(
+                    "nscript_sp_runtime_consumer",
+                    "nscript_sp_candidate_predicate",
+                ),
+            ),
+            SemanticEvidence(
+                id="nscript_sp_report",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "SearchExact @ 0x1803D5200 result branches to "
+                    "MpReportLowfiMatch and HipsManager::OnStreamDetection"
+                ),
+                supports=("nscript_sp_report_mapping",),
+            ),
+        ),
     )
 
 
@@ -760,9 +1053,91 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
             ),
         )
     )
+    runtime_type_6 = parsed.runtime_script_type == 6
+    if runtime_type_6:
+        consumer_claim = SemanticClaim(
+            id="nscript_brute_runtime_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "For runtime type 6, SearchBruteWorker uses mapSP, a filtered-trie "
+                "candidate index, and BMMatchEx2 for the selected entry."
+            ),
+            coverage="subset",
+            evidence_refs=("nscript_brute_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Input-region selection, direction, position, and the complete caller lifecycle remain unresolved.",
+                ),
+            ),
+        )
+        predicate_claim = SemanticClaim(
+            id="nscript_brute_candidate_predicate",
+            scope="detection_predicate",
+            statement=(
+                "For runtime type 6 under the UFS base-plugin 6 gate, a mapped-trie "
+                "candidate must pass BMMatchEx2 and a separate sequence-selected validator."
+            ),
+            coverage="subset",
+            evidence_refs=("nscript_brute_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Direction/position semantics, validator policy, and the complete record-level detection condition remain unresolved.",
+                ),
+            ),
+        )
+        consumer_evidence: tuple[SemanticEvidence, ...] = (
+            SemanticEvidence(
+                id="nscript_brute_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "nscript_scan @ 0x18011BE20; SearchBruteWorker @ 0x1800AA6F0; "
+                    "BMMatchEx2 @ 0x1800EC420"
+                ),
+                supports=(
+                    "nscript_brute_runtime_consumer",
+                    "nscript_brute_candidate_predicate",
+                ),
+            ),
+        )
+    else:
+        consumer_claim = SemanticClaim(
+            id="nscript_brute_runtime_consumer",
+            scope="runtime_consumer",
+            statement=(
+                f"No record-specific runtime consumer is established for normalized "
+                f"runtime type {parsed.runtime_script_type}."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The confirmed SearchBruteWorker BM branch accepts only entry type 6.",
+                ),
+            ),
+        )
+        predicate_claim = SemanticClaim(
+            id="nscript_brute_candidate_predicate",
+            scope="detection_predicate",
+            statement=(
+                f"No candidate predicate is established for normalized runtime type "
+                f"{parsed.runtime_script_type}."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Receiver storage alone does not identify a matcher for this runtime type.",
+                ),
+            ),
+        )
+        consumer_evidence = ()
     return RuleSemantics(
         status="confirmed_subset",
-        representation="nscript.brute.receiver_runtime_candidates.v1",
+        representation="nscript.brute.receiver_runtime_candidates.v2",
         data=JSONObject(pattern_data.items + (("outer", outer),)),
         evidence=(
             (
@@ -794,6 +1169,99 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
                 ),
             ),
             *pattern_issues,
+        ),
+        claims=(
+            SemanticClaim(
+                id="nscript_brute_wire_layout",
+                scope="wire_layout",
+                statement=(
+                    "The BRUTE receiver decodes name, type/lowfi flags, direction, "
+                    "position, a bounded body, and validates the body's BM framing."
+                ),
+                coverage="complete" if not parsed.trailing else "subset",
+                evidence_refs=("nscript_brute_receiver",),
+                unknowns=(
+                    ()
+                    if not parsed.trailing
+                    else (
+                        SemanticUnknown(
+                            "wire_layout",
+                            "Receiver-accepted bytes after the declared body remain uninterpreted.",
+                        ),
+                    )
+                ),
+            ),
+            SemanticClaim(
+                id="nscript_brute_loader_dispatch",
+                scope="loader_dispatch",
+                statement=(
+                    "Type 0x29 is registered through the NSCRIPT BRUTE wrapper to "
+                    "pushBruteWorker, independently of type 0xD0."
+                ),
+                coverage="complete",
+                evidence_refs=("nscript_brute_dispatch",),
+            ),
+            SemanticClaim(
+                id="nscript_brute_receiver_transform",
+                scope="receiver_transform",
+                statement=(
+                    "pushBruteWorker stores the body object, recid, narrowed position, "
+                    "direction, and normalized runtime type in a 24-byte entry."
+                ),
+                coverage="complete",
+                evidence_refs=("nscript_brute_receiver",),
+            ),
+            consumer_claim,
+            predicate_claim,
+            SemanticClaim(
+                id="nscript_brute_report_mapping",
+                scope="report_mapping",
+                statement="A BRUTE candidate-to-report mapping is not exported.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "Validator result branches and outer aggregation are not a complete record-level report mapping.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="nscript_brute_final_verdict",
+                scope="final_verdict",
+                statement="A BRUTE candidate is not a confirmed final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Outer NSCRIPT arbitration and the host-visible verdict remain unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="nscript_brute_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "nscript_init_module @ 0x180BF6AD0; pushBrute wrapper; "
+                    "pushBruteWorker @ 0x1800FAFE8"
+                ),
+                supports=("nscript_brute_loader_dispatch",),
+            ),
+            SemanticEvidence(
+                id="nscript_brute_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="pushBruteWorker @ 0x1800FAFE8",
+                supports=(
+                    "nscript_brute_wire_layout",
+                    "nscript_brute_receiver_transform",
+                ),
+            ),
+            *consumer_evidence,
         ),
     )
 
@@ -890,8 +1358,8 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
     runtime_context = {
         1: "non-HTML branch; BMSearch with BM_MAP_LOWCASE",
         2: "non-HTML branch; BMSearch with BM_MAP_LOWCASE",
-        3: "stored, but skipped by the sole nscript_scan cure consumer",
-        4: "stored, but skipped by the sole nscript_scan cure consumer",
+        3: "stored, but the confirmed nscript_scan path skips cure helpers",
+        4: "stored, but the confirmed nscript_scan path skips cure helpers",
         5: "HTML and non-HTML branches call ScriptCureReplace",
     }.get(parsed.kind, "unknown")
     details = (
@@ -929,6 +1397,106 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
             ),
         ),
     )
+    recognized_kind = parsed.kind in (1, 2, 3, 4, 5)
+    active_helper_kind = parsed.kind in (1, 2, 5) and not ignored
+    if recognized_kind:
+        receiver_claim = SemanticClaim(
+            id="nscript_cure_receiver_transform",
+            scope="receiver_transform",
+            statement=(
+                "For kind 1/2 with a packed-span overflow, pushCure returns success "
+                "without appending the entry."
+                if ignored
+                else "pushCure stores the recognized kind-specific row in cureArr."
+            ),
+            coverage="complete",
+            evidence_refs=("nscript_cure_receiver",),
+        )
+    else:
+        receiver_claim = SemanticClaim(
+            id="nscript_cure_receiver_transform",
+            scope="receiver_transform",
+            statement=f"Receiver semantics for CURE kind {parsed.kind} are unresolved.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "The analyzed runtime dispatch recognizes only kinds 1 through 5.",
+                ),
+            ),
+        )
+    if active_helper_kind:
+        runtime_claim = SemanticClaim(
+            id="nscript_cure_runtime_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "The confirmed nscript_scan path looks up cureArr by name CRC and "
+                f"dispatches kind {parsed.kind} to {selector_candidate}."
+            ),
+            coverage="subset",
+            evidence_refs=("nscript_cure_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The complete invocation contexts and helper-result handling remain unresolved.",
+                ),
+            ),
+        )
+        consumer_evidence: tuple[SemanticEvidence, ...] = (
+            SemanticEvidence(
+                id="nscript_cure_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "nscript_scan @ 0x18011BE20; ScriptCureRemoveStart @ "
+                    "0x180BF7BD4; ScriptCureRemoveEnd @ 0x180BF79F0; "
+                    "ScriptCureReplace @ 0x180BF7CE4"
+                ),
+                supports=("nscript_cure_runtime_consumer",),
+            ),
+        )
+    elif parsed.kind in (3, 4) and not ignored:
+        runtime_claim = SemanticClaim(
+            id="nscript_cure_runtime_consumer",
+            scope="runtime_consumer",
+            statement=(
+                f"The confirmed nscript_scan cure path observes kind {parsed.kind} "
+                "but does not dispatch it to the kind 1/2/5 cure helpers."
+            ),
+            coverage="subset",
+            evidence_refs=("nscript_cure_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Other consumers or the intended purpose of stored kind 3/4 rows are unresolved.",
+                ),
+            ),
+        )
+        consumer_evidence = (
+            SemanticEvidence(
+                id="nscript_cure_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="nscript_scan @ 0x18011BE20 cureArr selector branch",
+                supports=("nscript_cure_runtime_consumer",),
+            ),
+        )
+    else:
+        runtime_claim = SemanticClaim(
+            id="nscript_cure_runtime_consumer",
+            scope="runtime_consumer",
+            statement="No runtime cure consumer is established for this record.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The row is receiver-ignored or has an unrecognized kind.",
+                ),
+            ),
+        )
+        consumer_evidence = ()
     return RuleSemantics(
         status=(
             "ignored"
@@ -937,7 +1505,7 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
             if tail or parsed.kind not in (1, 2, 3, 4, 5)
             else "confirmed_subset"
         ),
-        representation="nscript.cure.receiver_runtime_candidates.v2",
+        representation="nscript.cure.receiver_runtime_candidates.v3",
         data=_outer(
             parsed.raw, _raw_framing(parsed.raw, tuple(fields)), **dict(details)
         ),
@@ -959,6 +1527,99 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
             else "mpengine-1.443.903.0"
         ),
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="nscript_cure_wire_layout",
+                scope="wire_layout",
+                statement=(
+                    "The CURE receiver decodes kind/name CRC and, except for kind "
+                    "3/4, a span-or-offset plus counted data."
+                ),
+                coverage="complete" if not parsed.trailing else "subset",
+                evidence_refs=("nscript_cure_receiver",),
+                unknowns=(
+                    ()
+                    if not parsed.trailing
+                    else (
+                        SemanticUnknown(
+                            "wire_layout",
+                            "Receiver-accepted bytes after the recognized fields remain uninterpreted.",
+                        ),
+                    )
+                ),
+            ),
+            SemanticClaim(
+                id="nscript_cure_loader_dispatch",
+                scope="loader_dispatch",
+                statement="Type 0x2C is registered to pushCure.",
+                coverage="complete",
+                evidence_refs=("nscript_cure_dispatch",),
+            ),
+            receiver_claim,
+            runtime_claim,
+            SemanticClaim(
+                id="nscript_cure_detection_predicate",
+                scope="detection_predicate",
+                statement="CURE storage or helper dispatch is not a detection predicate.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "The relationship between cure selection and detection acceptance remains unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="nscript_cure_report_mapping",
+                scope="report_mapping",
+                statement="CURE helper results are not mapped to a confirmed report outcome.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "Helper-result aggregation and downstream reporting remain unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="nscript_cure_final_verdict",
+                scope="final_verdict",
+                statement="A CURE helper branch is not a confirmed final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Outer NSCRIPT arbitration and the host-visible remediation outcome remain unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="nscript_cure_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="nscript_init_module @ 0x180BF6AD0",
+                supports=("nscript_cure_loader_dispatch",),
+            ),
+            SemanticEvidence(
+                id="nscript_cure_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="pushCure @ 0x180470AC0",
+                supports=(
+                    (
+                        "nscript_cure_wire_layout",
+                        "nscript_cure_receiver_transform",
+                    )
+                    if recognized_kind
+                    else ("nscript_cure_wire_layout",)
+                ),
+            ),
+            *consumer_evidence,
+        ),
     )
 
 
