@@ -408,9 +408,10 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
     if info.blob_len:
         issues.append(
             SemanticIssue(
-                "identity_blob_producer_unknown",
-                "The blob is not independently parsed; its producer and subformat "
-                "are unknown.",
+                "identity_blob_generator_and_subformat_unknown",
+                "On the nonzero-first-byte path, the engine interns payload+2 and "
+                "includes the result in the outer RecID. The external signature "
+                "generator, blob subformat, and any independent child consumer are unknown.",
                 (("blob_length", info.blob_len),),
             )
         )
@@ -457,7 +458,7 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
     recid_object = info.recid_object_raw
     return RuleSemantics(
         status=status,
-        representation="bm_info.receiver-policy.ir.v2",
+        representation="bm_info.receiver-policy.ir.v3",
         data=JSONObject(
             (
                 ("type", "BM_INFO"),
@@ -545,7 +546,29 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
                                 else _wire_field("payload_plus_2", recid_object, 2),
                             ),
                             ("object_interned", recid_object is not None),
-                            ("producer_meaning", None),
+                            (
+                                "outer_recid_inclusion",
+                                (
+                                    "createrecidfrombuffex -> kpushobject -> "
+                                    "createrecid"
+                                    if recid_object is not None
+                                    else "not_applicable"
+                                ),
+                            ),
+                            (
+                                "external_signature_generator",
+                                "unknown" if info.blob_len else "not_applicable",
+                            ),
+                            (
+                                "blob_subformat",
+                                "unknown" if info.blob_len else "not_applicable",
+                            ),
+                            (
+                                "independent_child_object_consumer",
+                                "unknown"
+                                if recid_object is not None
+                                else "not_applicable",
+                            ),
                         )
                     ),
                 ),
@@ -557,6 +580,10 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
         ),
         evidence=(
             "mpengine 1.443.903.0 BMDetectionReceiver bounded fields and identity",
+            (
+                "mpengine 1.443.903.0 BMDetectionReceiver @ 0x1802A6610 -> "
+                "createrecidfrombuffex @ 0x1804706E0 -> createrecid @ 0x1800FB5EC"
+            ),
             "mpengine 1.443.903.0 ProcessFriendlyFiltering validation and mask storage",
             "mpengine 1.443.903.0 GetDetectionFlags low-eight-bit mapping",
             (
