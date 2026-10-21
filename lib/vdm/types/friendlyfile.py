@@ -1,7 +1,10 @@
+import json
 from dataclasses import dataclass
 from typing import Final
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     FamilySpec,
     FormatResult,
     JSONArray,
@@ -59,6 +62,52 @@ def render_friendlyfile_sha256(parsed: FriendlyFileSha256) -> FormatResult:
         if tail.trailing_raw:
             fields.append(("trailing_len", f"{len(tail.trailing_raw)} B"))
     return FormatResult(fields=tuple(fields))
+
+
+def export_friendlyfile_sha256(parsed: FriendlyFileSha256) -> ArtifactExport:
+    """Export one lossless, record-local JSON manifest; no verdict is implied."""
+    tail = parsed.recid_tail
+    tail_json: dict[str, object] | None = None
+    if tail is not None:
+        tail_json = {
+            "raw_hex": tail.raw.hex(),
+            "raw_offset": SHA256_SIZE,
+            "declared_length": tail.length_limit,
+            "object_raw_hex": tail.object_raw.hex(),
+            "object_offset": SHA256_SIZE + 1,
+            "object_registered": tail.has_object,
+            "trailing_raw_hex": tail.trailing_raw.hex(),
+            "trailing_offset": SHA256_SIZE + 1 + len(tail.object_raw),
+        }
+    manifest = {
+        "format": "vdm.friendly_file_sha256.record.v1",
+        "record": {
+            "type": FRIENDLYFILE_SHA256_TYPE,
+            "type_hex": f"0x{FRIENDLYFILE_SHA256_TYPE:02X}",
+            "name": "FRIENDLYFILE_SHA256",
+            "scope": "record_local",
+            "threat_association": "not_included",
+            "verdict_scope": "lookup_key_only; no final verdict asserted",
+        },
+        "payload_length": len(parsed.raw),
+        "payload_raw_hex": parsed.raw.hex(),
+        "sha256": {
+            "algorithm": "SHA-256",
+            "digest_hex": parsed.sha256.hex(),
+            "raw_offset": 0,
+            "raw_length": SHA256_SIZE,
+            "comparison": "exact_32_bytes",
+        },
+        "recid_tail": tail_json,
+    }
+    encoded = json.dumps(manifest, ensure_ascii=True, separators=(",", ":"))
+    data = (encoded + "\n").encode("utf-8")
+    return ArtifactExport(
+        "ready",
+        artifacts=(
+            Artifact("friendlyfile.json", "friendlyfile_sha256_manifest", data),
+        ),
+    )
 
 
 def _raw_span(offset: int, length: int) -> JSONObject:
@@ -222,5 +271,6 @@ SPEC = FamilySpec(
     "FRIENDLYFILE_SHA256",
     parse_friendlyfile_sha256,
     render_friendlyfile_sha256,
+    exporter=export_friendlyfile_sha256,
     semantic_exporter=export_friendlyfile_sha256_semantics,
 )
