@@ -1,6 +1,9 @@
+import json
 from dataclasses import dataclass
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -570,11 +573,160 @@ def export_sigtree_bm_semantics(parsed: SigtreePayload) -> RuleSemantics:
     return _export_sigtree_semantics(parsed, record_type=0xB3)
 
 
+def _artifact_param(param: SigtreeParam | None) -> dict[str, object] | None:
+    if param is None:
+        return None
+    return {
+        "kind": param.kind,
+        "subtype": param.subtype,
+        "raw_length": len(param.raw),
+        "raw_hex": param.raw.hex(),
+        "operand_semantics": "unknown",
+    }
+
+
+def _export_sigtree_artifact(
+    parsed: SigtreePayload, *, record_type: int
+) -> ArtifactExport:
+    """Export parsed SIGTREE structure without inventing a matcher language."""
+    type_names = {0x40: "SIGTREE", 0x41: "SIGTREE_EXT", 0xB3: "SIGTREE_BM"}
+    if record_type not in type_names:
+        raise ValueError(f"unsupported SIGTREE record type {record_type:#04x}")
+
+    entries: list[dict[str, object]] = []
+    for index, entry in enumerate(parsed.entries):
+        known_flags = 0x0002 | 0x0004 | 0x0010 | 0x0040 | 0x1000
+        entries.append(
+            {
+                "index": index,
+                "fixed_raw_hex": entry.fixed_raw.hex(),
+                "flags_u32": entry.flags,
+                "flags_raw_hex": entry.fixed_raw[:4].hex(),
+                "flags_unclassified_bits": entry.flags & ~known_flags,
+                "fid_lo": entry.fid_lo,
+                "fid_hi": entry.fid_hi,
+                "sub_lo": entry.sub_lo,
+                "sub_hi": entry.sub_hi,
+                "val_lo_u32": entry.val_lo,
+                "val_hi_u32": entry.val_hi,
+                "level_extra_raw_hex": entry.level_extra_raw.hex(),
+                "parameter_a": _artifact_param(entry.param_a),
+                "parameter_b": _artifact_param(entry.param_b),
+                "parameter_combination": "all_selected_parameters_must_match",
+            }
+        )
+
+    named_guard_indexes = [
+        index
+        for index, entry in enumerate(parsed.entries)
+        if entry.level_extra_raw and entry.level_extra_raw[0] & 0x02
+    ]
+    unsupported_boundaries = [
+        (
+            "Parameter operands are preserved as bytes; their full portable "
+            "semantics are unknown."
+        ),
+        "Entry grouping and all flag-dependent state reset cases are not fully named.",
+        (
+            "Named-attribute DAG edges require cross-record/runtime attribute "
+            "resolution and are not synthesized here."
+        ),
+        (
+            "A completed countdown is only a candidate state; final report "
+            "policy is context-dependent."
+        ),
+        (
+            "YARA translation is not established; no YARA or executable matcher "
+            "is emitted."
+        ),
+    ]
+    if parsed.trailing_raw:
+        unsupported_boundaries.append(
+            "Bytes remain after the parsed entries; their record semantics are unknown."
+        )
+
+    manifest = {
+        "format": "vdm.sigtree.record.v1",
+        "record": {
+            "type": record_type,
+            "type_hex": f"0x{record_type:02X}",
+            "name": type_names[record_type],
+            "scope": "record_local",
+            "artifact_scope": "lossless_record_structure",
+            "threat_association": "not_included",
+            "portable_matcher": "not_emitted",
+            "wire_parse_status": "partial" if parsed.trailing_raw else "complete",
+        },
+        "wire_envelope": {
+            "payload_length": len(parsed.raw),
+            "payload_raw_hex": parsed.raw.hex(),
+            "entry_count": parsed.entry_count,
+            "format_level": parsed.format_level,
+            "initial_countdown": parsed.raw_header_2,
+            "initial_countdown_raw_hex": parsed.raw[2:3].hex(),
+            "handler_index": parsed.handler_index,
+            "name_raw_hex": parsed.name_raw.hex(),
+            "name_latin1": parsed.name_raw.decode("latin-1"),
+            "record_extra_raw_hex": parsed.record_extra_raw.hex(),
+            "entries": entries,
+            "trailing_raw_hex": parsed.trailing_raw.hex(),
+        },
+        "graph": {
+            "model": "named_attribute_dependency_dag",
+            "node_name_raw_hex": parsed.name_raw.hex(),
+            "dependency_edges": None,
+            "edge_boundary": (
+                "record-local payload does not resolve cross-record attribute edges"
+            ),
+        },
+        "evaluator_shape": {
+            "entry_parameter_combination": "all selected parameters must match",
+            "reduction_model": "scan_time_countdown",
+            "accepted_entry_contribution": "decrement nonzero countdown by one",
+            "initial_countdown_source": "wire byte +0x02",
+            "countdown_adjustment_enabled": bool(named_guard_indexes),
+            "adjustment_entry_indexes": named_guard_indexes,
+            "adjustment_shape": "negated_or_unmatched_guard; exact grouping unknown",
+            "completion_expression": (
+                "countdown_after=max(countdown_before-1,0); test_value="
+                "countdown_after-1 iff adjustment is enabled and countdown_after "
+                "is odd, else countdown_after; complete iff test_value==0"
+            ),
+            "final_verdict": "not_represented",
+        },
+        "unsupported_boundaries": unsupported_boundaries,
+    }
+    encoded = json.dumps(manifest, ensure_ascii=True, separators=(",", ":"))
+    return ArtifactExport(
+        "ready",
+        artifacts=(
+            Artifact(
+                "sigtree.json",
+                "sigtree_structural_manifest",
+                (encoded + "\n").encode("utf-8"),
+            ),
+        ),
+    )
+
+
+def export_sigtree_artifact(parsed: SigtreePayload) -> ArtifactExport:
+    return _export_sigtree_artifact(parsed, record_type=0x40)
+
+
+def export_sigtree_ext_artifact(parsed: SigtreePayload) -> ArtifactExport:
+    return _export_sigtree_artifact(parsed, record_type=0x41)
+
+
+def export_sigtree_bm_artifact(parsed: SigtreePayload) -> ArtifactExport:
+    return _export_sigtree_artifact(parsed, record_type=0xB3)
+
+
 SIGTREE_SPEC = FamilySpec(
     0x40,
     "SIGTREE",
     parse_sigtree,
     render_sigtree,
+    exporter=export_sigtree_artifact,
     semantic_exporter=export_sigtree_semantics,
 )
 SIGTREE_EXT_SPEC = FamilySpec(
@@ -582,6 +734,7 @@ SIGTREE_EXT_SPEC = FamilySpec(
     "SIGTREE_EXT",
     parse_sigtree,
     render_sigtree,
+    exporter=export_sigtree_ext_artifact,
     semantic_exporter=export_sigtree_ext_semantics,
 )
 SIGTREE_BM_SPEC = FamilySpec(
@@ -589,5 +742,6 @@ SIGTREE_BM_SPEC = FamilySpec(
     "SIGTREE_BM",
     parse_sigtree,
     render_sigtree,
+    exporter=export_sigtree_bm_artifact,
     semantic_exporter=export_sigtree_bm_semantics,
 )
