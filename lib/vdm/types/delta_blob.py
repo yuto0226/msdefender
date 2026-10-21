@@ -273,7 +273,7 @@ def export_delta_blob_semantics(parsed: DeltaBlob) -> RuleSemantics:
         )
     )
     return RuleSemantics(
-        status="observed_only",
+        status="confirmed_subset",
         representation="delta_blob.patch_artifact.v1",
         data=JSONObject(
             (
@@ -334,11 +334,14 @@ def export_delta_blob_semantics(parsed: DeltaBlob) -> RuleSemantics:
             )
         ),
         evidence=(
-            "mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8",
-            "mpengine 1.443.903.0 DispatchProxy::ConsumeInputCompressed @ 0x1800D9ED0",
             (
-                "Observed mpas.sig and mpav.sig streams parse to EOF and their "
-                "reconstructed size/CRC match the headers"
+                "mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8 stores the "
+                "0x73 payload as the compressed input block"
+            ),
+            (
+                "mpengine 1.443.903.0 DispatchProxy::ConsumeInputCompressed "
+                "@ 0x1800D9ED0 consumes the block using the exported literal/copy "
+                "grammar, output-size checks, and CRC update"
             ),
         ),
         profile="mpengine-1.443.903.0",
@@ -350,13 +353,6 @@ def export_delta_blob_semantics(parsed: DeltaBlob) -> RuleSemantics:
                     "were supplied to this semantic exporter."
                 ),
                 (("expected_crc32_raw", parsed.expected_output_crc32),),
-            ),
-            SemanticIssue(
-                "patch_artifact_not_detection_rule",
-                (
-                    "This record describes input reconstruction operations and "
-                    "does not encode a scan-time detection predicate."
-                ),
             ),
         ),
     )
