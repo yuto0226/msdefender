@@ -402,7 +402,7 @@ def export_rpf_routine_semantics(parsed: RpfRoutinePayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status="unsupported" if fail_closed else "observed_only",
-        representation="rpf_routine.receiver_and_runtime_inventory.v1",
+        representation="rpf_routine.load_invoke_result_boundary.v2",
         data=JSONObject(
             (
                 ("type", "RPFROUTINE"),
@@ -492,15 +492,44 @@ def export_rpf_routine_semantics(parsed: RpfRoutinePayload) -> RuleSemantics:
                                 ),
                             ),
                             ("native_callback_abi", "unknown"),
+                            ("payload_execution_performed_during_export", False),
+                            (
+                                "routine_body_interpretation",
+                                (
+                                    "Opaque: registration, section pointer setup, and "
+                                    "runtime dispatch do not decode the routine body "
+                                    "or establish its semantics."
+                                ),
+                            ),
                             (
                                 "result_arbitration",
                                 JSONArray(
                                     (
-                                        "rpf_pInvoke calls ShouldContinueScanning",
-                                        "IsDelayedDetection and IsBetterMatch arbitrate candidate replies",
-                                        "accepted results may update SCAN_REPLY",
-                                        "final verdict remains unknown",
+                                        "rpf_pInvoke@0x180120660 invokes selected RPF routines",
+                                        (
+                                            "ShouldContinueScanning@0x1801449E4 may "
+                                            "consume/continue candidate results"
+                                        ),
+                                        (
+                                            "IsDelayedDetection@0x1800A9F4C and "
+                                            "IsBetterMatch@0x1800F8308 arbitrate "
+                                            "candidate replies"
+                                        ),
+                                        (
+                                            "a selected candidate may be copied back "
+                                            "to SCAN_REPLY at rpf_pInvoke@0x180120660"
+                                        ),
+                                        "final engine verdict remains unknown",
                                     )
+                                ),
+                            ),
+                            (
+                                "runtime_execution_scope",
+                                (
+                                    "The 0x53 receiver and nvsig_pushend publish a module; "
+                                    "managed interpretation/JIT and conditional native "
+                                    "dispatch occur later through separate paths. This "
+                                    "static trace did not invoke or execute any payload."
                                 ),
                             ),
                             (
@@ -526,22 +555,51 @@ def export_rpf_routine_semantics(parsed: RpfRoutinePayload) -> RuleSemantics:
                             ("detection_role", "unknown"),
                             ("rule_semantics_established", False),
                             ("final_verdict_established", False),
-                            ("basis", "receiver and runtime loading evidence only"),
+                            (
+                                "basis",
+                                (
+                                    "receiver, publish, invocation, and candidate-arbitration "
+                                    "evidence; routine body and final verdict remain unresolved"
+                                ),
+                            ),
                         )
                     ),
                 ),
             )
         ),
         evidence=(
-            "mpengine 1.443.903.0 netvm_init_module registers type 0x53",
-            "mpengine 1.443.903.0 nvsig_push validates and stores RPFM payloads",
-            "mpengine 1.443.903.0 nvsig_pushend publishes the DynamicModule",
-            "mpengine 1.443.903.0 nvmcache_data links CLR metadata and routines",
-            "mpengine 1.443.903.0 init_native_rpf_routines loads native RPF DLLs",
-            "mpengine 1.443.903.0 netvm_parse_routine calls netvm_emulate",
             (
-                "mpengine 1.443.903.0 rpf_pInvoke and native_rpf_pInvoke "
-                "merge scan matches"
+                "mpengine 1.443.903.0 netvm_init_module @ 0x180BE9030 "
+                "registers type 0x53 via regcntl @ 0x180BE921A"
+            ),
+            (
+                "mpengine 1.443.903.0 nvsig_push @ 0x18032C230 "
+                "validates/stores RPFM payloads"
+            ),
+            (
+                "mpengine 1.443.903.0 nvsig_pushend @ 0x18032E850 "
+                "publishes/replaces DynamicModule"
+            ),
+            (
+                "mpengine 1.443.903.0 nvmcache_data @ 0x180259344 "
+                "constructs metadata/routine cache"
+            ),
+            (
+                "mpengine 1.443.903.0 init_native_rpf_routines @ 0x180BEB244 "
+                "conditionally loads native RPF modules"
+            ),
+            (
+                "mpengine 1.443.903.0 netvm_loadmodule2 @ 0x180121CF0 "
+                "selects netvm_parse_routine or JIT path"
+            ),
+            (
+                "mpengine 1.443.903.0 netvm_parse_routine @ 0x18017ACB0 "
+                "calls netvm_emulate @ 0x18017B750"
+            ),
+            (
+                "mpengine 1.443.903.0 rpf_pInvoke @ 0x180120660 calls "
+                "ShouldContinueScanning/IsDelayedDetection/IsBetterMatch and "
+                "may merge candidate into SCAN_REPLY"
             ),
         ),
         profile="mpengine-1.443.903.0",
