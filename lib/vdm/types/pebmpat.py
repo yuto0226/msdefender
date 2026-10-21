@@ -582,11 +582,21 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             ("bm_pattern", pattern_data),
         )
     )
+    if parsed.receiver_result.startswith("no_op."):
+        status = "ignored"
+    elif parsed.pattern is None:
+        status = "unsupported"
+    else:
+        matcher_status = dict(candidate_matcher.items)["status"]
+        status = (
+            "confirmed_subset"
+            if matcher_status == "confirmed_subset"
+            else "unsupported"
+        )
+
     return RuleSemantics(
-        status=(
-            "ignored" if parsed.receiver_result.startswith("no_op.") else "unsupported"
-        ),
-        representation="pebmpat.pattern.ir.v7",
+        status=status,
+        representation="pebmpat.pattern.ir.v8",
         data=data,
         evidence=(
             (
