@@ -6,7 +6,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 ITEM_PREVIEW_LIMIT = 16
@@ -116,8 +119,15 @@ def export_vdll_meta(
         SemanticIssue(
             code="vdll_metadata_record_pairing_unknown",
             message=(
-                "Host-selected global table lookup is confirmed, but this metadata "
-                "record is not paired one-to-one with a VDLL code record."
+                (
+                    "Host-selected global table lookup is confirmed, but this "
+                    "metadata record is not paired one-to-one with a VDLL code record."
+                )
+                if table_index is not None
+                else (
+                    "This registered metadata table has no analyzed host-selected "
+                    "linker route and is not paired one-to-one with a VDLL code record."
+                )
             ),
         ),
         SemanticIssue(
@@ -161,7 +171,21 @@ def export_vdll_meta(
                     (
                         ("table_scope", "type-specific VDLL metadata table"),
                         ("bucket_key", "hash_key modulo bucket_count"),
-                        ("internal_entry", "receiver-converted; not a wire struct"),
+                        (
+                            "insertion",
+                            "prepend under hash_key modulo bucket_count",
+                        ),
+                        (
+                            "internal_entry",
+                            (
+                                "receiver-created storage; exact reusable ABI is not "
+                                "exported"
+                            ),
+                        ),
+                        (
+                            "duplicate_key_lookup_order",
+                            None,
+                        ),
                     )
                 ),
             ),
@@ -169,7 +193,7 @@ def export_vdll_meta(
                 "metadata_index_ir",
                 JSONObject(
                     (
-                        ("version", 3),
+                        ("version", 4),
                         (
                             "host_routing",
                             JSONObject(
@@ -185,9 +209,8 @@ def export_vdll_meta(
                             JSONObject(
                                 (
                                     ("wire_field", "hash_key"),
-                                    ("node_offset", 8),
-                                    ("kind", "api_id"),
-                                    ("bucket_formula", "api_id % bucket_count"),
+                                    ("kind", "lookup_key"),
+                                    ("bucket_formula", "hash_key % bucket_count"),
                                 )
                             ),
                         ),
@@ -197,27 +220,39 @@ def export_vdll_meta(
                                 (
                                     ("bucket_head_width_bits", 16),
                                     ("empty_sentinel", 0xFFFF),
-                                    ("slot_size", 16),
-                                    ("next_index_offset", 8),
                                     (
-                                        "duplicate_match",
-                                        "last_matching_node_in_traversal",
+                                        "insertion",
+                                        (
+                                            "new entry retains the previous bucket "
+                                            "head and becomes the new head"
+                                        ),
                                     ),
+                                    ("duplicate_key_lookup_order", None),
                                 )
                             ),
                         ),
                         (
-                            "node_layout",
+                            "receiver_projection",
                             JSONObject(
                                 (
-                                    ("size", 24),
-                                    ("field0_offset", 0),
-                                    ("optional_value_offset", 4),
-                                    ("api_id_offset", 8),
-                                    ("control_offset", 12),
-                                    ("count_flags_offset", 13),
-                                    ("field10_offset", 14),
-                                    ("items_pointer_offset", 16),
+                                    (
+                                        "copied_fields",
+                                        JSONArray(
+                                            (
+                                                "field0",
+                                                "optional_value_or_zero",
+                                                "hash_key",
+                                                "control",
+                                                "count_flags",
+                                                "field10",
+                                                "items",
+                                            )
+                                        ),
+                                    ),
+                                    (
+                                        "storage_layout",
+                                        "engine-internal and not a portable wire ABI",
+                                    ),
                                 )
                             ),
                         ),
@@ -225,7 +260,6 @@ def export_vdll_meta(
                             "lookup_result",
                             JSONObject(
                                 (
-                                    ("node_offset", 0),
                                     ("width_bits", 64),
                                     ("packed_value", packed_lookup_value),
                                     ("low32_source", "field0"),
@@ -252,6 +286,10 @@ def export_vdll_meta(
                                     ),
                                 )
                             ),
+                        ),
+                        (
+                            "receiver_ignored_trailing_length",
+                            len(parsed.trailing),
                         ),
                         (
                             "final_verdict",
@@ -316,7 +354,7 @@ def export_vdll_meta(
                         ),
                         (
                             "type_mapped_by_get_meta_type_from_vtype",
-                            type_byte != 0xE3,
+                            table_index is not None,
                         ),
                         (
                             "entry_pairing",
@@ -353,44 +391,166 @@ def export_vdll_meta(
             ("detection_expression", None),
         )
     )
-    if parsed.trailing:
-        return RuleSemantics(
-            status="unsupported",
-            representation="vdll_metadata_index_ir.v3",
-            data=data,
-            evidence=(
-                (
-                    "vdll_metadata_receiver reads the fixed header, count-derived "
-                    "u16 items, and optional dword."
-                ),
-                (
-                    "Remaining bytes are ignored by the receiver and have unknown "
-                    "semantics."
+    claims = (
+        SemanticClaim(
+            id="vdll_meta_wire_framing",
+            scope="wire_layout",
+            statement=(
+                "The receiver consumes the 12-byte header, count_flags-derived u16 "
+                "items, and an optional u32 when at least four bytes remain; bytes "
+                "after that optional value are ignored."
+            ),
+            coverage="complete",
+            evidence_refs=("vdll_meta_receiver",),
+        ),
+        SemanticClaim(
+            id="vdll_meta_dispatch",
+            scope="loader_dispatch",
+            statement=(
+                f"Type 0x{type_byte:02X} is registered to the shared VDLL metadata "
+                "receiver with its own metadata table context."
+            ),
+            coverage="complete",
+            evidence_refs=("vdll_meta_registration",),
+        ),
+        SemanticClaim(
+            id="vdll_meta_storage",
+            scope="receiver_transform",
+            statement=(
+                "The receiver copies the consumed fields into an internal entry and "
+                "prepends it to the bucket selected by hash_key modulo bucket_count."
+            ),
+            coverage="subset",
+            evidence_refs=("vdll_meta_receiver",),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "The internal storage ABI and duplicate-key lookup selection are "
+                    "not exported as portable semantics.",
                 ),
             ),
-            profile="mpengine-1.443.903.0",
-            issues=boundary_issues
-            + (
-                SemanticIssue(
-                    code="unknown_trailing_bytes",
-                    message=(
-                        "Semantic export is incomplete because payload tail "
-                        "bytes are unknown."
-                    ),
-                    details=(("length", len(parsed.trailing)),),
+        ),
+        (
+            SemanticClaim(
+                id="vdll_meta_link_consumer",
+                scope="runtime_consumer",
+                statement=(
+                    f"VDLL finalization for host selector {host_selector} queries "
+                    f"metadata table {table_index} by import-symbol hash and uses a "
+                    "hit's packed qword as the import-address source before the "
+                    "current code object's PE-export fallback."
                 ),
+                coverage="subset",
+                evidence_refs=("vdll_meta_linker",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "This does not establish that this record is queried, that "
+                        "the packed value's VA/RVA representation is known, or that "
+                        "a resolved callback executes.",
+                    ),
+                ),
+            )
+            if table_index is not None
+            else SemanticClaim(
+                id="vdll_meta_link_consumer",
+                scope="runtime_consumer",
+                statement=(
+                    f"No analyzed VDLL finalizer host selector routes to type "
+                    f"0x{type_byte:02X}'s metadata table."
+                ),
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "A separate consumer for this registered table has not been "
+                        "located.",
+                    ),
+                ),
+            )
+        ),
+        SemanticClaim(
+            id="vdll_meta_detection_predicate",
+            scope="detection_predicate",
+            statement="No record-specific detection predicate is established.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Metadata insertion and linker symbol resolution do not establish "
+                    "a match condition.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vdll_meta_report_mapping",
+            scope="report_mapping",
+            statement="No candidate-to-report mapping is established.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "No policy or report path was closed for this metadata record.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vdll_meta_final_verdict",
+            scope="final_verdict",
+            statement="The final detection verdict is not established.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "No record-specific path to the host-visible verdict was observed.",
+                ),
+            ),
+        ),
+    )
+    claim_evidence = (
+        SemanticEvidence(
+            id="vdll_meta_registration",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="load_vdll_metadata @ 0x18048A27C",
+            supports=("vdll_meta_dispatch",),
+        ),
+        SemanticEvidence(
+            id="vdll_meta_receiver",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="vdll_metadata_receiver @ 0x1804C7B80",
+            supports=("vdll_meta_wire_framing", "vdll_meta_storage"),
+        ),
+    ) + (
+        (
+            SemanticEvidence(
+                id="vdll_meta_linker",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "vdll_receiver_end @ 0x1800FF328; "
+                    "get_meta_type_from_vtype @ 0x180D26DC8; "
+                    "get_address_from_meta_id @ 0x1804DEB74"
+                ),
+                supports=("vdll_meta_link_consumer",),
             ),
         )
+        if table_index is not None
+        else ()
+    )
     return RuleSemantics(
         status="confirmed_subset" if table_index is not None else "observed_only",
-        representation="vdll_metadata_index_ir.v3",
+        representation="vdll_metadata_index_ir.v4",
         data=data,
         evidence=(
             (
                 "mpengine 1.443.903.0 vdll_metadata_receiver @ 0x1804C7B80 "
-                "stores hash_key as the node api_id at +8 and links the node into "
-                "bucket api_id modulo bucket_count; it copies the bounded fields "
-                "into a 24-byte zero-initialized node."
+                "consumes the bounded wire fields and inserts a receiver-created "
+                "entry under hash_key modulo bucket_count."
             ),
             (
                 "mpengine 1.443.903.0 load_vdll_metadata @ 0x18048A27C "
@@ -398,8 +558,9 @@ def export_vdll_meta(
             ),
             (
                 "mpengine 1.443.903.0 get_meta_id @ 0x1804DEBAC searches the "
-                "bucket chain by node +8 api_id; get_address_from_meta_id @ "
-                "0x1804DEB74 returns node +0 as a packed 64-bit value."
+                "type-specific bucket chain by symbol hash; "
+                "get_address_from_meta_id @ 0x1804DEB74 returns the entry's "
+                "packed 64-bit lookup value."
             ),
             (
                 "mpengine 1.443.903.0 vdll_receiver_end @ 0x1800FF328 uses the "
@@ -411,20 +572,38 @@ def export_vdll_meta(
                 "registered types 0xB5/0xE1/0xE2."
             ),
             (
-                "The packed value meaning, unique metadata-to-code pairing, and "
-                "final scan verdict remain unknown."
+                "The packed value representation, unique metadata-to-code pairing, "
+                "callback execution, and final scan verdict remain unknown."
             ),
             (
                 "The metadata receiver's observed role is table insertion; this "
-                "confirmed subset covers the table index lookup and receiver node "
-                "layout only, not code-record pairing or a detection verdict."
+                "confirmed subset covers receiver field projection and table lookup, "
+                "not a portable internal layout, code-record pairing, or a detection "
+                "verdict."
             ),
             (
-                "Bounded negative: metadata receiver @ 0x1804C7B80 stores type-specific nodes; get_meta_type_from_vtype @ 0x180D26DC8 selects indexes 0..3; vdll_receiver_end @ 0x1800FF328 hashes import symbols for address lookup and falls back to the current PE export table. No code-record slot/index is observed in the wire metadata or resolution path."
+                "Bounded negative: the wire metadata and analyzed resolution path "
+                "contain no code-record slot/index or record identity join key."
             ),
         ),
         profile="mpengine-1.443.903.0",
-        issues=boundary_issues,
+        issues=boundary_issues
+        + (
+            (
+                SemanticIssue(
+                    code="receiver_ignored_trailing_bytes",
+                    message=(
+                        "Bytes after the optional value are preserved by this parser "
+                        "but ignored by the analyzed receiver."
+                    ),
+                    details=(("length", len(parsed.trailing)),),
+                ),
+            )
+            if parsed.trailing
+            else ()
+        ),
+        claims=claims,
+        claim_evidence=claim_evidence,
     )
 
 
