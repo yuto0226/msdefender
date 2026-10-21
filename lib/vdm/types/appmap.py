@@ -410,7 +410,7 @@ def export_appmap_semantics(parsed: AppMapPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
-        representation="pua_appmap.candidate_ir.v3",
+        representation="pua_appmap.candidate_ir.v4",
         data=_json_object(
             raw_hex=parsed.raw.hex(),
             sections=JSONArray(tuple(sections)),
@@ -440,16 +440,48 @@ def export_appmap_semantics(parsed: AppMapPayload) -> RuleSemantics:
                 output="matching_candidate_ordinals",
                 verdict="not_decided_by_candidate_ir",
             ),
+            opcode_coverage=_json_object(
+                engine_dispatch_function="isAppmapRecMatch",
+                engine_dispatch_address="0x180B33CC4",
+                engine_dispatch_size="0x7A2",
+                receiver_function="PUA_appmap_receiver",
+                receiver_address="0x1800E48F0",
+                receiver_size="0x5E5",
+                corpus_scope="mpas.sig + mpav.sig",
+                corpus_record_count=8,
+                corpus_section_counts=_json_object(
+                    **{
+                        f"0x{opcode:02X}": count
+                        for opcode, count in (
+                            (0x01, 8),
+                            (0x02, 1),
+                            (0x04, 1),
+                            (0x06, 1),
+                            (0x07, 1),
+                            (0x08, 3),
+                            (0x0A, 5),
+                            (0x0B, 5),
+                            (0x0C, 8),
+                            (0x0D, 1),
+                        )
+                    }
+                ),
+                corpus_unobserved_dispatch_opcodes=JSONArray(
+                    (0x03, 0x05, 0x09, 0x0E, 0x0F, 0x10)
+                ),
+                no_match_predicate_opcodes=JSONArray((0x09, 0x0A, 0x0B)),
+                candidate_predicates_not_final_verdict=True,
+            ),
         ),
         evidence=(
-            "mpengine 1.443.903.0 PUA_appmap_receiver",
-            "mpengine 1.443.903.0 LoadAppmapSection",
-            "mpengine 1.443.903.0 isAppmapRecMatch",
-            "mpengine 1.443.903.0 GetAppmapInfo",
-            "mpengine 1.443.903.0 ReorgThreat2Appmap",
-            "mpengine 1.443.903.0 AppmapPUAFile",
-            "mpengine 1.443.903.0 ProcessPUADetection",
-            "mpengine 1.443.903.0 ResfileReportPUA",
+            "mpengine 1.443.903.0 PUA_appmap_receiver (0x1800E48F0)",
+            "mpengine 1.443.903.0 LoadAppmapSection (0x1800E4ED8)",
+            "mpengine 1.443.903.0 isAppmapRecMatch (0x180B33CC4)",
+            "mpengine 1.443.903.0 GetAppmapInfo (0x180B331AC)",
+            "mpengine 1.443.903.0 ReorgThreat2Appmap (0x1800E56B0)",
+            "mpengine 1.443.903.0 AppmapPUAFile (0x18054D36C)",
+            "mpengine 1.443.903.0 ProcessPUADetection (0x18054CB00)",
+            "mpengine 1.443.903.0 ResfileReportPUA (0x180A90950)",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
