@@ -198,8 +198,9 @@ def export_removal_policy_by_name_semantics(
             "Mask reduction is confirmed, but individual product bits are unnamed.",
         ),
         SemanticIssue(
-            "regex_compile_failure_policy_unknown",
-            "The engine's fallback for an invalid Boost regex is not confirmed.",
+            "regex_compile_failure_outer_behavior_unknown",
+            "No local compile-error fallback is visible; exception handling "
+            "beyond this function is unknown.",
         ),
     ]
     if parsed.trailing_raw:
