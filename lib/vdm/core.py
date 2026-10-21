@@ -128,6 +128,15 @@ class RuleSemantics:
             raise TypeError("semantic evidence must be an immutable tuple of strings")
         if self.profile is not None and not isinstance(self.profile, str):
             raise TypeError("semantic profile must be a string or None")
+        if self.status == "confirmed_subset":
+            if not self.evidence or any(not item for item in self.evidence):
+                raise ValueError(
+                    "confirmed_subset semantics require non-empty engine evidence"
+                )
+            if not self.profile:
+                raise ValueError(
+                    "confirmed_subset semantics require a non-empty engine profile"
+                )
         if not isinstance(self.issues, tuple) or any(
             not isinstance(issue, SemanticIssue) for issue in self.issues
         ):
