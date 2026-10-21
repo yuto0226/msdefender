@@ -250,7 +250,9 @@ def export_cleanstore_rule_semantics(parsed: CleanStoreRule) -> RuleSemantics:
     issues = (
         SemanticIssue(
             "engine_semantics_unconfirmed",
-            "The 0xC1 receiver, storage, runtime consumer, and final policy are not identified.",
+            "The dynamic 0xC1 registration path, receiver, storage, runtime "
+            "consumer, and final policy are not identified; the bounded direct-"
+            "caller search does not exclude indirect or data-driven registration.",
         ),
         SemanticIssue(
             "corpus_profile_only",
@@ -259,7 +261,7 @@ def export_cleanstore_rule_semantics(parsed: CleanStoreRule) -> RuleSemantics:
     )
     return RuleSemantics(
         status="observed_only",
-        representation="cleanstore_rule.corpus_wire_profile.v1",
+        representation="cleanstore_rule.corpus_wire_profile.v2",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
@@ -277,6 +279,24 @@ def export_cleanstore_rule_semantics(parsed: CleanStoreRule) -> RuleSemantics:
                 ("storage", unknown),
                 ("runtime_consumer", unknown),
                 ("final_policy", unknown),
+                (
+                    "registration_search_boundary",
+                    JSONObject(
+                        (
+                            (
+                                "checked",
+                                "0xC1 immediate functions and direct regcntl callers",
+                            ),
+                            ("direct_intersection_found", False),
+                            (
+                                "register_for_database_records_callers_complete",
+                                False,
+                            ),
+                            ("runtime_gktab_slot_observed", False),
+                            ("indirect_or_data_driven_registration_excluded", False),
+                        )
+                    ),
+                ),
                 (
                     "corpus",
                     JSONObject(
@@ -305,6 +325,11 @@ def export_cleanstore_rule_semantics(parsed: CleanStoreRule) -> RuleSemantics:
                 "mpengine 1.443.903.0 DispatchRecord at 0x1800FAF18 uses the "
                 "dynamic gktab dispatcher; the type 0xC1 receiver slot remains "
                 "unverified."
+            ),
+            (
+                "The bounded negative audit intersected 0xC1 immediate functions "
+                "with direct regcntl callers only; RegisterForDatabaseRecords, "
+                "indirect, data-driven, and runtime slot paths remain open."
             ),
         ),
         profile="mpengine-1.443.903.0",
