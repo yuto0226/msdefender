@@ -487,7 +487,19 @@ def export_rpf_routine_semantics(parsed: RpfRoutinePayload) -> RuleSemantics:
                                 JSONArray(
                                     (
                                         "native_rpf_pInvoke@0x1805CA28C",
-                                        "NativeFunctionEntry map indirect callback",
+                                        "init_native_rpf_routines loads rpf_modules\\*.dll",
+                                    )
+                                ),
+                            ),
+                            ("native_callback_abi", "unknown"),
+                            (
+                                "result_arbitration",
+                                JSONArray(
+                                    (
+                                        "rpf_pInvoke calls ShouldContinueScanning",
+                                        "IsDelayedDetection and IsBetterMatch arbitrate candidate replies",
+                                        "accepted results may update SCAN_REPLY",
+                                        "final verdict remains unknown",
                                     )
                                 ),
                             ),
