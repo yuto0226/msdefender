@@ -635,9 +635,35 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
     issues = [
         SemanticIssue(
             "runtime_effect_unresolved",
-            "The confirmed VM route does not establish that this individual "
-            "record executes, what side effects it has, or whether it produces "
-            "a final detection.",
+            "Static analysis confirms a route into Lua execution and a "
+            "validator status writeback gate, but does not establish that this "
+            "record executes, its host-side effects, or the final verdict.",
+            (
+                (
+                    "confirmed_contract",
+                    JSONArray(
+                        (
+                            "AddScript may store a processed script in a holder",
+                            "LoadFunction transfers LuaQ code into a Lua Proto",
+                            "the runner invokes the loaded closure with lua_pcall",
+                            (
+                                "the standalone validator writes a status candidate "
+                                "to match+0x30 only after execution and status checks"
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "unresolved_dimensions",
+                    JSONArray(
+                        (
+                            "whether this individual record is loaded or executed",
+                            "host API and userdata side effects, including PEB access",
+                            "how a reply status becomes a final detection or action",
+                        )
+                    ),
+                ),
+            ),
         )
     ]
     if unknown_keys:
@@ -821,6 +847,29 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                             ("final_detection", "unknown"),
                             ("script_effect", "unknown"),
                             ("peb_injection", "unknown"),
+                            (
+                                "reply_boundary",
+                                JSONObject(
+                                    (
+                                        (
+                                            "field",
+                                            "match+0x30 status candidate",
+                                        ),
+                                        (
+                                            "gate",
+                                            "execution success and IsValidScanStatus",
+                                        ),
+                                        (
+                                            "invalid_or_failed",
+                                            "writes 0",
+                                        ),
+                                        (
+                                            "final_verdict",
+                                            "not established by this worker",
+                                        ),
+                                    )
+                                ),
+                            ),
                         )
                     ),
                 ),
