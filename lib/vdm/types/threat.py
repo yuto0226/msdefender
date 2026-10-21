@@ -8,7 +8,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 THREAT_CATEGORIES = MappingProxyType(
@@ -424,6 +427,61 @@ def export_threat_begin_semantics(threat: ThreatBegin) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="threat_begin_association",
+                scope="loader_dispatch",
+                statement=(
+                    "THREAT_BEGIN supplies the active threat or namespace association "
+                    "used while subsequent records are received."
+                ),
+                coverage="subset",
+                evidence_refs=("threat_begin_receiver",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Special sentinel handling and every loader mode are not closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="threat_begin_detection_predicate",
+                scope="detection_predicate",
+                statement="THREAT_BEGIN does not establish a detection predicate.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "The record is metadata and association state; no matcher "
+                        "predicate dataflow was followed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="threat_begin_final_verdict",
+                scope="final_verdict",
+                statement="THREAT_BEGIN does not establish a final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "No association-to-final-report dataflow is established.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="threat_begin_receiver",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "threat_info_receiver @ 0x1809EB590; DispatchRecords @ 0x1800F99A8"
+                ),
+                supports=("threat_begin_association",),
+            ),
+        ),
     )
 
 
@@ -542,6 +600,59 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                 )
                 if threat.trailing_raw
                 else ()
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                id="threat_end_dispatch_cache",
+                scope="loader_dispatch",
+                statement=(
+                    "A four-byte 0x5D payload can be staged by DispatchRecords and "
+                    "reframed through the cache path."
+                ),
+                coverage="subset",
+                evidence_refs=("threat_end_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "The DWORD meaning and any uninspected 0x5D paths are unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="threat_end_detection_predicate",
+                scope="detection_predicate",
+                statement="No 0x5D detection predicate is established.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Dispatch and cache behavior do not establish matching semantics.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="threat_end_final_verdict",
+                scope="final_verdict",
+                statement="No 0x5D final verdict role is established.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "No close, report, or final-verdict branch tied to the DWORD "
+                        "was observed.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="threat_end_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=("DispatchRecords @ 0x1800F99A8; DispatchRecord @ 0x1800FAF18"),
+                supports=("threat_end_dispatch_cache",),
             ),
         ),
     )
