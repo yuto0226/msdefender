@@ -201,12 +201,24 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
     """Export the confirmed wire/route/matcher subset without verdict claims."""
     evidence = (
         "mpengine 1.443.903.0 FopScanner::Init @ 0x1805F0120",
-        "mpengine 1.443.903.0 FopScanner::AddNewPatternCommon @ 0x18046F9AC, wire flag mask 0x01 -> candidate metadata +0x12 mask 0x01",
-        "mpengine 1.443.903.0 FopScanner::AddToResults @ 0x1802BC7BC, candidate metadata +0x12 mask 0x01 -> result row byte +6",
+        (
+            "mpengine 1.443.903.0 FopScanner::AddNewPatternCommon "
+            "@ 0x18046F9AC: wire flag mask 0x01 -> candidate metadata "
+            "+0x12 mask 0x01; extended objects/options -> metadata"
+        ),
+        (
+            "mpengine 1.443.903.0 FopScanner::AddToResults @ 0x1802BC7BC: "
+            "metadata mask 0x01 -> result row byte +6; extended metadata "
+            "gates byte-set filtering and BMMatchPEMapper"
+        ),
         "mpengine 1.443.903.0 BMGetPatternFlags @ 0x1800FEBF4",
         "mpengine 1.443.903.0 BMMatchPEMapper @ 0x1803D5E44",
         "mpengine 1.443.903.0 FopScanner::ScanContext::GetChar @ 0x180250E5C",
-        "mpengine 1.443.903.0 FopScanner::Scan @ 0x18040AF48, result row byte +6 gates candidate aggregation/selection",
+        (
+            "mpengine 1.443.903.0 FopScanner::Scan @ 0x18040AF48: "
+            "result row byte +6 gates candidate aggregation/selection and is "
+            "returned through the candidate out flag"
+        ),
         "mpengine 1.443.903.0 x86_fop_processor::GetCharAtAddr @ 0x180250F70",
         "mpengine 1.443.903.0 x64_fop_processor::GetCharAtAddr @ 0x180250500",
         "mpengine 1.443.903.0 vb_fop_processor::GetCharAtAddr @ 0x180555210",
@@ -214,7 +226,7 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
     if parsed.ignored_reason is not None:
         return RuleSemantics(
             status="ignored",
-            representation="fop.trie_matcher_subset.ir.v3",
+            representation="fop.trie_matcher_subset.ir.v6",
             data=JSONObject(
                 (
                     ("raw_hex", parsed.raw.hex()),
@@ -239,25 +251,58 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         ("prefix_hex", parsed.prefix.hex()),
         ("pattern_hex", parsed.pattern.hex()),
         ("flag_bit0_raw", bool(parsed.flags & 1)),
-        ("matcher", "processor_GetCharAtAddr_output_equals_trie_pattern_bytes"),
-        ("engine_processor_required", True),
         (
-            "flag_bit0_candidate_effects_confirmed_subset",
+            "flag_bit0_runtime_effects",
             JSONObject(
                 (
-                    ("result_metadata_byte_offset", 6),
                     (
-                        "hash_name_branch",
-                        "flag_set_skips_MpAggregateAttributeEx_for_!#_names",
+                        "wire_to_trie_metadata",
+                        JSONObject(
+                            (
+                                ("source_mask", 1),
+                                ("destination", "candidate_metadata+0x12 mask 0x01"),
+                                ("evidence_address", "0x18046FB56"),
+                            )
+                        ),
                     ),
                     (
-                        "ordinary_name_branch",
-                        "flag_set_candidate_is_selected_only_when_no_prior_best_recid",
+                        "trie_metadata_to_result_row",
+                        JSONObject(
+                            (
+                                ("source", "candidate_metadata+0x12 mask 0x01"),
+                                ("destination", "FopResultEntry+6"),
+                                ("evidence_address", "0x1802BCA81"),
+                            )
+                        ),
                     ),
-                    ("selected_candidate_output", "copied_to_FopScanner_Scan_out_flag"),
+                    (
+                        "scan_consumption",
+                        JSONObject(
+                            (
+                                ("function", "FopScanner::Scan"),
+                                ("address", "0x18040AF48"),
+                                (
+                                    "effects",
+                                    (
+                                        "flagged !# candidates skip "
+                                        "MpAggregateAttributeEx; flagged ordinary-name "
+                                        "candidates are selected only if no prior best "
+                                        "RecID exists"
+                                    ),
+                                ),
+                                (
+                                    "out_flag",
+                                    "selected candidate flag is returned through caller output",
+                                ),
+                            )
+                        ),
+                    ),
+                    ("outer_verdict", "unknown"),
                 )
             ),
         ),
+        ("matcher", "processor_GetCharAtAddr_output_equals_trie_pattern_bytes"),
+        ("engine_processor_required", True),
     ]
     issues = [
         SemanticIssue(
@@ -268,8 +313,9 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         ),
         SemanticIssue(
             "final_verdict_unknown",
-            "This subset describes receiver routing and core trie matching only; "
-            "result selection and final detection/report policy are not modeled.",
+            "This subset describes receiver routing, trie matching, and part of "
+            "candidate selection; caller policy and final detection/report "
+            "semantics remain unknown.",
         ),
         SemanticIssue(
             "flag_bit0_semantics_incomplete",
@@ -278,8 +324,6 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
             "complete reporting semantics remain unresolved.",
         ),
     ]
-    status = "confirmed_subset"
-    representation = "fop.trie_matcher_subset.ir.v3"
     if parsed.pattern_options is not None:
         assert parsed.section1 is not None and parsed.section2 is not None
         data_items[2] = (
@@ -292,48 +336,115 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                 ("section2_raw_hex", parsed.section2.hex()),
                 ("pattern_options_raw", parsed.pattern_options),
                 (
-                    "runtime_effects_confirmed_subset",
+                    "extended_runtime_effects",
                     JSONObject(
                         (
                             (
                                 "section1",
-                                "section1 bytes are validated by BMGetPatternFlags and stored as a kernel object",
+                                JSONObject(
+                                    (
+                                        ("validated_by", "BMGetPatternFlags"),
+                                        ("validation_address", "0x1800FEBF4"),
+                                        (
+                                            "stored_handle_offset",
+                                            "candidate_metadata+0x14",
+                                        ),
+                                        ("storage_address", "0x18046FBEB"),
+                                    )
+                                ),
                             ),
                             (
                                 "section2",
-                                "nonempty section2 is stored as a kernel object; each section2 byte clears its handle-associated byte-table entry",
+                                JSONObject(
+                                    (
+                                        (
+                                            "stored_handle_offset",
+                                            "candidate_metadata+0x20",
+                                        ),
+                                        ("length_offset", "candidate_metadata+0x1C"),
+                                        ("storage_address", "0x1804700AE"),
+                                        (
+                                            "candidate_filter",
+                                            (
+                                                "each matched-prefix scan byte must "
+                                                "occur in the section2 byte array"
+                                            ),
+                                        ),
+                                        ("filter_address", "0x1802BCCEC"),
+                                        (
+                                            "trie_side_effect",
+                                            (
+                                                "each section2 byte clears its "
+                                                "handle-associated scanner byte-table "
+                                                "entry at scanner_state+0x21+byte"
+                                            ),
+                                        ),
+                                    )
+                                ),
                             ),
                             (
                                 "pattern_options",
-                                "the raw u16 value is copied to the low word of trie metadata",
+                                JSONObject(
+                                    (
+                                        (
+                                            "storage",
+                                            "raw u16 copied to candidate_metadata+0x10",
+                                        ),
+                                        ("storage_address", "0x18046FC36"),
+                                        (
+                                            "candidate_offset_use",
+                                            "sign_extend_i16_then_add_to_scan_start_for_BMMatchPEMapper",
+                                        ),
+                                        ("use_address", "0x1802BCA52"),
+                                    )
+                                ),
                             ),
                             (
                                 "candidate_gate",
-                                (
-                                    "AddNewPatternCommon sets metadata bit 2 when prefix_len > 8; AddToResults then calls BMMatchPEMapper and skips the candidate when it returns false. Static evidence does not map this gate input to a specific wire section"
+                                JSONObject(
+                                    (
+                                        ("prefix_length_condition", "prefix_len > 8"),
+                                        ("condition_address", "0x18046FC81"),
+                                        ("mapper", "BMMatchPEMapper"),
+                                        ("mapper_address", "0x1803D5E44"),
+                                        ("false_result", "candidate_skipped"),
+                                        ("false_branch_address", "0x1802BCA79"),
+                                        ("pattern_input", "section1 kernel object"),
+                                        ("pattern_length_input", "section1_len"),
+                                        (
+                                            "scan_offset",
+                                            "start_offset + sign_extend_i16(pattern_options)",
+                                        ),
+                                        (
+                                            "mode_argument",
+                                            (
+                                                "metadata gate flag derived when "
+                                                "the relevant BMGetPatternFlags "
+                                                "result flag is clear"
+                                            ),
+                                        ),
+                                    )
                                 ),
                             ),
+                            ("final_verdict", "unknown"),
                         )
                     ),
                 ),
             )
         )
-        status = "confirmed_subset"
-        representation = "fop.trie_matcher_subset.ir.v5"
         issues.append(
             SemanticIssue(
-                "extended_fields_uninterpreted",
-                "The recorded byte handling and gate condition are confirmed "
-                "runtime effects, but section domains, the meaning of "
-                "pattern_options, remaining product meaning and consumers of "
-                "flag bit 0, processor-equivalent matching, and subtype/report "
-                "policy remain unresolved. This is a bounded subset, not a "
-                "matching-equivalent rule.",
+                "extended_field_business_domains_unknown",
+                "Runtime storage and candidate-gate dataflow are confirmed, but "
+                "the product domains represented by section1/section2, the "
+                "policy meaning of pattern_options, flag bit 0, processor-"
+                "equivalent matching, and subtype/report policy remain unresolved. "
+                "This is a bounded subset, not a matching-equivalent rule.",
             )
         )
     return RuleSemantics(
-        status=status,
-        representation=representation,
+        status="confirmed_subset",
+        representation="fop.trie_matcher_subset.ir.v6",
         data=JSONObject(tuple(data_items)),
         evidence=evidence,
         profile="mpengine-1.443.903.0",
