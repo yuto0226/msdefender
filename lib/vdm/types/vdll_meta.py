@@ -123,8 +123,8 @@ def export_vdll_meta(
         SemanticIssue(
             code="vdll_metadata_lookup_value_meaning_unknown",
             message=(
-                "The receiver and lookup expose a packed 64-bit value, but its use "
-                "as a VA, RVA, callback, or other value is not established."
+                "The linker consumes the packed 64-bit value as an import-address "
+                "source, but its VA/RVA/flags representation is not established."
             ),
         ),
         SemanticIssue(
@@ -169,7 +169,7 @@ def export_vdll_meta(
                 "metadata_index_ir",
                 JSONObject(
                     (
-                        ("version", 2),
+                        ("version", 3),
                         (
                             "host_routing",
                             JSONObject(
@@ -230,8 +230,12 @@ def export_vdll_meta(
                                     ("packed_value", packed_lookup_value),
                                     ("low32_source", "field0"),
                                     ("high32_source", "optional_value_or_zero"),
-                                    ("meaning", None),
-                                    ("meaning_status", "unknown"),
+                                    (
+                                        "consumer_role",
+                                        "linker_import_resolution_address_source",
+                                    ),
+                                    ("representation_meaning", None),
+                                    ("representation_status", "unknown"),
                                 )
                             ),
                         ),
@@ -352,7 +356,7 @@ def export_vdll_meta(
     if parsed.trailing:
         return RuleSemantics(
             status="unsupported",
-            representation="vdll_metadata_index_ir.v2",
+            representation="vdll_metadata_index_ir.v3",
             data=data,
             evidence=(
                 (
@@ -379,7 +383,7 @@ def export_vdll_meta(
         )
     return RuleSemantics(
         status="confirmed_subset" if table_index is not None else "observed_only",
-        representation="vdll_metadata_index_ir.v2",
+        representation="vdll_metadata_index_ir.v3",
         data=data,
         evidence=(
             (
@@ -396,6 +400,10 @@ def export_vdll_meta(
                 "mpengine 1.443.903.0 get_meta_id @ 0x1804DEBAC searches the "
                 "bucket chain by node +8 api_id; get_address_from_meta_id @ "
                 "0x1804DEB74 returns node +0 as a packed 64-bit value."
+            ),
+            (
+                "mpengine 1.443.903.0 vdll_receiver_end @ 0x1800FF328 uses the "
+                "metadata lookup result as an import resolution address source"
             ),
             (
                 "mpengine 1.443.903.0 get_meta_type_from_vtype @ 0x180D26DC8 "
