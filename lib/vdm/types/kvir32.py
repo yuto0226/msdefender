@@ -9,7 +9,10 @@ from ..core import (
     FormatResult,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 KVIR32_TYPE: Final = 0x20
@@ -174,6 +177,94 @@ def export_kvir32_semantics(parsed: Kvir32Payload) -> RuleSemantics:
                         "receiver_bounds,storage,runtime_consumer,policy,report",
                     ),
                 ),
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                id="kvir32_corpus_profile",
+                scope="corpus_observation",
+                statement=(
+                    "The current local corpus contains 6,595 type 0x20 records "
+                    "matching the parser's observed framing profile."
+                ),
+                coverage="subset",
+                evidence_refs=("kvir32_corpus",),
+                unknowns=(
+                    SemanticUnknown(
+                        "corpus_observation",
+                        "This profile is not an engine ABI or cross-version guarantee.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="kvir32_dispatch_boundary",
+                scope="loader_dispatch",
+                statement=(
+                    "DispatchRecord uses dynamic gktab slots, but the bounded audit "
+                    "did not resolve the type 0x20 slot."
+                ),
+                coverage="subset",
+                evidence_refs=("kvir32_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Indirect, data-driven, or runtime registration remains possible.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="kvir32_runtime_consumer",
+                scope="runtime_consumer",
+                statement="The type-specific runtime consumer is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Receiver, storage, and consumer dataflow are not established.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="kvir32_detection_predicate",
+                scope="detection_predicate",
+                statement="No KVIR32 detection predicate is established.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "The bounded evidence stops at generic dispatch.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="kvir32_final_verdict",
+                scope="final_verdict",
+                statement="No KVIR32 final-verdict path is established.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Policy, report, and verdict consumers are unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="kvir32_corpus",
+                axis="corpus",
+                kind="corpus",
+                source_ref="mpas.sig + mpav.sig",
+                locator="type 0x20 corpus count: 6,595",
+                supports=("kvir32_corpus_profile",),
+            ),
+            SemanticEvidence(
+                id="kvir32_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="DispatchRecord @ 0x1800FAF18; bounded type-slot audit",
+                supports=("kvir32_dispatch_boundary",),
             ),
         ),
     )
