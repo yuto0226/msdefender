@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 MACRO_SOURCE_TYPE: Final = 0x43
@@ -149,8 +152,10 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
         ),
         SemanticIssue(
             "name_encoding_unknown",
-            "The receiver preserves raw name bytes. Current-corpus names are "
-            "ASCII-compatible, which does not establish a text encoding.",
+            "The wire parser preserves raw name bytes, while the receiver uses "
+            "them for signature properties/RecID construction and does not copy "
+            "them into g_SourceSigs. Current-corpus names being ASCII-compatible "
+            "does not establish a text encoding.",
         ),
         SemanticIssue(
             "subtype_enum_names_unknown",
@@ -270,6 +275,20 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
                         )
                     ),
                 ),
+                (
+                    "name_handling",
+                    JSONObject(
+                        (
+                            ("wire_bytes_preserved_by_exporter", True),
+                            (
+                                "receiver_use",
+                                "signature_properties_and_recid_input",
+                            ),
+                            ("copied_into_source_signature_entry", False),
+                            ("encoding", "unknown"),
+                        )
+                    ),
+                ),
                 ("source_pairs", pairs),
                 (
                     "candidate_matching",
@@ -362,6 +381,160 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="macro_source.wire",
+                scope="wire_layout",
+                statement=(
+                    "MACRO_SOURCE contains a length-prefixed name, a packed "
+                    "count/metadata DWORD, a required primary DWORD vector, and "
+                    "an optional secondary vector consumed only when complete."
+                ),
+                coverage="complete",
+                evidence_refs=("macro_source.receiver.static",),
+            ),
+            SemanticClaim(
+                id="macro_source.dispatch",
+                scope="loader_dispatch",
+                statement=(
+                    "The analyzed macro module registers type 0x43 to "
+                    "macro_source_push."
+                ),
+                coverage="subset",
+                evidence_refs=("macro_source.dispatch.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Module/category availability and registration failure paths "
+                        "remain outside this type-to-callback mapping.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="macro_source.receiver",
+                scope="receiver_transform",
+                statement=(
+                    "The receiver uses the name bytes for property/RecID creation "
+                    "without copying them into g_SourceSigs, stores metadata_raw and "
+                    "sorted safecrc pairs, and indexes each pair to the source entry."
+                ),
+                coverage="subset",
+                evidence_refs=("macro_source.receiver.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "Name encoding, metadata enum names, pair field names, and "
+                        "the role of unconsumed partial-secondary bytes are unknown.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="macro_source.consumer",
+                scope="runtime_consumer",
+                statement=(
+                    "RME::MatchSigs uses the pair map as a candidate index, then "
+                    "RME::CompareSig requires every stored source pair to be covered "
+                    "and applies the observed subtype-to-metadata compatibility map."
+                ),
+                coverage="subset",
+                evidence_refs=("macro_source.consumer.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Candidate-pair production and the complete subtype enum are "
+                        "outside the analyzed lookup functions.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="macro_source.predicate",
+                scope="detection_predicate",
+                statement=(
+                    "Within the analyzed source-signature path, a candidate requires "
+                    "a non-empty candidate set, coverage of all stored pairs under "
+                    "safecrc equality, subtype compatibility, and reportvirus success."
+                ),
+                coverage="subset",
+                evidence_refs=("macro_source.consumer.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "The caller's scan context, candidate construction, and "
+                        "higher-level macro predicate are not closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="macro_source.report",
+                scope="report_mapping",
+                statement=(
+                    "A passing CompareSig candidate is submitted by stored RecID to "
+                    "RME::reportvirus, whose success is required by CompareSig."
+                ),
+                coverage="subset",
+                evidence_refs=("macro_source.report.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "RME-local best-match arbitration and the outer scan reply "
+                        "mapping are not fully modeled.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="macro_source.final",
+                scope="final_verdict",
+                statement=(
+                    "A successful MACRO_SOURCE CompareSig/reportvirus path does not "
+                    "establish the final host-visible verdict."
+                ),
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final scan arbitration lies outside the analyzed path.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="macro_source.dispatch.static",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "macro_init_module @ 0x180BE28B0; macro_source_push @ 0x180321B30"
+                ),
+                supports=("macro_source.dispatch",),
+            ),
+            SemanticEvidence(
+                id="macro_source.receiver.static",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="macro_source_push @ 0x180321B30",
+                supports=("macro_source.wire", "macro_source.receiver"),
+            ),
+            SemanticEvidence(
+                id="macro_source.consumer.static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=("RME::MatchSigs @ 0x18032348C; RME::CompareSig @ 0x180373010"),
+                supports=("macro_source.consumer", "macro_source.predicate"),
+            ),
+            SemanticEvidence(
+                id="macro_source.report.static",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "RME::CompareSig @ 0x180373010; RME::reportvirus @ 0x1805EBF24"
+                ),
+                supports=("macro_source.report",),
+            ),
+        ),
     )
 
 
