@@ -149,7 +149,8 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
         ),
         SemanticIssue(
             "name_encoding_unknown",
-            "The receiver preserves name bytes, but does not establish a text encoding.",
+            "The receiver preserves raw name bytes. Current-corpus names are "
+            "ASCII-compatible, which does not establish a text encoding.",
         ),
         SemanticIssue(
             "subtype_enum_names_unknown",
@@ -157,7 +158,8 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
         ),
         SemanticIssue(
             "final_verdict_unknown",
-            "The source signature report path does not establish the final host-visible verdict.",
+            "RME::reportvirus can accept the candidate into internal best-match "
+            "state, but the outer scan result and host-visible verdict are unknown.",
         ),
     ]
     # A complete optional secondary vector and no unexplained suffix are the
@@ -203,7 +205,7 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
             if not parsed.trailing and parsed.metadata_raw in SUBTYPE_METADATA
             else "unsupported"
         ),
-        representation="macro_source.matcher_manifest.v2",
+        representation="macro_source.matcher_manifest.v3",
         data=JSONObject(
             (
                 ("record_type", MACRO_SOURCE_TYPE),
@@ -217,6 +219,10 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
                             ("name_offset", 1),
                             ("name_length_bytes", len(parsed.name_bytes)),
                             ("name_encoding", "unknown"),
+                            (
+                                "name_bytes_ascii_compatible",
+                                all(byte < 0x80 for byte in parsed.name_bytes),
+                            ),
                             ("header_offset", header_offset),
                             ("header_width", WORD_SIZE),
                             ("header_byte_order", "little"),
@@ -332,6 +338,16 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
                             "RME::CompareSig",
                             "metadata subtype compatibility check",
                             "RME::reportvirus(recid, 0, EmptySha1, false)",
+                        )
+                    ),
+                ),
+                (
+                    "report_effect",
+                    JSONObject(
+                        (
+                            ("confirmed_scope", "RME_internal_best_match_state"),
+                            ("outer_scan_result", "unknown"),
+                            ("host_visible_verdict", "unknown"),
                         )
                     ),
                 ),
