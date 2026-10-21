@@ -102,15 +102,122 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
     terminator = JSONObject(
         (("offset", len(parsed.raw) - 1), ("length", 1), ("raw_hex", "00"))
     )
-    unknown = JSONObject(
+    receiver = JSONObject(
         (
-            ("status", "unknown"),
-            ("evidence", JSONArray(())),
+            ("function", "RegisterForDatabaseRecords"),
+            ("address", "0x180564BC0"),
+            ("selector", 0x30),
+            ("descriptor_address", "0x180E4DFF0"),
+            ("instruction_word_count", 2),
+            ("row_size", 0x10),
+            (
+                "descriptor",
+                JSONObject(
+                    (
+                        ("opcode", "0x1005"),
+                        ("destination_offset", 0),
+                    )
+                ),
+            ),
+            (
+                "input_check",
+                JSONObject(
+                    (
+                        ("required_bytes", 8),
+                        ("available_bytes", len(parsed.raw)),
+                        (
+                            "result",
+                            "rejected_before_copy"
+                            if len(parsed.raw) < 8
+                            else "sufficient_for_copy",
+                        ),
+                        ("error", 40964 if len(parsed.raw) < 8 else None),
+                    )
+                ),
+            ),
         )
     )
+    payload_short = len(parsed.raw) < 8
+    row_dword = int.from_bytes(parsed.raw[:4], "little")
+    wire_projection = (
+        JSONObject(
+            (
+                ("status", "not_projected"),
+                ("reason", "receiver_requires_eight_bytes_for_0x1005"),
+            )
+        )
+        if payload_short
+        else JSONObject(
+            (
+                (
+                    "copy",
+                    JSONObject(
+                        (
+                            (
+                                "payload_span",
+                                JSONObject((("offset", 0), ("length", 8))),
+                            ),
+                            ("row_offset", 0),
+                            ("operation", "copy_qword"),
+                        )
+                    ),
+                ),
+                ("zeroed_span", JSONObject((("offset", 8), ("length", 8)))),
+                (
+                    "unconsumed_tail",
+                    JSONObject((("offset", 8), ("length", len(parsed.raw) - 8))),
+                ),
+            )
+        )
+    )
+    storage = JSONObject(
+        (
+            ("row_stride", 0x10),
+            ("wire_projection", wire_projection),
+        )
+    )
+    runtime_consumer = JSONObject(
+        (
+            ("status", "not_reached" if payload_short else "registered_pipeline"),
+            *(
+                (("reason", "receiver_rejected_before_row_creation"),)
+                if payload_short
+                else (
+                    ("compile_function", "CompileVNFlts"),
+                    ("compile_address", "0x1805B0370"),
+                    ("object_resolver", "kpopobject"),
+                    ("regex_constructor", "Boost basic_regex<char> flags=0"),
+                    ("filter_function", "CK_IsVnameFiltered"),
+                    ("filter_address", "0x180BBADC4"),
+                    (
+                        "filter_operation",
+                        "Boost regex_search(name, compiled_regex)",
+                    ),
+                    ("caller", "kvirinfo"),
+                    (
+                        "packed_index_contradiction",
+                        JSONObject(
+                            (
+                                (
+                                    "payload_prefix_ascii",
+                                    parsed.raw[:8].decode("ascii"),
+                                ),
+                                ("row_dword_hex", parsed.raw[:4].hex()),
+                                ("row_dword_value", row_dword),
+                                ("packed_pool_index", row_dword >> 16),
+                                ("packed_byte_offset", row_dword & 0xFFFF),
+                                ("resolution", "unconfirmed"),
+                            )
+                        ),
+                    ),
+                )
+            ),
+        )
+    )
+    reporting = JSONObject((("status", "unknown"),))
     return RuleSemantics(
-        status="observed_only",
-        representation="titanflt.corpus_wire_profile.v1",
+        status="unsupported" if payload_short else "observed_only",
+        representation="titanflt.engine_registration.v2",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
@@ -122,7 +229,7 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                             ("partition", JSONArray(tuple(segments))),
                             ("separators", JSONArray(tuple(separators))),
                             ("terminator", terminator),
-                            ("tail_disposition", "no_unparsed_tail"),
+                            ("tail_disposition", "corpus_profile_fully_partitioned"),
                         )
                     ),
                 ),
@@ -139,10 +246,10 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                         )
                     ),
                 ),
-                ("receiver", unknown),
-                ("storage", unknown),
-                ("runtime_consumer", unknown),
-                ("report", unknown),
+                ("receiver", receiver),
+                ("storage", storage),
+                ("runtime_consumer", runtime_consumer),
+                ("report", reporting),
             )
         ),
         evidence=(
@@ -155,20 +262,45 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                 "followed by one terminal NUL; this describes the corpus profile only."
             ),
             (
-                "DispatchRecord uses dynamic gktab template/callback slots; the "
-                "type 0x30 receiver, storage, runtime consumer, and report path "
-                "remain unconfirmed."
+                "RegisterForDatabaseRecords registers type 0x30 with one 0x1005 "
+                "descriptor; ReceiveNewTemplate copies payload[0:8] to row[0:8]."
+            ),
+            (
+                "CompileVNFlts resolves row DWORD +0 through kpopobject and builds "
+                "a Boost regex; CK_IsVnameFiltered checks names with regex_search."
+            ),
+            *(
+                (
+                    "The 0x1005 receiver requires eight bytes and returns 0xA004 "
+                    "before copying when the payload is shorter."
+                    if payload_short
+                    else f"The payload prefix projects to packed index "
+                    f"0x{row_dword >> 16:04X}:0x{row_dword & 0xFFFF:04X}; its "
+                    "resolution is unconfirmed, and payload bytes 8 onward are "
+                    "not consumed by the registered template."
+                ),
             ),
         ),
         profile="mpengine-1.443.903.0",
         issues=(
-            SemanticIssue(
-                "engine_semantics_unconfirmed",
-                "The type 0x30 receiver, storage, runtime consumer, and report path are not identified.",
+            *(
+                (
+                    SemanticIssue(
+                        "receiver_input_too_short",
+                        "The registered 0x1005 descriptor requires eight payload bytes and rejects this shorter input before copying.",
+                    ),
+                )
+                if payload_short
+                else (
+                    SemanticIssue(
+                        "packed_object_reference_unresolved",
+                        "The payload prefix is copied as a packed kpopobject index, but its runtime resolution to regex bytes is unconfirmed.",
+                    ),
+                )
             ),
             SemanticIssue(
                 "corpus_profile_only",
-                "The wire partition is supported by the current corpus and is not an engine acceptance contract.",
+                "Pipe-delimited printable segments describe corpus bytes only; the engine template consumes only the first eight payload bytes.",
             ),
         ),
     )
