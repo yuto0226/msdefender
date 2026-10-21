@@ -115,10 +115,16 @@ def export_magiccode_semantics(parsed: MagicCodePayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status="confirmed_subset",
-        representation="magiccode.receiver_matcher_subset.v2",
+        representation="magiccode.receiver_unpacker_consumer.v3",
         data=JSONObject(
             (
                 ("type", "MAGICCODE"),
+                ("record_role", "unpacker_entry_point_resolution_rule"),
+                ("detection_predicate", False),
+                (
+                    "semantic_scope",
+                    "receiver_storage_lookup_and_unpacked_entry_point_resolution",
+                ),
                 ("raw_hex", parsed.raw.hex()),
                 (
                     "corpus_manifest",
@@ -226,7 +232,8 @@ def export_magiccode_semantics(parsed: MagicCodePayload) -> RuleSemantics:
             SemanticIssue(
                 "magiccode_final_effect_unknown",
                 "The pattern/evaluation path is confirmed locally, but the complete "
-                "unpacker state change and any final detection effect are unresolved.",
+                "unpacker state change is unresolved; this consumer path does not "
+                "establish a threat report or final detection verdict.",
             ),
         ),
     )
