@@ -1,4 +1,4 @@
-"""Observed zero-length-string POLYVIR32 subset (type 0x21)."""
+"""Engine-template projection for POLYVIR32 (type 0x21)."""
 
 from dataclasses import dataclass
 from typing import Final
@@ -14,7 +14,7 @@ from ..core import (
 )
 
 POLYVIR32_TYPE: Final = 0x21
-POLYVIR32_SIZE: Final = 34
+POLYVIR32_MIN_SIZE: Final = 34
 _PREFIX_SIZE: Final = 16
 _STRING_LENGTH_OFFSET: Final = 0x20
 
@@ -52,9 +52,11 @@ class Polyvir32Payload:
     word_1a: int
     dword_1c: int
     string_length_20: int
+    string_raw: bytes
+    trailing_raw: bytes
 
     def to_bytes(self) -> bytes:
-        """Rebuild the observed zero-length-string subset exactly."""
+        """Rebuild the accepted wire projection exactly."""
         return b"".join(
             (
                 self.bytes_00_0f,
@@ -65,25 +67,25 @@ class Polyvir32Payload:
                 self.word_1a.to_bytes(2, "little"),
                 self.dword_1c.to_bytes(4, "little"),
                 self.string_length_20.to_bytes(2, "little"),
+                self.string_raw,
+                self.trailing_raw,
             )
         )
 
 
 def parse_polyvir32(payload: bytes) -> Polyvir32Payload:
-    """Parse the observed 34-byte subset with an empty string at wire +0x20.
-
-    This narrow corpus profile is not the complete receiver grammar: the
-    engine template accepts a length-prefixed string at this position.
-    """
-    if len(payload) != POLYVIR32_SIZE:
+    """Parse the template's fixed fields, length-prefixed string, and suffix."""
+    if len(payload) < POLYVIR32_MIN_SIZE:
         raise ValueError(
-            f"POLYVIR32 payload must be exactly {POLYVIR32_SIZE} bytes, "
+            f"POLYVIR32 payload needs at least {POLYVIR32_MIN_SIZE} bytes, "
             f"have {len(payload)}"
         )
-    string_length = int.from_bytes(payload[_STRING_LENGTH_OFFSET:], "little")
-    if string_length != 0:
+    string_length = int.from_bytes(payload[0x20:0x22], "little")
+    string_end = 0x22 + string_length
+    if string_end > len(payload):
         raise ValueError(
-            "POLYVIR32 corpus subset requires zero string length at offset 0x20"
+            "truncated POLYVIR32 length-prefixed string: "
+            f"need {string_length} bytes, have {len(payload) - 0x22}"
         )
 
     return Polyvir32Payload(
@@ -96,11 +98,13 @@ def parse_polyvir32(payload: bytes) -> Polyvir32Payload:
         word_1a=int.from_bytes(payload[0x1A:0x1C], "little"),
         dword_1c=int.from_bytes(payload[0x1C:0x20], "little"),
         string_length_20=string_length,
+        string_raw=payload[0x22:string_end],
+        trailing_raw=payload[string_end:],
     )
 
 
 def render_polyvir32(parsed: Polyvir32Payload) -> FormatResult:
-    rows = (
+    rows = [
         ("bytes_00_0f", parsed.bytes_00_0f.hex(" ")),
         ("word_10", f"0x{parsed.word_10:04X}"),
         ("word_12", f"0x{parsed.word_12:04X}"),
@@ -108,16 +112,35 @@ def render_polyvir32(parsed: Polyvir32Payload) -> FormatResult:
         ("word_18", f"0x{parsed.word_18:04X}"),
         ("word_1a", f"0x{parsed.word_1a:04X}"),
         ("dword_1c", f"0x{parsed.dword_1c:08X}"),
-        ("u16_20_string_length", "0x0000"),
-    )
-    return FormatResult(sections=(DisplaySection("POLYVIR32", rows=rows),))
+        ("u16_20_string_length", str(parsed.string_length_20)),
+        ("string_raw", parsed.string_raw.hex(" ") or "(empty)"),
+    ]
+    if parsed.trailing_raw:
+        rows.append(("trailing_raw", parsed.trailing_raw.hex(" ")))
+    return FormatResult(sections=(DisplaySection("POLYVIR32", rows=tuple(rows)),))
 
 
 def export_polyvir32_semantics(parsed: Polyvir32Payload) -> RuleSemantics:
-    """Export the engine-confirmed wire-to-row projection for this subset."""
+    """Export the engine-confirmed wire-to-row projection."""
+    issues = [
+        SemanticIssue(
+            "consumer_and_final_verdict_unknown",
+            "Runtime consumer field semantics, match conditions, and final "
+            "verdict behavior are not established by this wire-to-row projection.",
+        )
+    ]
+    if parsed.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "receiver_ignored_suffix",
+                "The template completes without requiring cursor equality; "
+                "these suffix bytes are not projected into the runtime row.",
+                (("length", len(parsed.trailing_raw)),),
+            )
+        )
     return RuleSemantics(
         status="confirmed_subset",
-        representation="polyvir32.template_projection.v1",
+        representation="polyvir32.template_projection.v2",
         data=JSONObject(
             (
                 ("record_type", "POLYVIR32"),
@@ -131,6 +154,8 @@ def export_polyvir32_semantics(parsed: Polyvir32Payload) -> RuleSemantics:
                 ("u16_1a_raw_le", parsed.word_1a),
                 ("u32_1c_raw_le", parsed.dword_1c),
                 ("u16_20_string_length", parsed.string_length_20),
+                ("string_raw_hex", parsed.string_raw.hex()),
+                ("trailing_raw_hex", parsed.trailing_raw.hex()),
                 ("template_row_size", 0x28),
                 (
                     "wire_to_row_projection",
@@ -145,11 +170,11 @@ def export_polyvir32_semantics(parsed: Polyvir32Payload) -> RuleSemantics:
                             _projection_entry(0x1C, 4, 0x1C, 4, "u32"),
                             _projection_entry(
                                 0x20,
-                                2,
+                                2 + parsed.string_length_20,
                                 0x24,
                                 4,
-                                "zero_length_string_to_u32",
-                                0xFFFFFFFF,
+                                "length_prefixed_string_to_object_id",
+                                0xFFFFFFFF if not parsed.string_raw else None,
                             ),
                             _projection_entry(None, 0, 0x20, 4, "engine_generated_u32"),
                         )
@@ -164,8 +189,8 @@ def export_polyvir32_semantics(parsed: Polyvir32Payload) -> RuleSemantics:
                 "template instructions."
             ),
             (
-                "Descriptors at 0x180F670C0 map the observed zero-length-string "
-                "wire subset to neutral row offsets and widths."
+                "Descriptors at 0x180F670C0 map the fixed fields and 0x1009 "
+                "length-prefixed string to neutral row offsets and widths."
             ),
             (
                 "Local corpus sweep: mpav.sig has 151 records of 34 bytes; "
@@ -173,20 +198,7 @@ def export_polyvir32_semantics(parsed: Polyvir32Payload) -> RuleSemantics:
             ),
         ),
         profile="mpengine-1.443.903.0",
-        issues=(
-            SemanticIssue(
-                "receiver_grammar_incomplete",
-                "The parser supports only the observed 34-byte subset with a "
-                "zero-length string at wire +0x20; it is not the complete "
-                "template receiver grammar.",
-            ),
-            SemanticIssue(
-                "consumer_and_final_verdict_unknown",
-                "Runtime consumer field semantics, match conditions, and final "
-                "verdict behavior are not established by this wire-to-row "
-                "projection.",
-            ),
-        ),
+        issues=tuple(issues),
     )
 
 
