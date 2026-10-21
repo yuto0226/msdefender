@@ -573,7 +573,7 @@ def export_nscript_sp_semantics(parsed: NScriptSPPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status="unsupported" if tail else "confirmed_subset",
-        representation="nscript.sp.receiver_runtime_candidates.v1",
+        representation="nscript.sp.receiver_runtime_candidates.v2",
         data=_outer(
             parsed.raw,
             _raw_framing(parsed.raw, fields),
@@ -596,10 +596,28 @@ def export_nscript_sp_semantics(parsed: NScriptSPPayload) -> RuleSemantics:
                         ),
                     ),
                     ("spArr_consumer", "SearchExact"),
-                    ("candidate_key", "CRC of mapped scan range"),
+                    ("candidate_key", "mapped anchor CRC32"),
                     (
                         "candidate_fields",
-                        JSONArray(("normalized_length", "full_crc32", "mode")),
+                        JSONArray(
+                            (
+                                "anchor_crc32",
+                                "normalized_length",
+                                "full_crc32",
+                                "mode",
+                                "recid",
+                                "lowfi",
+                            )
+                        ),
+                    ),
+                    (
+                        "scan_pass_mode_gate",
+                        JSONObject(
+                            (
+                                ("forward", "mode == 0 or mode bit 0 is set"),
+                                ("reverse", "mode == 2 or mode == 4"),
+                            )
+                        ),
                     ),
                     (
                         "post_crc_handoff",
@@ -822,18 +840,25 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
     issues.append(
         SemanticIssue(
             "nscript_cure_final_cure_and_report_policy_unknown",
-            "The wire-kind to runtime selector byte source and helper branches "
-            "are confirmed, but their complete cure and report outcome is not "
-            "established.",
+            "The wire-kind dispatch and helper branches are confirmed, but "
+            "helper results and the final cure/report outcome are not fully "
+            "mapped.",
             (("wire_kind", parsed.kind),),
         )
     )
-    runtime_selector = parsed.data_len & 0xFF if parsed.kind == 5 else parsed.kind
+    runtime_selector = parsed.kind
     selector_candidate = {
         1: "ScriptCureRemoveStart",
         2: "ScriptCureRemoveEnd",
-        4: "ScriptCureReplace",
+        5: "ScriptCureReplace",
     }.get(runtime_selector)
+    runtime_context = {
+        1: "non-HTML branch; BMSearch with BM_MAP_LOWCASE",
+        2: "non-HTML branch; BMSearch with BM_MAP_LOWCASE",
+        3: "stored, but skipped by the sole nscript_scan cure consumer",
+        4: "stored, but skipped by the sole nscript_scan cure consumer",
+        5: "HTML and non-HTML branches call ScriptCureReplace",
+    }.get(parsed.kind, "unknown")
     details = (
         ("kind", parsed.kind),
         ("name_crc32", parsed.name_crc32),
@@ -849,10 +874,8 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
                     ("lookup", "CRC_1 key against cureArr"),
                     ("runtime_selector_byte", runtime_selector),
                     ("selector_candidate", selector_candidate),
-                    (
-                        "selector_source",
-                        "wire kind for 1..4; data_length low byte for kind 5",
-                    ),
+                    ("selector_source", "wire kind"),
+                    ("runtime_context", runtime_context),
                     ("final_cure_and_report_policy", "unknown"),
                 )
             ),
@@ -865,9 +888,9 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
                 "kind/name CRC and kind-dependent payload decoded",
                 "kind 3/4 append without data; other kinds store data; "
                 "kind 1/2 may success-and-ignore",
-                "cureArr candidates are searched by name CRC; selector 1/2/4 "
+                "cureArr candidates are searched by name CRC; wire kind 1/2/5 "
                 "dispatches remove-start/remove-end/replace helpers",
-                "unknown; kind 5 consumer and cure outcome policy remain unresolved",
+                "unknown; helper-result and final cure/report policy remain unresolved",
             ),
         ),
     )
@@ -879,7 +902,7 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
             if tail or parsed.kind not in (1, 2, 3, 4, 5)
             else "confirmed_subset"
         ),
-        representation="nscript.cure.receiver_runtime_candidates.v1",
+        representation="nscript.cure.receiver_runtime_candidates.v2",
         data=_outer(
             parsed.raw, _raw_framing(parsed.raw, tuple(fields)), **dict(details)
         ),
