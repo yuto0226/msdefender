@@ -15,7 +15,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 from ..recid import RecIdTail, parse_recid_tail
 from ._certificate_key import parse_certificate_key
@@ -164,9 +167,18 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
     if parsed.recid_tail_raw:
         unsupported_reasons.append(
             SemanticIssue(
-                "recid_gate_not_exported",
-                "The optional createrecidp program and its post-lookup gate are "
-                "preserved but not executable in the portable IR.",
+                "recid_metadata_meaning_unknown",
+                "The optional tail is consumed by createrecidp to derive the stored "
+                "threat/signature association; its producer-side object meaning is unknown.",
+            )
+        )
+    if parsed.key_type == 4:
+        unsupported_reasons.append(
+            SemanticIssue(
+                "key_type_consumer_unknown",
+                "The loader recognizes BADHASH/type 4, but the analyzed "
+                "CheckPublisher consumer does not issue a type-4 query.",
+                (("key_type", parsed.key_type),),
             )
         )
 
@@ -236,6 +248,99 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
     else:
         normalization = "unknown"
 
+    if parsed.key_type in {1, 2, 3, 5}:
+        consumer_claim = SemanticClaim(
+            id="trusted_publisher_lookup_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "CheckPublisher queries normalized key types 1, 3, 2, and 5; "
+                "after a store match it applies a separate NID64 selector-133 gate."
+            ),
+            coverage="subset",
+            evidence_refs=("trusted_publisher_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Caller coverage and the enclosing trust-policy paths remain incomplete.",
+                ),
+            ),
+        )
+        predicate_claim = SemanticClaim(
+            id="trusted_publisher_local_predicate",
+            scope="detection_predicate",
+            statement=(
+                "At the analyzed CheckPublisher boundary, an exact normalized-key "
+                "store match is accepted only when the subsequent NID64 gate does not match."
+            ),
+            coverage="subset",
+            evidence_refs=("trusted_publisher_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "The enclosing IsTrustedFile policy is unresolved.",
+                ),
+            ),
+        )
+    else:
+        consumer_claim = SemanticClaim(
+            id="trusted_publisher_lookup_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "No CheckPublisher query is confirmed for this loader-recognized "
+                f"certificate key type ({parsed.key_type})."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The analyzed CheckPublisher path queries only key types 1, 3, 2, and 5.",
+                ),
+            ),
+        )
+        predicate_claim = SemanticClaim(
+            id="trusted_publisher_local_predicate",
+            scope="detection_predicate",
+            statement="No CheckPublisher predicate is established for this key type.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Without a confirmed runtime consumer, no record-level match predicate is established.",
+                ),
+            ),
+        )
+
+    if parsed.key_type in {1, 2, 3, 5}:
+        report_claim = SemanticClaim(
+            id="trusted_publisher_matched_identity",
+            scope="report_mapping",
+            statement=(
+                "After the separate NID64 gate accepts the match, CheckPublisher "
+                "copies the matched signature ID and SHA-1 to caller outputs."
+            ),
+            coverage="subset",
+            evidence_refs=("trusted_publisher_report",),
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "The complete IsTrustedFile attribute and report arbitration is unresolved.",
+                ),
+            ),
+        )
+    else:
+        report_claim = SemanticClaim(
+            id="trusted_publisher_matched_identity",
+            scope="report_mapping",
+            statement="No matched-identity output is established for an unconsumed key type.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "No confirmed CheckPublisher match exists to reach the output branch.",
+                ),
+            ),
+        )
+
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
         representation="trusted_publisher.normalized_lookup.ir.v1",
@@ -291,8 +396,24 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
                 ),
                 ("match_operation", "exact_normalized_key_lookup"),
                 (
-                    "post_lookup_gate",
-                    "nid64searchrecid(133, 0, matched_sig_id)",
+                    "runtime_consumer",
+                    JSONObject(
+                        (
+                            ("queried_key_types", JSONArray((1, 3, 2, 5))),
+                            (
+                                "type4_consumer",
+                                "unknown" if parsed.key_type == 4 else "not_applicable",
+                            ),
+                            (
+                                "post_lookup_gate",
+                                "nid64searchrecid(selector=133, key=reply_matched_sig_id)",
+                            ),
+                            (
+                                "tail_relationship",
+                                "independent_receiver_metadata; not_the_nid64_gate_input",
+                            ),
+                        )
+                    ),
                 ),
                 ("policy_effect", "unknown"),
             )
@@ -305,6 +426,102 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="trusted_publisher_wire_layout",
+                scope="wire_layout",
+                statement=(
+                    "TRUSTED_PUBLISHER contains a u16-bounded key descriptor and an "
+                    "optional RecID metadata tail."
+                ),
+                coverage="complete",
+                evidence_refs=("trusted_publisher_receiver",),
+            ),
+            SemanticClaim(
+                id="trusted_publisher_loader_dispatch",
+                scope="loader_dispatch",
+                statement="The analyzed store registration binds type 0x70 to TRUSTED_PUBLISHER.",
+                coverage="subset",
+                evidence_refs=("trusted_publisher_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Other database profiles and engine versions are not covered.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="trusted_publisher_receiver_projection",
+                scope="receiver_transform",
+                statement=(
+                    "Load normalizes the bounded certificate key and, when present, "
+                    "uses the independent tail to derive stored threat/signature IDs."
+                ),
+                coverage="subset",
+                evidence_refs=("trusted_publisher_receiver",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The producer meaning of the optional RecID metadata object is unknown.",
+                    ),
+                ),
+            ),
+            consumer_claim,
+            predicate_claim,
+            report_claim,
+            SemanticClaim(
+                id="trusted_publisher_final_verdict",
+                scope="final_verdict",
+                statement="A TRUSTED_PUBLISHER match does not establish a global allow or skip-scan verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Revocation, exclusion, caller policy, and final scan arbitration remain unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="trusted_publisher_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="TRUSTED_PUBLISHER store registration",
+                supports=("trusted_publisher_loader_dispatch",),
+            ),
+            SemanticEvidence(
+                id="trusted_publisher_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="trustedpublisher_t::Load @ 0x18032039C",
+                supports=(
+                    "trusted_publisher_wire_layout",
+                    "trusted_publisher_receiver_projection",
+                ),
+            ),
+            SemanticEvidence(
+                id="trusted_publisher_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="CheckPublisher @ 0x180298E3C",
+                supports=(
+                    "trusted_publisher_lookup_consumer",
+                    "trusted_publisher_local_predicate",
+                ),
+            ),
+            SemanticEvidence(
+                id="trusted_publisher_report",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="CheckPublisher @ 0x180298E3C accepted-match output branch",
+                supports=("trusted_publisher_matched_identity",),
+            ),
+        ),
     )
 
 
