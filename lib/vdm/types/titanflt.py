@@ -139,6 +139,10 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
     )
     payload_short = len(parsed.raw) < 8
     row_dword = int.from_bytes(parsed.raw[:4], "little")
+    object_store_selector = bool(row_dword & 0x40000000)
+    normalized_object_id = (
+        row_dword & 0xBFFFFFFF if object_store_selector else row_dword
+    )
     wire_projection = (
         JSONObject(
             (
@@ -195,7 +199,7 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                     ),
                     ("caller", "kvirinfo"),
                     (
-                        "packed_index_contradiction",
+                        "packed_object_reference",
                         JSONObject(
                             (
                                 (
@@ -204,8 +208,15 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                                 ),
                                 ("row_dword_hex", parsed.raw[:4].hex()),
                                 ("row_dword_value", row_dword),
-                                ("packed_pool_index", row_dword >> 16),
-                                ("packed_byte_offset", row_dword & 0xFFFF),
+                                ("raw_object_id", row_dword),
+                                ("alternate_store_flag_bit30", object_store_selector),
+                                (
+                                    "store",
+                                    "alternate" if object_store_selector else "primary",
+                                ),
+                                ("normalized_object_id", normalized_object_id),
+                                ("packed_chunk_index", normalized_object_id >> 16),
+                                ("packed_byte_offset", normalized_object_id & 0xFFFF),
                                 ("resolution", "unconfirmed"),
                             )
                         ),
@@ -217,7 +228,7 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
     reporting = JSONObject((("status", "unknown"),))
     return RuleSemantics(
         status="unsupported" if payload_short else "observed_only",
-        representation="titanflt.engine_registration.v2",
+        representation="titanflt.engine_registration.v3",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
