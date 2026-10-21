@@ -203,14 +203,15 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     issues = [
         SemanticIssue(
             "runtime_region_unknown",
-            "ScanContext supplies guest VAs to PEEmuMapper. Conditional x86/x64 file-backed "
-            "VMM interval paths are recovered, but this candidate's source bytes and actual "
-            "mapping row are not identified; direct-buffer provenance remains unknown.",
+            "ScanEx supplies a caller-selected guest-VA anchor to the trie and BM matcher, "
+            "but no concrete candidate coordinate or backing bytes are observed. The "
+            "direct-buffer and conditional file-backed VMM source provenance for this "
+            "candidate remains unknown.",
         ),
         SemanticIssue(
             "pe_mapping_metadata_unknown",
-            "The x86/x64 interval formulas are known, but row field names and the interval "
-            "row selected for a concrete candidate are not established.",
+            "Conditional x86/x64 file-backed translation paths are known, but this "
+            "candidate's guest VA is not mapped to a concrete PE input coordinate.",
         ),
         SemanticIssue(
             "final_detection_policy_unknown",
@@ -312,6 +313,36 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                                     (
                                         "reader_end",
                                         "bounded by the mapped subject span",
+                                    ),
+                                )
+                            ),
+                        ),
+                        (
+                            "bm_primary_window",
+                            JSONObject(
+                                (
+                                    ("prefix", "min(scan_offset, 2048)"),
+                                    (
+                                        "mapping_request",
+                                        "__mmap_ex(pe_vars, scan_offset - prefix, prefix + 2048, 0x40000000)",
+                                    ),
+                                    (
+                                        "prefix_fallback",
+                                        "decrement prefix by 1 after mapping failure, through 0",
+                                    ),
+                                    (
+                                        "minimum_mapping_length",
+                                        "pattern_length; otherwise return false",
+                                    ),
+                                    (
+                                        "subject_span",
+                                        "[mapped_pointer, mapped_pointer + prefix + 2048)",
+                                    ),
+                                    ("search_start", "mapped_pointer + prefix"),
+                                    ("search_length", 2048),
+                                    (
+                                        "search_range",
+                                        "[scan_offset, scan_offset + 2048)",
                                     ),
                                 )
                             ),
@@ -434,6 +465,45 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         (
                             "fallback_requests",
                             "(scan_va, 2048), then (scan_va, 1); the fallback uses the mapped length",
+                        ),
+                        (
+                            "bm_fallback_mappings",
+                            JSONArray(
+                                (
+                                    JSONObject(
+                                        (
+                                            (
+                                                "request",
+                                                "__mmap_ex(pe_vars, scan_offset, 2048, 0x40000000)",
+                                            ),
+                                            ("subject_length", 2048),
+                                            ("search_length", 2048),
+                                            (
+                                                "worker_flags",
+                                                "(2 * !trie_flags_bit1) | 1",
+                                            ),
+                                        )
+                                    ),
+                                    JSONObject(
+                                        (
+                                            (
+                                                "request",
+                                                "__mmap_ex(pe_vars, scan_offset, 1, 0x40000000)",
+                                            ),
+                                            (
+                                                "subject_length",
+                                                "*(uint32_t *)(*(uint64_t *)(pe_vars + 699128) + 40)",
+                                            ),
+                                            ("search_length", "mapped subject length"),
+                                            ("worker_flags", 1),
+                                        )
+                                    ),
+                                )
+                            ),
+                        ),
+                        (
+                            "candidate_coordinate_status",
+                            "caller-supplied guest VA; mapping to PE input bytes/RVA/file offset unknown",
                         ),
                         ("runtime_bytes_observed", False),
                         (
