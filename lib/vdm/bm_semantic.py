@@ -36,7 +36,13 @@ def _value(value: object):
 OperationFidelity = Literal["exact", "conditional", "unsupported"]
 
 
-def _operation_ir(operation: BmSemanticOperation) -> dict[str, object]:
+def _operation_ir(
+    operation: BmSemanticOperation,
+    *,
+    pattern: BmPattern | None = None,
+    explain_sequential_alternatives: bool = False,
+    sequential_alternative_offsets: frozenset[int] = frozenset(),
+) -> dict[str, object]:
     raw = operation.raw
     fidelity: OperationFidelity = "exact"
     requirements: list[str] = []
@@ -117,6 +123,37 @@ def _operation_ir(operation: BmSemanticOperation) -> dict[str, object]:
         result["fidelity"] = "unsupported"
         result["requirements"] = []
         result["issues"] = ["opcode semantics are unknown or unsupported"]
+        if (
+            explain_sequential_alternatives
+            and pattern is not None
+            and token is not None
+            and token.raw_id == 0x03
+            and operation.offset in sequential_alternative_offsets
+        ):
+            widths = tuple(token.operands)
+            shared_start = operation.offset + len(operation.raw)
+            shared_length = sum(widths)
+            shared_end = shared_start + shared_length
+            if widths and all(widths) and shared_end <= len(pattern.raw):
+                shared = pattern.raw[shared_start:shared_end]
+                choices = []
+                cursor = 0
+                for width in widths:
+                    choices.append(shared[cursor : cursor + width].hex())
+                    cursor += width
+                decoded["engine_choice_model"] = {
+                    "kind": "sequential_nonoverlapping_chunks",
+                    "widths": list(widths),
+                    "shared_raw_hex": shared.hex(),
+                    "choices_hex": choices,
+                    "suffix_offset": shared_end,
+                    "suffix_lowering": "not_attempted",
+                }
+                result["requirements"] = [
+                    "choices are attempted in order and each uses the same recursively matched suffix",
+                    "YARA equivalence of suffix, reader state and output effects is unproven",
+                ]
+                result["issues"] = ["matcher_dependent_sequential_alternatives"]
     elif isinstance(operation, BmEnd):
         result["raw_id"] = 0
         decoded["terminator"] = True
@@ -131,10 +168,33 @@ def _operation_ir(operation: BmSemanticOperation) -> dict[str, object]:
 
 def serialize_bm_pattern(
     pattern: BmPattern,
+    *,
+    explain_sequential_alternatives: bool = False,
 ) -> tuple[JSONObject, tuple[SemanticIssue, ...]]:
     """Serialize one decoder view, including its exact unparsed remainder."""
     semantic_pattern = interpret_bm_pattern(pattern)
-    operations = [_operation_ir(operation) for operation in semantic_pattern.operations]
+    sequential_alternative_offsets: set[int] = set()
+    consumed_until = 0
+    for token in pattern.tokens:
+        if token.offset < consumed_until:
+            continue
+        if token.kind == "OPCODE" and token.raw_id == 0x03:
+            shared_start = token.offset + len(token.raw)
+            shared_end = shared_start + sum(token.operands)
+            if shared_end <= len(pattern.raw):
+                sequential_alternative_offsets.add(token.offset)
+                consumed_until = shared_end
+                continue
+        consumed_until = token.offset + len(token.raw)
+    operations = [
+        _operation_ir(
+            operation,
+            pattern=pattern,
+            explain_sequential_alternatives=explain_sequential_alternatives,
+            sequential_alternative_offsets=frozenset(sequential_alternative_offsets),
+        )
+        for operation in semantic_pattern.operations
+    ]
     issues: list[dict[str, object]] = []
     semantic_issues: list[SemanticIssue] = []
     if pattern.issue is not None:

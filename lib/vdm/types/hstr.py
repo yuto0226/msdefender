@@ -1047,7 +1047,9 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         # PEHSTR (0x61) has no flag field and is never shape-guessed as BM.
         if subsig.flags is not None and subsig.flags.value & 0x0002:
             pattern = decode_bm_pattern(subsig.data)
-            pattern_data, pattern_issues = serialize_bm_pattern(pattern)
+            pattern_data, pattern_issues = serialize_bm_pattern(
+                pattern, explain_sequential_alternatives=True
+            )
             bm_render, bm_runtime_context = _render_hstr_bm_yara(subsig, pattern)
             bm_yara_data = JSONObject(
                 (
@@ -1262,12 +1264,13 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v5",
+        representation="hstr.matcher-subset.ir.v6",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
             "mpengine 1.443.903.0 add_sstring_internal @ 0x1800FE008",
             "mpengine 1.443.903.0 hstr_internal_search_worker @ 0x1800E9F70",
+            "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60: raw opcode 0x03 reads two widths and tries non-overlapping chunks with a recursively matched shared suffix (0x1800EE4A1-0x1800EE55F)",
             "mpengine 1.443.903.0 BMPatternToLower @ 0x1800FECFC",
             "mpengine 1.443.903.0 BM_MAP_LOWCASE selected when HSTR flags bit0 is clear",
             "mpengine 1.443.903.0 hstr_internal_report_match_worker @ 0x180136268",
