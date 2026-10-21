@@ -57,6 +57,178 @@ class JSONObject:
 
 
 SemanticStatus = Literal["confirmed_subset", "observed_only", "unsupported", "ignored"]
+SemanticScope = Literal[
+    "corpus_observation",
+    "wire_layout",
+    "loader_dispatch",
+    "receiver_transform",
+    "runtime_consumer",
+    "detection_predicate",
+    "report_mapping",
+    "final_verdict",
+]
+SemanticCoverage = Literal["complete", "subset", "unknown"]
+EvidenceAxis = Literal[
+    "corpus",
+    "wire_parser",
+    "dispatch",
+    "receiver",
+    "consumer",
+    "policy",
+    "report",
+    "engine_equivalent_test",
+]
+EvidenceKind = Literal[
+    "engine_static",
+    "engine_runtime",
+    "corpus",
+    "engine_equivalent_test",
+]
+
+_SCOPE_EVIDENCE_AXES: dict[SemanticScope, frozenset[EvidenceAxis]] = {
+    "corpus_observation": frozenset({"corpus"}),
+    "wire_layout": frozenset({"wire_parser", "receiver"}),
+    "loader_dispatch": frozenset({"dispatch"}),
+    "receiver_transform": frozenset({"receiver"}),
+    "runtime_consumer": frozenset({"consumer", "engine_equivalent_test"}),
+    "detection_predicate": frozenset({"consumer", "engine_equivalent_test"}),
+    "report_mapping": frozenset({"policy", "report", "engine_equivalent_test"}),
+    "final_verdict": frozenset({"report", "engine_equivalent_test"}),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticUnknown:
+    """An explicit semantic gap attached to a scoped claim."""
+
+    scope: SemanticScope
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.scope not in _SCOPE_EVIDENCE_AXES:
+            raise ValueError(f"invalid semantic unknown scope {self.scope!r}")
+        if not isinstance(self.reason, str) or not self.reason:
+            raise ValueError("semantic unknown reason must be a non-empty string")
+
+    def to_json(self) -> dict[str, str]:
+        return {"scope": self.scope, "reason": self.reason}
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticClaim:
+    """One bounded semantic statement and its unresolved boundary."""
+
+    id: str
+    scope: SemanticScope
+    statement: str
+    coverage: SemanticCoverage
+    evidence_refs: tuple[str, ...] = ()
+    unknowns: tuple[SemanticUnknown, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not self.id:
+            raise ValueError("semantic claim id must be a non-empty string")
+        if self.scope not in _SCOPE_EVIDENCE_AXES:
+            raise ValueError(f"invalid semantic claim scope {self.scope!r}")
+        if not isinstance(self.statement, str) or not self.statement:
+            raise ValueError("semantic claim statement must be a non-empty string")
+        if self.coverage not in {"complete", "subset", "unknown"}:
+            raise ValueError(f"invalid semantic claim coverage {self.coverage!r}")
+        if not isinstance(self.evidence_refs, tuple) or any(
+            not isinstance(ref, str) or not ref for ref in self.evidence_refs
+        ):
+            raise TypeError("semantic claim evidence refs must be non-empty strings")
+        if len(self.evidence_refs) != len(set(self.evidence_refs)):
+            raise ValueError("semantic claim evidence refs must be unique")
+        if not isinstance(self.unknowns, tuple) or any(
+            not isinstance(unknown, SemanticUnknown) for unknown in self.unknowns
+        ):
+            raise TypeError("semantic claim unknowns must be an immutable tuple")
+        if self.coverage in {"complete", "subset"} and not self.evidence_refs:
+            raise ValueError(
+                f"{self.coverage} semantic claims require typed evidence refs"
+            )
+        if self.coverage in {"subset", "unknown"} and not self.unknowns:
+            raise ValueError(
+                f"{self.coverage} semantic claims require explicit unknowns"
+            )
+        if self.coverage == "complete" and any(
+            unknown.scope == self.scope for unknown in self.unknowns
+        ):
+            raise ValueError(
+                "complete semantic claims cannot retain unknowns in the same scope"
+            )
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "scope": self.scope,
+            "statement": self.statement,
+            "coverage": self.coverage,
+            "evidence_refs": list(self.evidence_refs),
+            "unknowns": [unknown.to_json() for unknown in self.unknowns],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticEvidence:
+    """Typed evidence that may support only the named scoped claims."""
+
+    id: str
+    axis: EvidenceAxis
+    kind: EvidenceKind
+    source_ref: str
+    supports: tuple[str, ...]
+    locator: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not self.id:
+            raise ValueError("semantic evidence id must be a non-empty string")
+        if self.axis not in {
+            "corpus",
+            "wire_parser",
+            "dispatch",
+            "receiver",
+            "consumer",
+            "policy",
+            "report",
+            "engine_equivalent_test",
+        }:
+            raise ValueError(f"invalid semantic evidence axis {self.axis!r}")
+        if self.kind not in {
+            "engine_static",
+            "engine_runtime",
+            "corpus",
+            "engine_equivalent_test",
+        }:
+            raise ValueError(f"invalid semantic evidence kind {self.kind!r}")
+        if not isinstance(self.source_ref, str) or not self.source_ref:
+            raise ValueError("semantic evidence source_ref must be a non-empty string")
+        if self.locator is not None and (
+            not isinstance(self.locator, str) or not self.locator
+        ):
+            raise ValueError("semantic evidence locator must be a non-empty string")
+        if (
+            not isinstance(self.supports, tuple)
+            or not self.supports
+            or any(
+                not isinstance(claim_id, str) or not claim_id
+                for claim_id in self.supports
+            )
+        ):
+            raise ValueError("semantic evidence supports must name at least one claim")
+        if len(self.supports) != len(set(self.supports)):
+            raise ValueError("semantic evidence supports must be unique")
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "axis": self.axis,
+            "kind": self.kind,
+            "source_ref": self.source_ref,
+            "locator": self.locator,
+            "supports": list(self.supports),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +280,8 @@ class RuleSemantics:
     evidence: tuple[str, ...] = ()
     profile: str | None = None
     issues: tuple[SemanticIssue, ...] = ()
+    claims: tuple[SemanticClaim, ...] = ()
+    claim_evidence: tuple[SemanticEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in {
@@ -141,6 +315,50 @@ class RuleSemantics:
             not isinstance(issue, SemanticIssue) for issue in self.issues
         ):
             raise TypeError("semantic issues must be an immutable tuple")
+        if not isinstance(self.claims, tuple) or any(
+            not isinstance(claim, SemanticClaim) for claim in self.claims
+        ):
+            raise TypeError("semantic claims must be an immutable tuple")
+        if not isinstance(self.claim_evidence, tuple) or any(
+            not isinstance(item, SemanticEvidence) for item in self.claim_evidence
+        ):
+            raise TypeError("semantic claim evidence must be an immutable tuple")
+        claim_ids = tuple(claim.id for claim in self.claims)
+        evidence_ids = tuple(item.id for item in self.claim_evidence)
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("semantic claim ids must be unique")
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("semantic evidence ids must be unique")
+        claims_by_id = {claim.id: claim for claim in self.claims}
+        evidence_by_id = {item.id: item for item in self.claim_evidence}
+        for item in self.claim_evidence:
+            missing = set(item.supports) - claims_by_id.keys()
+            if missing:
+                raise ValueError(
+                    f"semantic evidence {item.id!r} supports unknown claims: "
+                    f"{sorted(missing)!r}"
+                )
+        for claim in self.claims:
+            missing = set(claim.evidence_refs) - evidence_by_id.keys()
+            if missing:
+                raise ValueError(
+                    f"semantic claim {claim.id!r} references unknown evidence: "
+                    f"{sorted(missing)!r}"
+                )
+            referenced = tuple(evidence_by_id[ref] for ref in claim.evidence_refs)
+            if any(claim.id not in item.supports for item in referenced):
+                raise ValueError(
+                    f"semantic claim {claim.id!r} references evidence that does not "
+                    "declare support for it"
+                )
+            if claim.coverage in {"complete", "subset"} and not any(
+                item.axis in _SCOPE_EVIDENCE_AXES[claim.scope] for item in referenced
+            ):
+                allowed = sorted(_SCOPE_EVIDENCE_AXES[claim.scope])
+                raise ValueError(
+                    f"semantic claim {claim.id!r} scope {claim.scope!r} requires "
+                    f"evidence on one of these axes: {allowed!r}"
+                )
 
     def to_json(self) -> dict[str, object]:
         """Return standard-library-json-serializable envelope data."""
@@ -151,6 +369,8 @@ class RuleSemantics:
             "evidence": list(self.evidence),
             "profile": self.profile,
             "issues": [issue.to_json() for issue in self.issues],
+            "claims": [claim.to_json() for claim in self.claims],
+            "claim_evidence": [item.to_json() for item in self.claim_evidence],
         }
 
 

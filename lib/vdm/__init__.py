@@ -13,7 +13,10 @@ from .core import (
     Parser,
     Renderer,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 from .inventory import build_semantic_inventory
 from .lua51 import Lua51Export, Lua51ExportWarning, export_lua51
@@ -579,8 +582,11 @@ __all__ = [
     "RpfRoutinePayload",
     "RpfRoutineSection",
     "RuleSemantics",
+    "SemanticClaim",
+    "SemanticEvidence",
     "SemanticExportResult",
     "SemanticIssue",
+    "SemanticUnknown",
     "SigtreeEntry",
     "SigtreeParam",
     "SigtreePayload",
