@@ -7,6 +7,8 @@ from types import MappingProxyType
 from typing import Final, Literal
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -306,10 +308,53 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
     )
 
 
+def export_trusted_publisher(parsed: TrustedPublisher) -> ArtifactExport:
+    """Export the key record and opaque post-key program losslessly."""
+    key_end = 2 + parsed.key_len
+    manifest = {
+        "schema": "vdm.trusted_publisher.artifact.v1",
+        "record_type": {"byte": TRUSTED_PUBLISHER_TYPE, "name": "TRUSTED_PUBLISHER"},
+        "raw_hex": parsed.raw.hex(),
+        "key": {
+            "length": parsed.key_len,
+            "length_raw_hex": parsed.raw[:2].hex(),
+            "raw_hex": parsed.key_data.hex(),
+            "offset": 2,
+            "mode": parsed.mode,
+            "key_type": parsed.key_type,
+            "prefix_raw_hex": parsed.prefix_raw.hex(),
+            "key_material_raw_hex": parsed.key_material_raw.hex(),
+            "text_raw_hex": parsed.text_raw.hex(),
+            "terminator_raw_hex": parsed.terminator_raw.hex(),
+            "trailing_raw_hex": parsed.string_trailing_raw.hex(),
+        },
+        "post_key_tail": {"raw_hex": parsed.recid_tail_raw.hex(), "offset": key_end},
+        "matcher_boundary": {
+            "confirmed_operation": "exact_normalized_key_lookup",
+            "key_normalization": "GetKey_overload_depends_on_key_type_and_encoding",
+            "x509_field_mapping": "unknown",
+            "post_key_gate_input": "recid_pcode_bytes_preserved_not_executed",
+            "final_trust_or_scan_verdict": "unknown",
+        },
+    }
+    data = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    digest = hashlib.sha256(parsed.raw).hexdigest()[:16]
+    return ArtifactExport(
+        "ready",
+        artifacts=(
+            Artifact(f"70-{digest}.json", "trusted_publisher_json_manifest", data),
+        ),
+    )
+
+
 SPEC = FamilySpec(
     TRUSTED_PUBLISHER_TYPE,
     "TRUSTED_PUBLISHER",
     parse_trusted_publisher,
     render_trusted_publisher,
+    exporter=export_trusted_publisher,
     semantic_exporter=export_trusted_publisher_semantics,
 )
