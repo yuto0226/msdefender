@@ -429,8 +429,8 @@ def export_threat_begin_semantics(threat: ThreatBegin) -> RuleSemantics:
 def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
     """Export 0x5D dispatch/cache observations without inventing value semantics."""
     return RuleSemantics(
-        status="unsupported" if threat.trailing_raw else "observed_only",
-        representation="threat-end.container-observation.v2",
+        status="unsupported" if threat.trailing_raw else "confirmed_subset",
+        representation="threat-end.container-observation.v3",
         data=JSONObject(
             (
                 ("record_type", "THREAT_END"),
