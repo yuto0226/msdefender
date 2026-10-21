@@ -203,7 +203,7 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
             if not parsed.trailing and parsed.metadata_raw in SUBTYPE_METADATA
             else "unsupported"
         ),
-        representation="macro_source.matcher_manifest.v1",
+        representation="macro_source.matcher_manifest.v2",
         data=JSONObject(
             (
                 ("record_type", MACRO_SOURCE_TYPE),
@@ -272,7 +272,21 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
                             ("lookup", "safecrc_pair_map membership candidate lookup"),
                             (
                                 "comparison",
-                                "all source entry pairs must occur in candidate pairs",
+                                (
+                                    "each source entry pair must match a candidate pair "
+                                    "under safecrc_t equality"
+                                ),
+                            ),
+                            (
+                                "field0_rule",
+                                "the two field0 DWORDs must be equal",
+                            ),
+                            (
+                                "field1_rule",
+                                (
+                                    "if either field1 upper 16 bits are zero, the pair "
+                                    "matches; otherwise both full field1 DWORDs must be equal"
+                                ),
                             ),
                             ("empty_candidate_pairs_match", False),
                             ("empty_source_entry_pairs_match", False),
@@ -324,10 +338,11 @@ def export_macro_source_semantics(parsed: MacroSourcePayload) -> RuleSemantics:
             )
         ),
         evidence=(
-            "macro_source_push (mpengine 1.443.903.0) frames name/header and constructs safecrc pairs",
-            "RME::MatchSigs uses each candidate pair to retrieve source-entry indices from the pair map",
-            "RME::CompareSig requires every source pair to occur in the candidate set before subtype validation",
-            "RME::CompareSig reports the entry RecID only after subtype compatibility succeeds",
+            "mpengine 1.443.903.0 macro_source_push @ 0x180321B30 frames name/header and constructs safecrc pairs",
+            "mpengine 1.443.903.0 RME::MatchSigs @ 0x18032348C retrieves source-entry indices from the pair map",
+            "mpengine 1.443.903.0 RME::CompareSig @ 0x180373010 requires every source pair before subtype validation",
+            "mpengine 1.443.903.0 safecrc_t::operator== @ 0x18037314C defines the pair comparison rule",
+            "mpengine 1.443.903.0 RME::reportvirus @ 0x1805EBF24 receives the entry RecID after subtype compatibility succeeds",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
