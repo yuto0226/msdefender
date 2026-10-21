@@ -74,10 +74,10 @@ def render_jsinit(parsed: JsInitPayload) -> FormatResult:
 
 
 def export_jsinit(parsed: JsInitPayload) -> ArtifactExport:
-    """Export the exact receiver bytes without claiming syntax validity."""
+    """Export opaque runtime bytes without claiming source grammar."""
     return ArtifactExport(
         "ready",
-        artifacts=(Artifact("init.js", "javascript_source", parsed.raw),),
+        artifacts=(Artifact("jsinit.bin", "opaque_runtime_input", parsed.raw),),
     )
 
 
@@ -85,7 +85,7 @@ def export_jsinit_semantics(parsed: JsInitPayload) -> RuleSemantics:
     """Separate confirmed receiver bytes from JavaScript and verdict claims."""
     return RuleSemantics(
         status="observed_only",
-        representation="jsinit.receiver_and_runtime.v1",
+        representation="jsinit.receiver_and_runtime.v2",
         data=JSONObject(
             (
                 ("record_type", JSINIT_TYPE),
@@ -105,7 +105,7 @@ def export_jsinit_semantics(parsed: JsInitPayload) -> RuleSemantics:
                     "javascript_artifact",
                     JSONObject(
                         (
-                            ("classification", "candidate_emulation_input"),
+                            ("classification", "runtime_input_bytes"),
                             ("bytes_hex", parsed.raw.hex()),
                             ("encoding", "unknown"),
                             ("syntax_validated", False),
@@ -116,10 +116,16 @@ def export_jsinit_semantics(parsed: JsInitPayload) -> RuleSemantics:
                     "init_runtime_consumer",
                     JSONObject(
                         (
+                            ("registration_address", "0x180BF6AD0"),
+                            ("registration_call_site", "0x180BF752B"),
+                            ("receiver_address", "0x1805BBBE0"),
                             ("consumer", "nscript::runJSEmulation"),
+                            ("consumer_address", "0x18037351C"),
+                            ("consumer_size", "0x2054"),
                             ("runtime_use", "JS emulation input"),
                             ("payload_to_scan_target_mapping", "unknown"),
                             ("detection_verdict", "unknown"),
+                            ("result_to_report_mapping", "unknown"),
                         )
                     ),
                 ),
@@ -127,12 +133,19 @@ def export_jsinit_semantics(parsed: JsInitPayload) -> RuleSemantics:
         ),
         evidence=(
             (
-                "mpengine 1.443.903.0 pushJsInit copies payload bytes and appends "
-                "an internal NUL terminator"
+                "mpengine 1.443.903.0 nscript_init_module (0x180BF6AD0) "
+                "registers type 0xCA with pushJsInit (0x1805BBBE0) at "
+                "call site 0x180BF752B"
             ),
             (
-                "mpengine 1.443.903.0 nscript::runJSEmulation reads strJSInit and "
-                "nJSInitSize"
+                "mpengine 1.443.903.0 pushJsInit (0x1805BBBE0) copies payload "
+                "bytes and appends an internal NUL terminator"
+            ),
+            (
+                "mpengine 1.443.903.0 nscript::runJSEmulation (0x18037351C) "
+                "reads strJSInit and nJSInitSize; nscript_scan references it at "
+                "0x18011D715, without establishing scan-target association or "
+                "result-to-report mapping"
             ),
         ),
         profile="mpengine-1.443.903.0",
