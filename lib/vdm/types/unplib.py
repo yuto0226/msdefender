@@ -56,7 +56,10 @@ def render_unplib(parsed: UnpLibPayload) -> FormatResult:
                 "UNPLIB",
                 rows=(
                     ("lookup_key", f"0x{parsed.lookup_key:08X}"),
-                    ("raw_04", parsed.raw[0x04:0x08].hex(" ")),
+                    (
+                        "sort_tiebreak",
+                        f"0x{int.from_bytes(parsed.raw[0x04:0x08], 'little'):08X}",
+                    ),
                     ("offset_div_stride_limit", f"0x{parsed.word_08:08X}"),
                     ("early_offset_boundary", f"0x{parsed.word_0c:08X}"),
                     (
@@ -64,7 +67,7 @@ def render_unplib(parsed: UnpLibPayload) -> FormatResult:
                         f"0x{int.from_bytes(parsed.raw[0x10:0x18], 'little'):016X}",
                     ),
                     ("raw", parsed.raw.hex(" ")),
-                    ("unresolved", "raw_04"),
+                    ("unresolved", "sort_tiebreak business meaning"),
                     # Retained as a renderer compatibility marker. The row
                     # above scopes the unresolved bytes; the bounds fields
                     # themselves are consumer-confirmed.
@@ -93,7 +96,7 @@ def export_unplib_semantics(parsed: UnpLibPayload) -> RuleSemantics:
     absolute_limit_raw = parsed.raw[0x10:0x18]
     return RuleSemantics(
         status="confirmed_subset",
-        representation="unplib.lookup_and_output_bounds.ir.v1",
+        representation="unplib.lookup_and_output_bounds.ir.v2",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
@@ -102,7 +105,7 @@ def export_unplib_semantics(parsed: UnpLibPayload) -> RuleSemantics:
                     JSONArray(
                         (
                             _wire_span("lookup_key", parsed.raw[:4], 0),
-                            _wire_span("unknown_raw", raw_04, 0x04),
+                            _wire_span("sort_tiebreak_u32le", raw_04, 0x04),
                             _wire_span(
                                 "offset_div_stride_limit", ratio_limit_raw, 0x08
                             ),
@@ -139,17 +142,50 @@ def export_unplib_semantics(parsed: UnpLibPayload) -> RuleSemantics:
                     ),
                 ),
                 ("unresolved_raw_hex", raw_04.hex()),
+                (
+                    "storage_normalization",
+                    JSONObject(
+                        (
+                            (
+                                "sort_order_tiebreak_u32",
+                                int.from_bytes(raw_04, "little"),
+                            ),
+                            (
+                                "sort_order",
+                                JSONArray(
+                                    (
+                                        "+0x00:u32",
+                                        "+0x10:u64",
+                                        "+0x08:u32",
+                                        "+0x0C:u32",
+                                        "+0x04:u32",
+                                    )
+                                ),
+                            ),
+                            (
+                                "deduplicate_by",
+                                "+0x00:u32; retain first sorted row per key",
+                            ),
+                        )
+                    ),
+                ),
             )
         ),
         evidence=(
-            "getSignature/unplib_search exact DWORD key lookup",
-            "rOutStream::flush_internal consumes row +0x08, +0x0C, and +0x10",
+            "unplib_init_module@0x180CE4390 registers type 0x157 with 24-byte rows",
+            "unplib_sort@0x180CE4620 compares +0x04:u32 as final sort field",
+            "unplib_removeDuplicates@0x1805B8EF0 deduplicates on +0x00 and retains first sorted row",
+            "getSignature@0x1803D210C/unplib_search@0x1804F02B0 exact DWORD key lookup",
+            "rOutStream::flush_internal@0x18023ED04 consumes +0x08/+0x0C/+0x10, not +0x04",
         ),
         profile="mpengine-1.443.903.0",
         issues=(
             SemanticIssue(
                 "unplib_field_semantics_incomplete",
-                "Bytes +0x04..+0x07 are preserved raw because no consumer is confirmed.",
+                (
+                    "+0x04..+0x07 affects storage sort order; its field purpose "
+                    "and any direct runtime consumer remain unknown."
+                ),
                 (("offset", 4), ("length", 4)),
             ),
         ),
