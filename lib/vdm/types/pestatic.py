@@ -13,7 +13,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 from ..recid import RecIdTail, parse_recid_tail
 
@@ -210,7 +213,7 @@ def _crc_stage(
     )
 
 
-def _alias_data(tail: RecIdTail | None) -> JSONObject | None:
+def _tail_data(tail: RecIdTail | None) -> JSONObject | None:
     if tail is None:
         return None
     object_offset = BASE_SIZE + 1
@@ -229,6 +232,11 @@ def _alias_data(tail: RecIdTail | None) -> JSONObject | None:
             ),
             ("effective_object_length", len(tail.object_raw)),
             ("has_object", tail.has_object),
+            (
+                "receiver_effect",
+                "createrecidpc_result_is_resolved_to_stored_threat_id",
+            ),
+            ("object_producer_meaning", None),
             ("object_raw_hex", tail.object_raw.hex()),
             (
                 "object_raw_span",
@@ -289,6 +297,31 @@ def export_pestatic_semantics(parsed: PeStaticPayload) -> RuleSemantics:
     )
     issues: list[SemanticIssue] = []
     status = "confirmed_subset"
+    if parsed.recid_tail is not None and parsed.recid_tail.has_object:
+        status = "unsupported"
+        issues.append(
+            SemanticIssue(
+                "recid_object_meaning_unknown",
+                "The receiver uses the bounded object to construct RecID metadata, "
+                "but its producer-side meaning is unknown.",
+                (("length", len(parsed.recid_tail.object_raw)),),
+            )
+        )
+    if (
+        parsed.recid_tail is not None
+        and parsed.recid_tail.length_limit > len(parsed.recid_tail.raw) - 1
+    ):
+        status = "unsupported"
+        issues.append(
+            SemanticIssue(
+                "recid_object_truncated",
+                "The bounded RecID object is shorter than its declared length.",
+                (
+                    ("declared_length", parsed.recid_tail.length_limit),
+                    ("available_length", len(parsed.recid_tail.raw) - 1),
+                ),
+            )
+        )
     if parsed.recid_tail is not None and parsed.recid_tail.trailing_raw:
         status = "unsupported"
         issues.append(
@@ -307,7 +340,7 @@ def export_pestatic_semantics(parsed: PeStaticPayload) -> RuleSemantics:
             ("source_start", "provider_selected_start"),
             ("stages", stages),
             ("content_size", parsed.content_size),
-            ("recid_alias", _alias_data(parsed.recid_tail)),
+            ("recid_tail", _tail_data(parsed.recid_tail)),
             ("final_verdict", "not_represented"),
         )
     )
@@ -327,6 +360,145 @@ def export_pestatic_semantics(parsed: PeStaticPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="pestatic_wire_layout",
+                scope="wire_layout",
+                statement=(
+                    "PESTATIC contains four little-endian DWORD fields followed "
+                    "by an optional bounded RecID tail."
+                ),
+                coverage="complete",
+                evidence_refs=("pestatic_receiver",),
+            ),
+            SemanticClaim(
+                id="pestatic_loader_dispatch",
+                scope="loader_dispatch",
+                statement="The analyzed store registration binds type 0x87 to PESTATIC.",
+                coverage="subset",
+                evidence_refs=("pestatic_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Other database profiles and engine versions are not covered.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="pestatic_receiver_projection",
+                scope="receiver_transform",
+                statement=(
+                    "RecordPush copies the four DWORDs into a 20-byte runtime entry; "
+                    "a present tail is converted to RecID metadata and its derived "
+                    "threat ID is stored in the fifth DWORD."
+                ),
+                coverage="subset",
+                evidence_refs=("pestatic_receiver",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The producer meaning of the optional tail object is unknown.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="pestatic_crc_consumer",
+                scope="runtime_consumer",
+                statement=(
+                    "The analyzed lookup supports CRC_1 comparisons over 64 and "
+                    "512 bytes and a CRC_0 comparison over the record content length."
+                ),
+                coverage="subset",
+                evidence_refs=("pestatic_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Runtime source-start selection and all caller contexts are not closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="pestatic_local_predicate",
+                scope="detection_predicate",
+                statement=(
+                    "At the local lookup boundary, a candidate is accepted only "
+                    "after the analyzed mode-0, mode-1, and mode-2 CRC comparisons succeed."
+                ),
+                coverage="subset",
+                evidence_refs=("pestatic_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Bloom selection, caller context, and outer scan gates are not a portable predicate.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="pestatic_report_branch",
+                scope="report_mapping",
+                statement=(
+                    "The analyzed matched-entry branch can set detection data for "
+                    "ordinary threats or aggregate attribute entries."
+                ),
+                coverage="subset",
+                evidence_refs=("pestatic_report",),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "ShouldContinueScanning and outer reply arbitration remain unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="pestatic_final_verdict",
+                scope="final_verdict",
+                statement="A PESTATIC candidate does not by itself establish the final product verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "The service/UI/remediation verdict path has not been followed to completion.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="pestatic_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="PESTATIC store registration and RecordPush binding",
+                supports=("pestatic_loader_dispatch",),
+            ),
+            SemanticEvidence(
+                id="pestatic_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="PESTATIC RecordPush @ 0x180435A44",
+                supports=("pestatic_wire_layout", "pestatic_receiver_projection"),
+            ),
+            SemanticEvidence(
+                id="pestatic_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "Store::Lookup @ 0x180137728; Subtype::Lookup @ 0x180136E38; "
+                    "PeStaticHashProvider::CompareValues @ 0x1803B6CCC"
+                ),
+                supports=("pestatic_crc_consumer", "pestatic_local_predicate"),
+            ),
+            SemanticEvidence(
+                id="pestatic_report",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="PESTATIC Subtype::Lookup @ 0x180136E38 matched-entry branches",
+                supports=("pestatic_report_branch",),
+            ),
+        ),
     )
 
 
