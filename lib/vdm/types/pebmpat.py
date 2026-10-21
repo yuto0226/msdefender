@@ -267,9 +267,18 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         (
                             "coordinate",
                             (
-                                "ScanEx scan_offset guest VA; trie prefix and BM search "
-                                "both use this start, with no trie-hit offset returned"
+                                "ScanEx scan_offset is caller-fed PE VMM guest address "
+                                "on ordinary kvscanpage4sig path; trie prefix and BM "
+                                "search use this start, with no trie-hit offset returned"
                             ),
+                        ),
+                        (
+                            "upstream_coordinate_dataflow",
+                            "kvscan4sig second argument -> VMM mmap64(addr,1024,1) -> kvscanpage4sig second argument -> PEBMPatScanner::Scan -> ScanEx; scan_PE_context::jmp_scan also calls kvscanpage4sig after VMM mmap",
+                        ),
+                        (
+                            "sentinel_coordinate_path",
+                            "kvscan4sig conditionally substitutes 0xFFFFFFFF; PEEmuMapper::mmap then maps self+0x10 + guest_offset + 1 subject to self+0x20 bound",
                         ),
                         (
                             "trie_reader",
@@ -503,7 +512,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         ),
                         (
                             "candidate_coordinate_status",
-                            "caller-supplied guest VA; mapping to PE input bytes/RVA/file offset unknown",
+                            "ordinary path confirmed PE VMM guest address; sentinel path confirmed separately; candidate-specific section/RVA/file offset and runtime buffer provenance unknown",
                         ),
                         ("runtime_bytes_observed", False),
                         (
@@ -516,7 +525,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         ),
                         (
                             "file_or_rva_translation",
-                            "conditional x86 and x64 file-backed VMM interval paths; candidate-specific mapping unknown",
+                            "__mmap_ex has conditional x86/x64 file-backed VMM interval paths; no candidate-specific interval row or address-to-RVA/file-offset translation confirmed",
                         ),
                     )
                 ),
@@ -577,7 +586,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         status=(
             "ignored" if parsed.receiver_result.startswith("no_op.") else "unsupported"
         ),
-        representation="pebmpat.pattern.ir.v6",
+        representation="pebmpat.pattern.ir.v7",
         data=data,
         evidence=(
             (
