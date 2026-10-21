@@ -1,5 +1,6 @@
 """Lossless parser for Defender's shared file path signature family."""
 
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -7,6 +8,8 @@ from types import MappingProxyType
 from typing import Final, Literal
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -152,6 +155,82 @@ def render_fpath(parsed: FpathPayload) -> FormatResult:
         ),
     ]
     return FormatResult(sections=tuple(sections))
+
+
+def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
+    """Export a deterministic, lossless path observation manifest."""
+    type_name = FPATH_TYPES[parsed.type_byte]
+    is_asep = parsed.type_byte in {0x71, 0x75}
+    path_offset = HEADER_SIZE
+    pipe_suffix = (
+        None
+        if parsed.pipe_offset is None
+        else parsed.path_region_raw[parsed.pipe_offset :]
+    )
+    manifest = {
+        "schema": "vdm.fpath.artifact.v1",
+        "record_type": {"byte": parsed.type_byte, "name": type_name},
+        "family": "asep" if is_asep else "standard",
+        "raw_hex": parsed.raw.hex(),
+        "csidl": {
+            "value": parsed.csidl_value,
+            "raw_hex": parsed.raw[:HEADER_SIZE].hex(),
+            "offset": 0,
+        },
+        "path": {
+            "kind": parsed.path_kind,
+            "raw_hex": parsed.path_region_raw.hex(),
+            "offset": path_offset,
+            "path_bytes_hex": parsed.path_bytes.hex(),
+            "path_latin1": parsed.path_bytes.decode("latin-1"),
+            "normalized_bytes_hex": parsed.runtime_path_bytes.hex(),
+            "normalized_latin1": parsed.runtime_path_bytes.decode("latin-1"),
+            "normalization": (
+                "append_backslash_if_nonempty_and_missing"
+                if parsed.path_kind == "foldername"
+                else "none"
+            ),
+            "nul_terminated": parsed.nul_terminated,
+            "nul_offset": (
+                None if parsed.nul_offset is None else path_offset + parsed.nul_offset
+            ),
+            "pipe_suffix": (
+                None
+                if pipe_suffix is None
+                else {
+                    "offset": path_offset + parsed.pipe_offset,
+                    "raw_hex": pipe_suffix.hex(),
+                }
+            ),
+        },
+        "recid_tail": {
+            "raw_hex": parsed.tail_raw.hex(),
+            "offset": (
+                path_offset + len(parsed.path_region_raw) + int(parsed.nul_terminated)
+            ),
+        },
+        "semantic_boundary": {
+            "path_matching_and_verdict": "unknown",
+            "csidl_runtime_mapping": "unknown",
+            "pipe_suffix_and_recid_tail": "opaque_bytes_preserved",
+            "path_encoding": "single_byte_latin1_view_is_reversible_not_text_semantics",
+        },
+    }
+    data = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    digest = hashlib.sha256(parsed.raw).hexdigest()[:16]
+    return ArtifactExport(
+        "ready",
+        artifacts=(
+            Artifact(
+                f"{parsed.type_byte:02x}-{digest}.json",
+                "fpath_json_manifest",
+                data,
+            ),
+        ),
+    )
 
 
 def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
@@ -334,6 +413,7 @@ FPATH_SPECS = tuple(
         name,
         _parser_for(type_byte),
         render_fpath,
+        exporter=(export_fpath_artifact if type_byte in {0x5F, 0x60, 0x71} else None),
         semantic_exporter=export_fpath_semantics,
     )
     for type_byte, name in FPATH_TYPES.items()
