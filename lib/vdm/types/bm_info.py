@@ -20,6 +20,42 @@ _DETECTION_FLAG_BITS = (
     (0x80, "high", 0x00000010),
 )
 
+# Verified against mpengine.dll 1.443.903.0 BmDetectionDetails::ParseAction.
+# The engine compares names case-insensitively and returns zero for unknown names.
+_ACTION_TOKEN_MASKS = {
+    "eventlog": 0x0000000000000001,
+    "telemetry": 0x0000000000000002,
+    "ui": 0x0000000000000004,
+    "remediateprocess": 0x0000000000000008,
+    "remediatebasefile": 0x0000000000000010,
+    "alwayssendsamples": 0x0000000000000020,
+    "sendmodules": 0x0000000000000040,
+    "singleprocessscan": 0x0000000000000080,
+    "allprocessscan": 0x0000000000000100,
+    "emsscan": 0x0000000000001000,
+    "regkeyvaluescan": 0x0000000000004000,
+    "turnnrion": 0x0000000000010000,
+    "bootscan": 0x0000000000020000,
+    "driverscan": 0x0000000000040000,
+    "wmiscan": 0x0000000000080000,
+    "fastremediation": 0x0000000000100000,
+    "remediatemultiprocess": 0x0000000000200000,
+    "informcamp": 0x0000000000800000,
+    "monitoreop": 0x0000000001000000,
+    "monitorproctreeeop": 0x0000000002000000,
+    "setprocesstainted": 0x0000000004000000,
+    "smsscan": 0x0000000008000000,
+    "fdrprocess": 0x0000000010000000,
+    "fdrfile": 0x0000000020000000,
+    "parentinfo": 0x0000000040000000,
+    "smsasyncscanevent": 0x0000000080000000,
+    "emsmappedscan": 0x0000000100000000,
+    "senseetw": 0x0000000200000000,
+    "bootbackup": 0x0000000400000000,
+    "bootrestore": 0x0000000800000000,
+    "memoryquery": 0x0000001000000000,
+}
+
 _POLICY_MASK_OBSERVED_EFFECTS = (
     (
         0x0100,
@@ -269,30 +305,53 @@ def _parse_action_entries(raw: bytes) -> tuple[list[JSONObject], list[str]]:
         severity_raw, separator, actions_raw = entry.partition(b":")
         actions = actions_raw.split(b"+") if separator else []
         severity = severity_raw.decode("ascii")
+        severity_canonical = {
+            "low": "Low",
+            "medium": "Medium",
+            "high": "High",
+        }.get(severity.lower())
         if (
             not separator
-            or severity not in {"Low", "Medium", "High"}
+            or severity_canonical is None
             or not actions
             or any(not action for action in actions)
         ):
             issues.append("action entry is outside the confirmed severity/action form")
+        token_masks = tuple(
+            _ACTION_TOKEN_MASKS.get(action.decode("ascii").lower(), 0)
+            for action in actions
+        )
+        unknown_tokens = tuple(
+            action.decode("ascii")
+            for action, mask in zip(actions, token_masks, strict=True)
+            if mask == 0
+        )
         entries.append(
             JSONObject(
                 (
                     (
                         "severity",
-                        severity if severity in {"Low", "Medium", "High"} else None,
+                        severity_canonical,
                     ),
                     (
                         "action_tokens",
                         JSONArray(tuple(action.decode("ascii") for action in actions)),
                     ),
-                    ("action_mask", None),
+                    ("token_masks", JSONArray(token_masks)),
+                    ("action_mask", _or_masks(token_masks)),
+                    ("unknown_action_tokens", JSONArray(unknown_tokens)),
                     ("raw_hex", entry.hex()),
                 )
             )
         )
     return entries, issues
+
+
+def _or_masks(masks: tuple[int, ...]) -> int:
+    result = 0
+    for mask in masks:
+        result |= mask
+    return result
 
 
 def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
@@ -327,11 +386,6 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
         )
     )
     issues = [
-        SemanticIssue(
-            "action_token_masks_not_exported",
-            "Action tokens reach ParseAction, but the complete token-to-mask mapping "
-            "is not established in this engine profile.",
-        ),
         SemanticIssue(
             "enhancer_consumers_incomplete",
             "Enhancer parsing and vector insertion are confirmed, but other runtime "
@@ -403,7 +457,7 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
     recid_object = info.recid_object_raw
     return RuleSemantics(
         status=status,
-        representation="bm_info.receiver-policy.ir.v1",
+        representation="bm_info.receiver-policy.ir.v2",
         data=JSONObject(
             (
                 ("type", "BM_INFO"),
@@ -515,6 +569,10 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
             ),
             "mpengine 1.443.903.0 ExtractFidelity and GetFidelityEnhancers",
             "mpengine 1.443.903.0 ProcessDetectionActions and action-list parsing",
+            (
+                "mpengine 1.443.903.0 BmDetectionDetails::ParseAction @ "
+                "0x1802A7348: case-insensitive action-token masks"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
