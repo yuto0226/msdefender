@@ -304,6 +304,10 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         ),
         ("matcher", "processor_GetCharAtAddr_output_equals_trie_pattern_bytes"),
         (
+            "subject_stream",
+            "route-specific mapped instruction or token stream; not raw-file-byte equivalent",
+        ),
+        (
             "processor_match_contract",
             JSONObject(
                 (
@@ -380,7 +384,8 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
             "engine_processor_required",
             "Route-specific token extraction and advance behavior are recorded, "
             "but matching still depends on engine mapper and processor behavior; "
-            "this export does not execute those components.",
+            "this export does not execute those components and must not be applied "
+            "as a processor-independent raw-byte predicate.",
         ),
         SemanticIssue(
             "final_verdict_unknown",
@@ -516,7 +521,7 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         )
     return RuleSemantics(
         status="confirmed_subset",
-        representation="fop.trie_matcher_subset.ir.v7",
+        representation="fop.trie_matcher_subset.ir.v8",
         data=JSONObject(tuple(data_items)),
         evidence=evidence,
         profile="mpengine-1.443.903.0",
