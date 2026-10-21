@@ -330,8 +330,9 @@ def export_threat_begin_semantics(threat: ThreatBegin) -> RuleSemantics:
             (("count", len(threat.ext_entries)),),
         ),
         SemanticIssue(
-            "post_name_word_semantics_unknown",
-            "The receiver skips post_name_zero without using it as a condition.",
+            "post_name_word_producer_semantics_unknown",
+            "The current receiver skips post_name_zero without using it as a "
+            "condition; its producer-side format purpose remains unknown.",
             (("raw_value", threat.post_name_zero),),
         ),
     ]
