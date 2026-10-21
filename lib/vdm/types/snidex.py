@@ -1,9 +1,13 @@
 """Typed models for extended SNID hash records 0xE5 and 0xE6."""
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Final
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -203,6 +207,7 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
             ),
         )
     )
+
     return RuleSemantics(
         status="confirmed_subset",
         representation="snidex.exact_match_entry.v1",
@@ -283,11 +288,60 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
     )
 
 
+def export_snidex_artifact(parsed: SnidExPayload) -> ArtifactExport:
+    """Export opaque exact-match key blocks and metadata as raw observations."""
+    prefix_size = len(parsed.key_blocks) * 16 + 1
+    manifest = {
+        "schema": "vdm.snidex.artifact.v1",
+        "record_type": {
+            "byte": parsed.type,
+            "name": "SNIDEX2" if parsed.type == SNIDEX2_TYPE else "SNIDEX",
+        },
+        "raw_hex": parsed.raw.hex(),
+        "key_blocks": [
+            {"index": index, "offset": index * 16, "raw_hex": block.hex()}
+            for index, block in enumerate(parsed.key_blocks)
+        ],
+        "category": {
+            "offset": len(parsed.key_blocks) * 16,
+            "raw_hex": bytes((parsed.category_value,)).hex(),
+            "value": parsed.category_value,
+        },
+        "recid_input": {
+            "offset": prefix_size,
+            "raw_hex": parsed.recid_input_raw.hex(),
+            "interned_object_raw_hex": (
+                None if parsed.object_raw is None else parsed.object_raw.hex()
+            ),
+            "receiver_ignored_after_nul_raw_hex": parsed.ignored_trailing_raw.hex(),
+        },
+        "matcher_boundary": {
+            "confirmed_operation": "exact_raw_key_and_category_byte_comparison",
+            "key_generation": "unknown",
+            "provider_selector": "unknown",
+            "recid_or_pcode_effect": "unknown",
+            "final_report_or_verdict": "unknown",
+        },
+    }
+    data = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    digest = hashlib.sha256(parsed.raw).hexdigest()[:16]
+    return ArtifactExport(
+        "ready",
+        artifacts=(
+            Artifact(f"{parsed.type:02x}-{digest}.json", "snidex_json_manifest", data),
+        ),
+    )
+
+
 SNIDEX_SPEC = FamilySpec(
     SNIDEX_TYPE,
     "SNIDEX",
     _parser_for(SNIDEX_TYPE),
     render_snidex,
+    exporter=export_snidex_artifact,
     semantic_exporter=export_snidex_semantics,
 )
 SNIDEX2_SPEC = FamilySpec(
@@ -295,6 +349,7 @@ SNIDEX2_SPEC = FamilySpec(
     "SNIDEX2",
     _parser_for(SNIDEX2_TYPE),
     render_snidex,
+    exporter=export_snidex_artifact,
     semantic_exporter=export_snidex_semantics,
 )
 SNIDEX_SPECS: Final = (SNIDEX_SPEC, SNIDEX2_SPEC)
