@@ -10,8 +10,11 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
     SemanticJSONValue,
+    SemanticUnknown,
 )
 
 VFILE_TYPE: Final = 0x83
@@ -259,7 +262,13 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                     else None,
                 ),
                 ("runtime_terminator_appended", True),
-                ("runtime_use", "VfsFileData::addFile path argument"),
+                (
+                    "runtime_use",
+                    (
+                        "candidate path input for retained entries reaching "
+                        "VfsFileData::addFile"
+                    ),
+                ),
             )
         )
         entries.append(
@@ -301,8 +310,9 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
     if parsed.signature_type == VFILEEX_TYPE:
         confirmed_routes.append("offline_storage_serialization_and_cached_load")
         persistence_details = (
-            "receiver-end writes deduplicated DATA/LINK chunks to compressed offline "
-            "storage; cached-end reads the storage and calls vfs_global_vfileinit"
+            "receiver-end writes retained, deduplicated DATA/LINK chunks to "
+            "compressed offline storage; cached-end reads retained entries and "
+            "calls vfs_global_vfileinit"
         )
 
     data = JSONObject(
@@ -324,7 +334,13 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                             "runtime_terminator",
                             "receiver appends UTF-16 NUL after copied field",
                         ),
-                        ("consumer", "VfsFileData::addFile builds VirtualFS tree"),
+                        (
+                            "consumer",
+                            (
+                                "retained entries reaching VfsFileData::addFile build "
+                                "the VirtualFS tree"
+                            ),
+                        ),
                         (
                             "content_source",
                             "MpFileDataEntry ByteStream from kstoreex tail",
@@ -362,9 +378,187 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
             ("report_consumer", None),
         )
     )
+    claims = [
+        SemanticClaim(
+            id="vfile_wire_layout",
+            scope="wire_layout",
+            statement=(
+                "The receiver reads "
+                + (
+                    "a u32 entry count followed by "
+                    if parsed.signature_type == VFILEEX_TYPE
+                    else ""
+                )
+                + f"{_ENTRY_STRIDE}-byte entries and requires a non-empty tail."
+            ),
+            coverage="subset",
+            evidence_refs=("vfile_receiver",),
+            unknowns=(
+                SemanticUnknown(
+                    "wire_layout",
+                    "The internal kstoreex tail framing and the 44-byte entry prefix "
+                    "remain unresolved.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vfile_dispatch_path",
+            scope="loader_dispatch",
+            statement=(
+                f"The offline loader registers type 0x{parsed.signature_type:02X} "
+                "to the shared VFILE/VFILEEX receiver route."
+            ),
+            coverage="subset",
+            evidence_refs=("vfile_dispatch",),
+            unknowns=(
+                SemanticUnknown(
+                    "loader_dispatch",
+                    "Outer database selection and product enablement gates are not modeled.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vfile_receiver_projection",
+            scope="receiver_transform",
+            statement=(
+                "The receiver copies each retained entry's bounded 520-byte UTF-16LE "
+                "name field, appends a UTF-16 NUL, and pairs it with a ByteStream "
+                "constructed from the kstoreex tail."
+            ),
+            coverage="subset",
+            evidence_refs=("vfile_receiver",),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "The entry-retention predicate, entry-prefix fields, and kstoreex "
+                    "transform are not projected.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vfile_runtime_vfs_insertion",
+            scope="runtime_consumer",
+            statement=(
+                "For entries retained by the receiver or VFILEEX cache route, "
+                "VfsFileData::addFile inserts the normalized path and ByteStream into "
+                "the VirtualFS tree."
+            ),
+            coverage="subset",
+            evidence_refs=("vfile_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "VirtualFS lookup behavior and consumers of the inserted files are "
+                    "not traced.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vfile_detection_predicate",
+            scope="detection_predicate",
+            statement=(
+                "No scan-time detection predicate is established by this VFS "
+                "construction path."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "The matcher or emulation logic that queries the constructed "
+                    "VirtualFS is unlocated.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vfile_report_mapping",
+            scope="report_mapping",
+            statement=(
+                "VFILE/VFILEEX data has no confirmed direct mapping to a threat report."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "No consumer was followed from a VirtualFS lookup to report policy.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="vfile_final_verdict",
+            scope="final_verdict",
+            statement="VirtualFS insertion is not a confirmed final scan verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Outer scan arbitration and final report policy remain unresolved.",
+                ),
+            ),
+        ),
+    ]
+    claim_evidence = [
+        SemanticEvidence(
+            id="vfile_dispatch",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="VFILE/VFILEEX offline receiver registrations",
+            supports=("vfile_dispatch_path",),
+        ),
+        SemanticEvidence(
+            id="vfile_receiver",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="vfileAndVfileexReceiver @ 0x1802C8A58",
+            supports=("vfile_wire_layout", "vfile_receiver_projection"),
+        ),
+        SemanticEvidence(
+            id="vfile_consumer",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "populateVfsWithVfiles @ 0x18019FF7C; "
+                "VfsFileData::addFile @ 0x18019E640"
+            ),
+            supports=("vfile_runtime_vfs_insertion",),
+        ),
+    ]
+    if parsed.signature_type == VFILEEX_TYPE:
+        claims.append(
+            SemanticClaim(
+                id="vfileex_persistence_route",
+                scope="receiver_transform",
+                statement=(
+                    "The VFILEEX receiver-end serializes retained, deduplicated "
+                    "DATA/LINK entries; cached-end reloads retained entries through "
+                    "vfs_global_vfileinit before addFile."
+                ),
+                coverage="subset",
+                evidence_refs=("vfileex_persistence",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The retention/deduplication predicate and compressed storage "
+                        "encoding are not projected.",
+                    ),
+                ),
+            )
+        )
+        claim_evidence.append(
+            SemanticEvidence(
+                id="vfileex_persistence",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="VFILEEX offline and cached receiver-end routines",
+                supports=("vfileex_persistence_route",),
+            )
+        )
     return RuleSemantics(
         status="confirmed_subset",
-        representation="vfile.receiver_vfs_entry.ir.v2",
+        representation="vfile.receiver_vfs_entry.ir.v3",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 vfileAndVfileexReceiver @ 0x1802C8A58",
@@ -389,6 +583,8 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                 (("length", len(parsed.tail_raw)),),
             ),
         ),
+        claims=tuple(claims),
+        claim_evidence=tuple(claim_evidence),
     )
 
 
