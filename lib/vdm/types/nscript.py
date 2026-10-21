@@ -678,7 +678,7 @@ def render_nscript_brute(parsed: NScriptBrutePayload) -> FormatResult:
 
 
 def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics:
-    """Export lossless BM IR without assigning NSCRIPT verdict semantics."""
+    """Export the confirmed receiver-to-BM candidate subset, not verdicts."""
     pattern_data, pattern_issues = serialize_bm_pattern(parsed.pattern)
     name_length = len(parsed.name_bytes)
     body_offset = 1 + name_length + 1 + 1 + 4 + 4
@@ -724,15 +724,30 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
             (
                 "runtime_gate",
                 (
-                    "UFS base plugin id 6; worker candidate entry type byte == 6"
+                    "conditional: UFS base plugin id 6 and worker candidate "
+                    "entry byte +0x15 == 6"
                     if parsed.runtime_consumer is not None
-                    else "record-specific consumer unknown"
+                    else "this entry type does not enter the BMMatchEx2 branch"
                 ),
             ),
             (
                 "worker_candidate_subset",
                 JSONObject(
                     (
+                        (
+                            "receiver",
+                            "pushBruteWorker stores this record as a 24-byte BruteContext entry",
+                        ),
+                        ("stored_body", "entry +0x00; kpopobject result for wire body"),
+                        (
+                            "stored_position",
+                            "entry +0x10; wire u32 stored as u16; 0xFFFFFFFF becomes 0xFFFF",
+                        ),
+                        ("stored_direction", "entry +0x14; wire byte"),
+                        (
+                            "stored_script_type",
+                            "entry +0x15; low7 minus 1, with 0 mapping to 6",
+                        ),
                         ("context_transform", "mapSP byte mapping before trie search"),
                         ("candidate_index", "FilteredTrie::matchUsingMap output"),
                         ("entry_size", 24),
@@ -746,8 +761,8 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
         )
     )
     return RuleSemantics(
-        status="observed_only",
-        representation="bm.pattern.ir.v1",
+        status="confirmed_subset",
+        representation="nscript.brute.receiver_runtime_candidates.v1",
         data=JSONObject(pattern_data.items + (("outer", outer),)),
         evidence=(
             (
@@ -758,14 +773,20 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
                 "SearchBruteWorker uses mapSP + FilteredTrie::matchUsingMap; "
                 "24-byte entries with byte +0x15 == 6 enter BMMatchEx2"
             ),
+            (
+                "pushBruteWorker @ 0x1800FAFE8 stores the body pointer, recid, "
+                "position, body length, direction, and normalized script type "
+                "in 24-byte BruteContext entries"
+            ),
             "0x29 NSCRIPT_BRUTE registration is distinct from 0xD0 BRUTE",
         ),
         profile=f"mpengine-{parsed.pattern.profile}",
         issues=(
             SemanticIssue(
-                "nscript_brute_outer_semantics_unknown",
-                "NSCRIPT_BRUTE routing, direction, position, and metadata are "
-                "retained without assigning detection or verdict semantics.",
+                "nscript_brute_direction_position_and_verdict_unknown",
+                "Receiver-to-entry mapping and the conditional BMMatchEx2 "
+                "candidate gate are confirmed; direction/position meaning, "
+                "validator policy, and final report/verdict remain unknown.",
                 (
                     ("runtime_script_type", parsed.runtime_script_type),
                     ("direction_raw", parsed.direction_raw),
