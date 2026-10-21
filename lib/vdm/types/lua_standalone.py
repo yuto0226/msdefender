@@ -710,7 +710,7 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
     )
     return RuleSemantics(
         status="unsupported" if unsupported else "observed_only",
-        representation="luastandalone.receiver_and_luaq.v2",
+        representation="luastandalone.record_runtime_effect.v3",
         data=JSONObject(
             (
                 ("signature_type", LUASTANDALONE_TYPE),
@@ -845,6 +845,83 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                                 ),
                             ),
                             ("final_detection", "unknown"),
+                            (
+                                "invocation_contract",
+                                JSONObject(
+                                    (
+                                        (
+                                            "worker",
+                                            "ValidateSignatureWithPcodeStandaloneWorker2",
+                                        ),
+                                        ("worker_address", "0x18002E670"),
+                                        ("worker_size", "0x81A"),
+                                        (
+                                            "lookup_key",
+                                            "MPpCodeInterface+0x10 U64 SigSeq",
+                                        ),
+                                        (
+                                            "lookup_order",
+                                            "validator map first; LuaStandalone::GetScript on map miss",
+                                        ),
+                                        (
+                                            "execution_gate",
+                                            (
+                                                "script exists and (metadata mask "
+                                                "0x01 is set or input level is not 2)"
+                                            ),
+                                        ),
+                                        (
+                                            "worker_input_offsets",
+                                            JSONObject(
+                                                (
+                                                    (
+                                                        "input_level_then_status_writeback",
+                                                        "MPpCodeInterface+0x30",
+                                                    ),
+                                                    ("flags", "MPpCodeInterface+0x38"),
+                                                    (
+                                                        "extension",
+                                                        "MPpCodeInterface+0x50",
+                                                    ),
+                                                    (
+                                                        "context",
+                                                        "MPpCodeInterface+0x80",
+                                                    ),
+                                                )
+                                            ),
+                                        ),
+                                        (
+                                            "available_host_libraries",
+                                            JSONArray(
+                                                (
+                                                    "standard Lua libraries",
+                                                    "mp_standalone",
+                                                    "sysio",
+                                                    "crypto",
+                                                    "MpCommon",
+                                                    "Versioning",
+                                                    "conditional bm",
+                                                    "conditional nri",
+                                                )
+                                            ),
+                                        ),
+                                        (
+                                            "reply_field",
+                                            "MPpCodeInterface+0x30 status candidate",
+                                        ),
+                                        (
+                                            "reply_consumer",
+                                            "CHSTRMatchHelper::ProcMatchLevel",
+                                        ),
+                                        ("reply_consumer_address", "0x180136A4C"),
+                                        (
+                                            "caller_observed_routes",
+                                            "0 cancels candidate; 3/6/8 low-confidence path; 10/11 HIPS path; other accepted results remain caller/policy dependent",
+                                        ),
+                                        ("final_verdict", "unknown"),
+                                    )
+                                ),
+                            ),
                             ("script_effect", "unknown"),
                             ("peb_injection", "unknown"),
                             (
@@ -884,8 +961,14 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
                     else None,
                 ),
                 ("record_trailing_raw_hex", parsed.trailing_raw.hex()),
-                ("runtime_registration", "unknown"),
-                ("runtime_execution_effect", "unknown"),
+                (
+                    "runtime_registration",
+                    "record ingestion into ProcessedLuaScript holder confirmed",
+                ),
+                (
+                    "runtime_execution_effect",
+                    "script-defined host effects unknown; worker status writeback confirmed",
+                ),
             )
         ),
         evidence=(
@@ -896,6 +979,7 @@ def export_lua_standalone_semantics(parsed: LuaStandalonePayload) -> RuleSemanti
             "mpengine 1.443.903.0 ProcessedLuaScript::LoadFunction @ 0x180032950",
             "mpengine 1.443.903.0 LuaStandaloneScriptRunner::RunScript @ 0x180085998",
             "mpengine 1.443.903.0 ValidateSignatureWithPcodeStandaloneWorker2 @ 0x18002E670",
+            "mpengine 1.443.903.0 CHSTRMatchHelper::ProcMatchLevel @ 0x180136A4C",
             "mpengine 1.443.903.0 IsValidScanStatus @ 0x1803D7A68",
             "mpengine 1.443.903.0 ProcessedLuaScript::ProcessFunction @ 0x18031F8A0",
         ),
