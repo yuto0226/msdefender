@@ -80,13 +80,13 @@ def export_friendlyfile_sha256(parsed: FriendlyFileSha256) -> ArtifactExport:
             "trailing_offset": SHA256_SIZE + 1 + len(tail.object_raw),
         }
     manifest = {
-        "format": "vdm.friendly_file_sha256.record.v1",
+        "format": "vdm.friendly_file_sha256.record.v2",
         "record": {
             "type": FRIENDLYFILE_SHA256_TYPE,
             "type_hex": f"0x{FRIENDLYFILE_SHA256_TYPE:02X}",
             "name": "FRIENDLYFILE_SHA256",
             "scope": "record_local",
-            "threat_association": "not_included",
+            "threat_association": "not_included_in_record_local_artifact",
             "verdict_scope": "lookup_key_only; no final verdict asserted",
         },
         "payload_length": len(parsed.raw),
@@ -179,6 +179,13 @@ def export_friendlyfile_sha256_semantics(
             "The exact digest lookup does not by itself define the final scan verdict.",
         )
     )
+    issues.append(
+        SemanticIssue(
+            "original_threat_attribution_unknown",
+            "Runtime lookup uses an index-based synthetic identity; no confirmed "
+            "path restores the enclosing VDM threat ID or name for a digest hit.",
+        )
+    )
 
     if tail is not None and tail.length_limit > len(tail.raw) - 1:
         unsupported = True
@@ -251,15 +258,32 @@ def export_friendlyfile_sha256_semantics(
                     )
                 ),
             ),
+            (
+                "runtime_identity",
+                JSONObject(
+                    (
+                        ("kind", "index_based_synthetic_identity"),
+                        ("threat_sentinel", 0x7FFFFFFF),
+                        ("original_threat_attribution", "not_established"),
+                    )
+                ),
+            ),
             ("recid_tail", _recid_tail_semantics(tail)),
         )
     )
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
-        representation="friendlyfile.sha256_lookup.ir.v1",
+        representation="friendlyfile.sha256_lookup.ir.v2",
         data=data,
         evidence=(
-            "mpengine 1.443.903.0 FRIENDLYFILE_SHA256 RecordPush and Lookup data flow",
+            (
+                "mpengine 1.443.903.0 FRIENDLYFILE_SHA256 RecordPush "
+                "@ 0x18040A300 and Lookup @ 0x1802D6E60"
+            ),
+            (
+                "mpengine 1.443.903.0 FRIENDLYFILE_SHA256 GetThreatDetails "
+                "@ 0x180B01F30 returns an index-based synthetic identity"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
