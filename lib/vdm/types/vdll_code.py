@@ -361,7 +361,7 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
     host_selector = _HOST_SELECTOR[parsed.type]
     return RuleSemantics(
         status="observed_only",
-        representation="vdll.receiver_observation.v1",
+        representation="vdll.receiver_observation.v2",
         data=JSONObject(
             (
                 ("type", f"0x{parsed.type:02X}"),
@@ -387,6 +387,19 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
                                     "host/table routing does not prove unique "
                                     "metadata-to-code pairing"
                                 ),
+                            ),
+                            (
+                                "architecture_path_status",
+                                {
+                                    0: "x86 receiver and metadata table index 0 observed; unique record pairing unknown",
+                                    1: "x64 receiver and metadata table index 1 observed; unique record pairing unknown",
+                                    2: "ARM receiver and metadata table index 2 observed; unique record pairing unknown",
+                                    3: "ARM64 receiver and metadata table index 3 observed; code type 0x91 has no corpus records; unique record pairing unknown",
+                                }[host_selector],
+                            ),
+                            (
+                                "pairing_key_observed",
+                                False,
                             ),
                         )
                     ),
@@ -578,7 +591,7 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
             )
         ),
         evidence=(
-            "mpengine 1.443.903.0 dllsupp_init registers record types to host receivers",
+            "mpengine 1.443.903.0 dllsupp_init @ 0x180CA6240 registers 0x79/0xC4 to x86, 0x7C to x64, 0x9C to ARM, and 0x91 to ARM64 receiver wrappers",
             (
                 "mpengine 1.443.903.0 vdll_receiver passes identical "
                 "payload/length/init mode to vdll_data_t::init for registered code types"
@@ -594,6 +607,12 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
             (
                 "mpengine 1.443.903.0 vdll_receiver_end resolves imports through a "
                 "host-selected metadata table before the dependency PE export index"
+            ),
+            (
+                "vdll_receiver_end @ 0x1800FF328 selects a host metadata table and resolves import hashes; its fallback is the current VDLL PE export index, not a wire-record join key"
+            ),
+            (
+                "get_meta_type_from_vtype @ 0x180D26DC8 maps host selectors 0..3 to table indexes 0..3; type 0xE3 is registered at metadata index 4 but not selected by these host values"
             ),
             (
                 "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ "

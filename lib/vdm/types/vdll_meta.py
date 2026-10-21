@@ -169,7 +169,7 @@ def export_vdll_meta(
                 "metadata_index_ir",
                 JSONObject(
                     (
-                        ("version", 1),
+                        ("version", 2),
                         (
                             "host_routing",
                             JSONObject(
@@ -238,7 +238,15 @@ def export_vdll_meta(
                         (
                             "entry_pairing",
                             JSONObject(
-                                (("status", "unknown"), ("unique_code_record", None))
+                                (
+                                    ("status", "not_established"),
+                                    ("unique_code_record", None),
+                                    ("pairing_key", None),
+                                    (
+                                        "bounded_negative",
+                                        "metadata payload has no code-record slot/index; finalize consumes metadata as a hashed symbol-address source",
+                                    ),
+                                )
                             ),
                         ),
                         (
@@ -284,6 +292,17 @@ def export_vdll_meta(
                                             ("registered_type", "0x93 (unnamed)"),
                                         )
                                     ),
+                                    JSONObject(
+                                        (
+                                            ("host_selector", None),
+                                            ("table_index", 4),
+                                            ("registered_type", "0xE3"),
+                                            (
+                                                "finalize_reachability",
+                                                "not selected by observed host selector values 0..3",
+                                            ),
+                                        )
+                                    ),
                                 )
                             ),
                         ),
@@ -299,7 +318,8 @@ def export_vdll_meta(
                             "entry_pairing",
                             (
                                 "No unique VDLL_CODE record pairing is established "
-                                "by this payload."
+                                "by this payload; receiver storage and finalize "
+                                "symbol lookup expose no code-record identity key."
                             ),
                         ),
                         (
@@ -332,7 +352,7 @@ def export_vdll_meta(
     if parsed.trailing:
         return RuleSemantics(
             status="unsupported",
-            representation="vdll_metadata_index_ir.v1",
+            representation="vdll_metadata_index_ir.v2",
             data=data,
             evidence=(
                 (
@@ -359,7 +379,7 @@ def export_vdll_meta(
         )
     return RuleSemantics(
         status="confirmed_subset" if table_index is not None else "observed_only",
-        representation="vdll_metadata_index_ir.v1",
+        representation="vdll_metadata_index_ir.v2",
         data=data,
         evidence=(
             (
@@ -390,6 +410,9 @@ def export_vdll_meta(
                 "The metadata receiver's observed role is table insertion; this "
                 "confirmed subset covers the table index lookup and receiver node "
                 "layout only, not code-record pairing or a detection verdict."
+            ),
+            (
+                "Bounded negative: metadata receiver @ 0x1804C7B80 stores type-specific nodes; get_meta_type_from_vtype @ 0x180D26DC8 selects indexes 0..3; vdll_receiver_end @ 0x1800FF328 hashes import symbols for address lookup and falls back to the current PE export table. No code-record slot/index is observed in the wire metadata or resolution path."
             ),
         ),
         profile="mpengine-1.443.903.0",
