@@ -1,9 +1,12 @@
 """Parser and concise renderer for PESTATIC (0x87) payloads."""
 
+import json
 from dataclasses import dataclass
 from typing import Final
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -87,6 +90,80 @@ def render_pestatic(parsed: PeStaticPayload) -> FormatResult:
         sections.append(DisplaySection("Record Identity", rows=tuple(identity_rows)))
 
     return FormatResult(sections=tuple(sections))
+
+
+def export_pestatic(parsed: PeStaticPayload) -> ArtifactExport:
+    """Export the staged fingerprint record as lossless data, not a matcher."""
+    tail = parsed.recid_tail
+    tail_data: dict[str, object] | None = None
+    if tail is not None:
+        tail_data = {
+            "raw_hex": tail.raw.hex(),
+            "raw_offset": BASE_SIZE,
+            "declared_length": tail.length_limit,
+            "object_raw_hex": tail.object_raw.hex(),
+            "object_registered": tail.has_object,
+            "trailing_raw_hex": tail.trailing_raw.hex(),
+            "bounded_object_truncated": tail.length_limit > len(tail.raw) - 1,
+            "object_meaning": "unknown",
+        }
+
+    manifest = {
+        "format": "vdm.pestatic.record.v1",
+        "record": {
+            "type": PESTATIC_TYPE,
+            "type_hex": f"0x{PESTATIC_TYPE:02X}",
+            "name": "PESTATIC",
+            "scope": "record_local",
+            "threat_association": "not_included",
+            "portable_matcher": "not_emitted",
+            "matcher_boundary": (
+                "Staged fingerprint candidate only; provider-selected input start "
+                "and file bytes are runtime-dependent"
+            ),
+        },
+        "payload_length": len(parsed.raw),
+        "payload_raw_hex": parsed.raw.hex(),
+        "fingerprints": {
+            "crc_first_64": {
+                "value": parsed.crc_first_64,
+                "raw_hex": parsed.raw[0:4].hex(),
+                "input_length": 64,
+                "algorithm": "mpengine.CRC_1",
+                "parameters": "polynomial/init/final_xor_not_portably_confirmed",
+            },
+            "crc_first_512": {
+                "value": parsed.crc_first_512,
+                "raw_hex": parsed.raw[4:8].hex(),
+                "input_length": 512,
+                "algorithm": "mpengine.CRC_1",
+                "parameters": "polynomial/init/final_xor_not_portably_confirmed",
+            },
+            "content_crc": {
+                "value": parsed.content_crc,
+                "raw_hex": parsed.raw[8:12].hex(),
+                "input_length": parsed.content_size,
+                "algorithm": "mpengine.CRC_0",
+                "parameters": "polynomial/init/final_xor_not_portably_confirmed",
+            },
+            "content_size": {
+                "value": parsed.content_size,
+                "raw_hex": parsed.raw[12:16].hex(),
+            },
+        },
+        "recid_alias": tail_data,
+    }
+    encoded = json.dumps(manifest, ensure_ascii=True, separators=(",", ":"))
+    return ArtifactExport(
+        "ready",
+        artifacts=(
+            Artifact(
+                "pestatic.json",
+                "pestatic_record_manifest",
+                (encoded + "\n").encode("utf-8"),
+            ),
+        ),
+    )
 
 
 def _raw_field(kind: str, raw: bytes, offset: int) -> JSONObject:
@@ -251,5 +328,6 @@ SPEC = FamilySpec(
     "PESTATIC",
     parse_pestatic,
     render_pestatic,
+    exporter=export_pestatic,
     semantic_exporter=export_pestatic_semantics,
 )
