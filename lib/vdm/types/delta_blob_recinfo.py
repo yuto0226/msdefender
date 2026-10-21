@@ -119,7 +119,7 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
     )
     return RuleSemantics(
         status="observed_only",
-        representation="delta_blob_recinfo.observed_metadata.v1",
+        representation="delta_blob_recinfo.framing_dispatch_observation.v2",
         data=JSONObject(
             (
                 ("record_type", "DELTA_BLOB_RECINFO"),
@@ -128,17 +128,52 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
                 ("entry_size", ENTRY_SIZE),
                 ("entries", entries),
                 (
-                    "association",
-                    "adjacent DELTA_BLOB record observed; exact linkage unresolved",
+                    "wire_entry_layout",
+                    (
+                        "The local parser represents each four-byte unit as a one-byte "
+                        "raw type plus a three-byte little-endian raw value; no "
+                        "engine receiver was found that confirms those field semantics."
+                    ),
                 ),
                 (
                     "engine_disposition",
                     JSONObject(
                         (
-                            ("mode0_gate_true", "skipped_after_framing"),
-                            ("mode1", "DispatchRecord"),
+                            (
+                                "mode0_gate_true",
+                                (
+                                    "After framing, the 0x74 switch arm at "
+                                    "DispatchRecords+0x147 is an empty break; no "
+                                    "payload fields are consumed and DispatchRecord "
+                                    "is not called."
+                                ),
+                            ),
+                            (
+                                "mode0_gate_false",
+                                "Falls through to the shared DispatchRecord route.",
+                            ),
+                            (
+                                "mode1",
+                                "Calls DispatchRecord(0x74, payload, size).",
+                            ),
                             ("receiver_registration", "unconfirmed"),
                         )
+                    ),
+                ),
+                (
+                    "delta_blob_linkage",
+                    (
+                        "No direct linkage from 0x74 entry fields to 0x73 commands, "
+                        "compressed input, or reconstructed output was established. "
+                        "Both types share a version-gated switch, but use separate arms."
+                    ),
+                ),
+                (
+                    "loader_purpose",
+                    (
+                        "Unknown: the mode0 gate behavior and mode1 generic dispatch "
+                        "are observed, but runtime registration, storage, and "
+                        "consumer are not identified."
                     ),
                 ),
                 (
@@ -148,12 +183,33 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
             )
         ),
         evidence=(
-            "mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8",
             (
-                "DispatchRecords mode 0 with byte_1811FAE08 set skips type 0x74 "
-                "after outer framing; mode 1 calls DispatchRecord"
+                "mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8: "
+                "framing and mode split"
             ),
-            "DispatchRecord @ 0x1800FAF18 selects runtime gktab template/handler slots",
+            (
+                "mpengine 1.443.903.0 DispatchRecords @ 0x1800F9AEF: "
+                "switch 0x74 empty arm"
+            ),
+            ("mpengine 1.443.903.0 DispatchRecords @ 0x1800F9AE5: version-gate switch"),
+            (
+                "mpengine 1.443.903.0 DispatchRecords @ 0x1800F9C90: "
+                "mode1 generic dispatch call"
+            ),
+            (
+                "mpengine 1.443.903.0 DispatchRecords @ 0x1800FA010: "
+                "mode0 gate-false shared dispatch call"
+            ),
+            ("mpengine 1.443.903.0 DispatchRecord @ 0x1800FAF18: runtime gktab slots"),
+            (
+                "mpengine 1.443.903.0 load_database_cache @ 0x1800DBE50 "
+                "calls DispatchRecords(mode=1)"
+            ),
+            (
+                "mpengine 1.443.903.0 DispatchProxy::ConsumeInputCompressed "
+                "@ 0x1800D9ED0 consumes compressed blocks; no 0x74 entry-field "
+                "dataflow to this function was established"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=(
