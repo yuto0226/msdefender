@@ -118,11 +118,37 @@ def export_kvir32_semantics(parsed: Kvir32Payload) -> RuleSemantics:
                 if parsed.extension_data is not None
                 else None,
             ),
+            (
+                "evidence_axes",
+                JSONObject(
+                    (
+                        ("wire", "corpus_observed_profile_only"),
+                        ("receiver", "unresolved_dynamic_gktab_slot"),
+                        ("runtime_consumer", "unknown"),
+                        ("policy", "unknown"),
+                        ("report", "unknown"),
+                    )
+                ),
+            ),
+            (
+                "registration_search_boundary",
+                JSONObject(
+                    (
+                        (
+                            "checked",
+                            "direct RegisterForDatabaseRecords and regcntl caller evidence",
+                        ),
+                        ("type_specific_callsite_found", False),
+                        ("runtime_gktab_slot_observed", False),
+                        ("indirect_or_data_driven_registration_excluded", False),
+                    )
+                ),
+            ),
         )
     )
     return RuleSemantics(
         status="observed_only",
-        representation="kvir32.observed_framing.v1",
+        representation="kvir32.observed_framing.v2",
         data=data,
         evidence=(
             (
@@ -139,7 +165,15 @@ def export_kvir32_semantics(parsed: Kvir32Payload) -> RuleSemantics:
         issues=(
             SemanticIssue(
                 "payload_semantics_unknown",
-                "KVIR32 bytes are preserved as observed framing; no detection behavior is established.",
+                "KVIR32 bytes are preserved as observed framing; type-specific "
+                "receiver bounds, storage, consumer, policy, and report behavior "
+                "remain unresolved.",
+                (
+                    (
+                        "unresolved_axes",
+                        "receiver_bounds,storage,runtime_consumer,policy,report",
+                    ),
+                ),
             ),
         ),
     )
