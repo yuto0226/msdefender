@@ -162,6 +162,12 @@ class BmExtension(BmOperation):
 
 
 @dataclass(frozen=True, slots=True)
+class BmControlFlow(BmOperation):
+    token: BmToken
+    form: Literal["subject_rel8", "subject_rel16", "x86_relative_instruction"]
+
+
+@dataclass(frozen=True, slots=True)
 class BmOpaque(BmOperation):
     token: BmToken
 
@@ -178,6 +184,7 @@ BmSemanticOperation = (
     | BmScan
     | BmClass
     | BmExtension
+    | BmControlFlow
     | BmOpaque
     | BmEnd
 )
@@ -350,8 +357,12 @@ def _interpret_opcode(token: BmToken) -> BmSemanticOperation:
         # Preserve the wire count: flags and reader-specific predicates prevent
         # a general conversion to regex/YARA membership or repetition.
         return BmClass(*source, token, operands[0], operands[2:])
-    if dispatch == 0x13:
-        return BmExtension(*source, token, "FOLLOW_X86_RELATIVE_TARGET")
+    if dispatch == 0x14:
+        return BmControlFlow(*source, token, "subject_rel8")
+    if dispatch == 0x16:
+        return BmControlFlow(*source, token, "subject_rel16")
+    if dispatch in (0x13, 0x18):
+        return BmControlFlow(*source, token, "x86_relative_instruction")
     if dispatch == 0x1B:
         return BmExtension(*source, token, "BACKREF", operands[0])
     if dispatch in (0x20, 0x21):

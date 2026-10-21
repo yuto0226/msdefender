@@ -5,6 +5,7 @@ from typing import Literal
 from .bm import (
     BmAlternatives,
     BmClass,
+    BmControlFlow,
     BmEnd,
     BmExtension,
     BmGap,
@@ -88,6 +89,28 @@ def _operation_ir(operation: BmSemanticOperation) -> dict[str, object]:
         result["fidelity"] = "conditional"
         result["requirements"] = [
             "operation parameters are decoded, but reader state effects are not modeled"
+        ]
+    elif isinstance(operation, BmControlFlow):
+        decoded.update(
+            form=operation.form,
+            displacement_source="subject",
+            target_base=(
+                "after_displacement"
+                if operation.form in ("subject_rel8", "subject_rel16")
+                else "decoded_instruction_end"
+            ),
+            displacement_width={
+                "subject_rel8": 8,
+                "subject_rel16": 16,
+                "x86_relative_instruction": None,
+            }[operation.form],
+        )
+        result["fidelity"] = "conditional"
+        result["requirements"] = [
+            "BUFFER reader must decode the displacement from the same subject",
+            "worker mode controls translated-byte handling in the suffix",
+            "capture state can save the span from the prior cursor to the target",
+            "the remaining pattern must match from the computed target cursor",
         ]
     elif isinstance(operation, BmOpaque):
         result["kind"] = "opaque"

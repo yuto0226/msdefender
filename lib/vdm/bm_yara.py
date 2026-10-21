@@ -7,6 +7,7 @@ from typing import Literal
 from .bm import (
     BmAlternatives,
     BmClass,
+    BmControlFlow,
     BmEnd,
     BmExtension,
     BmGap,
@@ -278,6 +279,8 @@ def render_bm_yara(
                 name = f"class_{operation.token.dispatch_id:02X}"
             elif isinstance(operation, BmExtension):
                 name = operation.name
+            elif isinstance(operation, BmControlFlow):
+                name = operation.form
             elif isinstance(operation, BmOpaque):
                 name = f"OP_{raw_id:02X}"
             issues.append(
