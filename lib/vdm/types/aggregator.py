@@ -4,17 +4,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Final, Literal
 
-from ..condition import (
-    And,
-    AtLeast,
-    Atom,
-    Const,
-    Expr,
-    Not,
-    Or,
-    negate,
-    render_yara_like,
-)
+from ..condition import And, Atom, Expr, Not, Or, render_yara_like
 from ..core import (
     DisplaySection,
     FamilySpec,
@@ -22,8 +12,11 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
     SemanticJSONValue,
+    SemanticUnknown,
 )
 from ..pattern_codec import PATTERN_DECODING_TABLE
 
@@ -92,11 +85,30 @@ class AggregatorSemanticIssue:
 
 
 @dataclass(frozen=True, slots=True)
-class AggregatorCondition:
-    """Semantic interpretation, separate from the lossless wire payload."""
+class AggregatorPair:
+    """One ordered AttributePair emitted by the confirmed lowering path."""
 
-    expression: Expr | None
+    index: int
+    left: str
+    operator: Literal["&", "|"]
+    right: str
+    generated_name: str | None
+    record_id_binding: Literal["intermediate(-1)", "original"]
+    fuzzy_binding: Literal["false", "record_flag_bit_0"]
+
+
+@dataclass(frozen=True, slots=True)
+class AggregatorProgram:
+    """Symbolic AttributePair program, not an engine-equivalent Boolean AST."""
+
+    source: bytes
+    normalized_expression: str
+    pairs: tuple[AggregatorPair, ...]
     issue: AggregatorSemanticIssue | None = None
+
+    @property
+    def terminal_pair(self) -> AggregatorPair | None:
+        return self.pairs[-1] if self.pairs else None
 
     @property
     def semantic_status(self) -> Literal["verified_subset", "unsupported", "ignored"]:
@@ -110,35 +122,118 @@ class _AggregatorParseError(Exception):
         self.issue = AggregatorSemanticIssue(code, offset, message)
 
 
-def _strip_literal_parentheses(source: bytes) -> bytes:
-    """Apply AddSignature's confirmed innermost literal-group rewrite."""
-    normalized = source
-    while True:
-        stack: list[int] = []
-        changed = False
-        for closing, byte in enumerate(normalized):
-            if byte == ord("("):
-                stack.append(closing)
-            elif byte == ord(")"):
-                if not stack:
-                    return normalized
-                opening = stack.pop()
-                inner = normalized[opening + 1 : closing]
-                if b"&" not in inner and b"|" not in inner:
-                    normalized = (
-                        normalized[:opening] + inner + normalized[closing + 1 :]
-                    )
-                    changed = True
-                    break
-        if not changed:
-            return normalized
+def _symbolic_name(index: int) -> bytes:
+    """Represent an engine-generated name without claiming its global counter."""
+    return f"#ATTR_{index:08x}".encode()
 
 
-def interpret_aggregator(parsed: AggregatorPayload) -> AggregatorCondition:
-    """Decode the verified expression grammar without changing wire parsing."""
+def _make_pair(
+    pairs: list[AggregatorPair],
+    left: bytes,
+    operator: int,
+    right: bytes,
+    *,
+    terminal: bool,
+) -> bytes:
+    for offset, operand in ((0, left), (1, right)):
+        if len(operand) > 63:
+            raise _AggregatorParseError(
+                "operand_too_long",
+                offset,
+                f"lowered operand is {len(operand)} bytes; maximum is 63",
+            )
+    index = len(pairs)
+    generated = None if terminal else _symbolic_name(index)
+    pairs.append(
+        AggregatorPair(
+            index=index,
+            left=left.decode("latin-1"),
+            operator=chr(operator),
+            right=right.decode("latin-1"),
+            generated_name=None if generated is None else generated.decode(),
+            record_id_binding="original" if terminal else "intermediate(-1)",
+            fuzzy_binding="record_flag_bit_0" if terminal else "false",
+        )
+    )
+    return b"" if generated is None else generated
+
+
+def _lower_subexpression(
+    source: bytes,
+    pairs: list[AggregatorPair],
+    *,
+    terminal: bool,
+) -> bytes:
+    """Lower the statically confirmed ParseSubExpression subset to pairs."""
+    if not source:
+        raise _AggregatorParseError("empty_expression", 0, "expression is empty")
+
+    operands: list[bytes] = []
+    operators: list[int] = []
+    start = 0
+    for cursor, byte in enumerate(source):
+        if byte in b"&|":
+            operands.append(source[start:cursor])
+            operators.append(byte)
+            start = cursor + 1
+        elif byte in b"()":
+            raise _AggregatorParseError(
+                "unbalanced_parentheses",
+                cursor,
+                "parenthesis remained after innermost lowering",
+            )
+    operands.append(source[start:])
+
+    leading_operator = operators[0] if operands[0] == b"" and operators else None
+    trailing_operator = operators[-1] if operands[-1] == b"" and operators else None
+    if leading_operator is not None:
+        operands = operands[1:]
+        operators = operators[1:]
+    if trailing_operator is not None:
+        operands = operands[:-1]
+        operators = operators[:-1]
+    if not operands:
+        raise _AggregatorParseError(
+            "empty_operand", 0, "separator-only expression is unsupported"
+        )
+    if any(not operand for operand in operands):
+        raise _AggregatorParseError(
+            "empty_operand", 0, "multiple or internal empty operands are unsupported"
+        )
+    if any(len(operand) > 63 for operand in operands):
+        offending = next(operand for operand in operands if len(operand) > 63)
+        raise _AggregatorParseError(
+            "operand_too_long",
+            source.find(offending),
+            f"operand is {len(offending)} bytes; maximum is 63",
+        )
+
+    # A single operand is encoded as a duplicate pair.  A single leading or
+    # trailing separator selects its operator; an ordinary single operand uses
+    # the engine's observed default '|'.
+    if len(operands) == 1:
+        operator = leading_operator or trailing_operator or ord("|")
+        return _make_pair(pairs, operands[0], operator, operands[0], terminal=terminal)
+
+    left = operands[0]
+    for index, (operator, right) in enumerate(zip(operators, operands[1:])):
+        is_last_normal_pair = index == len(operands) - 2
+        pair_is_terminal = (
+            terminal and is_last_normal_pair and trailing_operator is None
+        )
+        left = _make_pair(pairs, left, operator, right, terminal=pair_is_terminal)
+    if trailing_operator is not None:
+        left = _make_pair(pairs, left, trailing_operator, left, terminal=terminal)
+    return left
+
+
+def interpret_aggregator(parsed: AggregatorPayload) -> AggregatorProgram:
+    """Lower the verified AddSignature subset into ordered AttributePair writes."""
     if parsed.decoded_sig_data is None:
-        return AggregatorCondition(
-            None,
+        return AggregatorProgram(
+            b"",
+            "",
+            (),
             AggregatorSemanticIssue(
                 "receiver_ignored",
                 0,
@@ -147,159 +242,289 @@ def interpret_aggregator(parsed: AggregatorPayload) -> AggregatorCondition:
         )
     source = parsed.decoded_sig_data.split(b"\0", 1)[0]
     if b"#" in source:
-        return AggregatorCondition(
-            None,
+        return AggregatorProgram(
+            source,
+            source.decode("latin-1"),
+            (),
             AggregatorSemanticIssue(
                 "source_marker", source.index(b"#"), "source marker '#' is unsupported"
             ),
         )
     if not source:
-        return AggregatorCondition(
-            None, AggregatorSemanticIssue("empty_expression", 0, "expression is empty")
+        return AggregatorProgram(
+            source,
+            "",
+            (),
+            AggregatorSemanticIssue("empty_expression", 0, "expression is empty"),
         )
-    source = _strip_literal_parentheses(source)
-    if not source:
-        return AggregatorCondition(
-            None,
-            AggregatorSemanticIssue(
-                "empty_expression", 0, "expression is empty after parenthesis rewrite"
-            ),
-        )
-
-    # The engine's operators share precedence and fold left-to-right. Building
-    # binary nodes (rather than smart constructors) retains that grouping.
-    cursor = 0
-
-    def parse_operand() -> Expr:
-        nonlocal cursor
-        if cursor >= len(source):
-            raise _AggregatorParseError("empty_operand", cursor, "expected an operand")
-        if source[cursor] == ord("("):
-            opening = cursor
-            cursor += 1
-            if cursor < len(source) and source[cursor] == ord(")"):
-                raise _AggregatorParseError(
-                    "empty_operand", cursor, "empty parenthesized expression"
-                )
-            expression = parse_expression(in_group=True)
-            if cursor >= len(source) or source[cursor] != ord(")"):
-                raise _AggregatorParseError(
-                    "unbalanced_parentheses",
-                    opening,
-                    "opening parenthesis has no closing pair",
-                )
-            cursor += 1
-            return expression
-        if source[cursor] == ord(")"):
-            raise _AggregatorParseError(
-                "empty_operand", cursor, "expected an operand before ')' "
-            )
-
-        start = cursor
-        while cursor < len(source) and source[cursor] not in b"&|()":
-            cursor += 1
-        token = source[start:cursor]
-        if len(token) > 63:
-            raise _AggregatorParseError(
-                "operand_too_long",
-                start,
-                f"operand is {len(token)} bytes; maximum is 63",
-            )
-        if not token or token == b"!":
-            raise _AggregatorParseError("empty_operand", start, "operand is empty")
-        negated = token.startswith(b"!")
-        identifier = token[1:] if negated else token
-        if not identifier:
-            raise _AggregatorParseError(
-                "empty_operand", start, "negated operand has no name"
-            )
-        atom = Atom(identifier.decode("latin-1"))
-        return negate(atom) if negated else atom
-
-    def parse_expression(*, in_group: bool) -> Expr:
-        nonlocal cursor
-        left = parse_operand()
-        while cursor < len(source) and source[cursor] != ord(")"):
-            operator = source[cursor]
-            if operator not in (ord("&"), ord("|")):
-                raise _AggregatorParseError(
-                    "unexpected_token",
-                    cursor,
-                    f"expected '&', '|', or ')', found {chr(operator)!r}",
-                )
-            cursor += 1
-            right = parse_operand()
-            left = And((left, right)) if operator == ord("&") else Or((left, right))
-        if not in_group and cursor < len(source) and source[cursor] == ord(")"):
-            raise _AggregatorParseError(
-                "unbalanced_parentheses",
-                cursor,
-                "closing parenthesis has no opening pair",
-            )
-        return left
 
     try:
-        expression = parse_expression(in_group=False)
-        if cursor != len(source):
+        normalized = source
+        pairs: list[AggregatorPair] = []
+        while b")" in normalized:
+            closing = normalized.index(b")")
+            opening = normalized.rfind(b"(", 0, closing)
+            if opening < 0:
+                raise _AggregatorParseError(
+                    "unbalanced_parentheses",
+                    closing,
+                    "closing parenthesis has no opening pair",
+                )
+            inner = normalized[opening + 1 : closing]
+            if not inner:
+                raise _AggregatorParseError(
+                    "empty_operand", opening + 1, "empty parenthesized expression"
+                )
+            replacement = (
+                _lower_subexpression(inner, pairs, terminal=False)
+                if b"&" in inner or b"|" in inner
+                else inner
+            )
+            suffix = normalized[closing + 1 :]
+            if len(suffix) > 1023:
+                raise _AggregatorParseError(
+                    "unexpected_token",
+                    closing + 1,
+                    "parenthesis rewrite suffix exceeds 1023 bytes",
+                )
+            normalized = normalized[:opening] + replacement + suffix
+        if b"(" in normalized:
             raise _AggregatorParseError(
                 "unbalanced_parentheses",
-                cursor,
-                "closing parenthesis has no opening pair",
+                normalized.index(b"("),
+                "opening parenthesis has no closing pair",
             )
-        return AggregatorCondition(expression)
+        _lower_subexpression(normalized, pairs, terminal=True)
+        return AggregatorProgram(
+            source,
+            normalized.decode("latin-1"),
+            tuple(pairs),
+        )
     except _AggregatorParseError as error:
-        return AggregatorCondition(None, error.issue)
+        return AggregatorProgram(source, source.decode("latin-1"), (), error.issue)
 
 
-def _expression_ast(expression: Expr) -> SemanticJSONValue:
-    """Serialize the verified condition nodes as a tagged JSON AST object."""
-    if isinstance(expression, Const):
-        return JSONObject((("type", "const"), ("value", expression.value)))
-    if isinstance(expression, Atom):
-        return JSONObject((("type", "atom"), ("identifier", expression.identifier)))
-    if isinstance(expression, AtLeast):
-        return JSONObject(
-            (
-                ("type", "at_least"),
-                ("count", expression.count),
-                (
-                    "atoms",
-                    JSONArray(
-                        tuple(_expression_ast(atom) for atom in expression.atoms)
-                    ),
-                ),
-                ("selector", expression.selector),
-            )
+def _projection_operand(value: str, expressions: dict[str, Expr]) -> Expr:
+    """Build a readable projection without claiming runtime truth equivalence."""
+    if value in expressions:
+        return expressions[value]
+    if value.startswith("!") and len(value) > 1:
+        return Not(Atom(value[1:]))
+    return Atom(value)
+
+
+def _human_projection(program: AggregatorProgram) -> str | None:
+    """Render the pair graph as Boolean-like text for humans only."""
+    expressions: dict[str, Expr] = {}
+    terminal: Expr | None = None
+    for pair in program.pairs:
+        left = _projection_operand(pair.left, expressions)
+        right = _projection_operand(pair.right, expressions)
+        expression: Expr = (
+            And((left, right)) if pair.operator == "&" else Or((left, right))
         )
-    if isinstance(expression, And | Or):
-        return JSONObject(
-            (
-                ("type", "and" if isinstance(expression, And) else "or"),
-                (
-                    "terms",
-                    JSONArray(
-                        tuple(_expression_ast(term) for term in expression.terms)
-                    ),
-                ),
-            )
+        if pair.generated_name is None:
+            terminal = expression
+        else:
+            expressions[pair.generated_name] = expression
+    return None if terminal is None else render_yara_like(terminal)
+
+
+def _pair_json(pair: AggregatorPair) -> SemanticJSONValue:
+    return JSONObject(
+        (
+            ("index", pair.index),
+            ("left", pair.left),
+            ("operator", pair.operator),
+            ("right", pair.right),
+            ("generated_name", pair.generated_name),
+            ("record_id_binding", pair.record_id_binding),
+            ("fuzzy_binding", pair.fuzzy_binding),
         )
-    if isinstance(expression, Not):
-        return JSONObject((("type", "not"), ("term", _expression_ast(expression.term))))
-    raise TypeError(f"unsupported expression {type(expression).__name__}")
+    )
 
 
 def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
-    condition = interpret_aggregator(parsed)
-    issue = condition.issue
+    program = interpret_aggregator(parsed)
+    issue = program.issue
+    projection = _human_projection(program)
     interpretation = (
         None
-        if condition.expression is None
+        if issue is not None
         else JSONObject(
             (
-                ("kind", "boolean_expression_ast"),
-                ("ast", _expression_ast(condition.expression)),
+                ("kind", "attribute_pair_program"),
+                ("source_c_string", program.source.decode("latin-1")),
+                ("normalized_expression", program.normalized_expression),
+                ("synthetic_names", "local symbolic names; engine counter is global"),
+                ("pairs", JSONArray(tuple(_pair_json(pair) for pair in program.pairs))),
+                (
+                    "human_projection",
+                    None
+                    if projection is None
+                    else JSONObject(
+                        (
+                            ("syntax", "yara-like boolean text"),
+                            ("text", projection),
+                            ("engine_equivalent", False),
+                        )
+                    ),
+                ),
             )
         )
+    )
+    claims = (
+        SemanticClaim(
+            id="aggregator_wire_layout",
+            scope="wire_layout",
+            statement=(
+                "The receiver envelope contains flags, name length, signature "
+                "length, bounded name/signature spans, and bytes trailing the "
+                "declared signature span."
+            ),
+            coverage="complete",
+            evidence_refs=("aggregator_receivers",),
+        ),
+        SemanticClaim(
+            id="aggregator_loader_dispatch",
+            scope="loader_dispatch",
+            statement=(
+                "The aggregator module registers the 0x96/0xE7 receiver family "
+                "during engine database initialization."
+            ),
+            coverage="subset",
+            evidence_refs=("aggregator_dispatch",),
+            unknowns=(
+                SemanticUnknown(
+                    "loader_dispatch",
+                    "The complete module-table and version-dependent registration "
+                    "lifecycle is outside this record IR.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="aggregator_receiver_transform",
+            scope="receiver_transform",
+            statement=(
+                "Unknown flag bits cause a receiver no-op; accepted 0x96 data is "
+                "passed directly and 0xE7 data is substitution-decoded before "
+                "AddSignature lowers the confirmed C-string subset into ordered "
+                "AttributePair writes."
+            ),
+            coverage="subset",
+            evidence_refs=("aggregator_receivers", "aggregator_pair_lowering"),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "Malformed and repeated-empty separator paths, exception "
+                    "propagation, global synthetic-name counter state, and fuzzy "
+                    "matching behavior are not fully modeled.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="aggregator_runtime_consumer",
+            scope="runtime_consumer",
+            statement=(
+                "Runtime finalization inspects leading-'!' pair operands by "
+                "looking up the corresponding positive attribute name."
+            ),
+            coverage="subset",
+            evidence_refs=("aggregator_negated_attribute_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "RuntimeAggregator::SetAttribute truth-table and complete pair "
+                    "state transitions remain unresolved.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="aggregator_detection_predicate",
+            scope="detection_predicate",
+            statement=(
+                "The AttributePair program is not yet an engine-equivalent "
+                "Boolean detection predicate."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "The runtime pair truth table, fuzzy behavior, and synthetic "
+                    "attribute propagation have not been engine-equivalent tested.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="aggregator_report_mapping",
+            scope="report_mapping",
+            statement=(
+                "A terminal AttributePair recid cannot yet be mapped directly to "
+                "a reported threat result."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "MpFinalizeAggregation provides a downstream handoff path, "
+                    "not a complete report or policy mapping.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="aggregator_final_verdict",
+            scope="final_verdict",
+            statement="An aggregator program is not a confirmed final verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Downstream policy, candidate arbitration, and final reporting "
+                    "remain outside the record-level model.",
+                ),
+            ),
+        ),
+    )
+    claim_evidence = (
+        SemanticEvidence(
+            id="aggregator_dispatch",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine.dll 1.443.903.0 aggregator_init_module",
+            locator="0x180488D60",
+            supports=("aggregator_loader_dispatch",),
+        ),
+        SemanticEvidence(
+            id="aggregator_receivers",
+            axis="receiver",
+            kind="engine_static",
+            source_ref=(
+                "mpengine.dll 1.443.903.0 aggregator_receiver / aggregatorex_receiver"
+            ),
+            locator="0x1804BEE00 / 0x1800FE270",
+            supports=("aggregator_wire_layout", "aggregator_receiver_transform"),
+        ),
+        SemanticEvidence(
+            id="aggregator_pair_lowering",
+            axis="receiver",
+            kind="engine_static",
+            source_ref=(
+                "mpengine.dll 1.443.903.0 AttributeAggregator::AddSignature / "
+                "AttributeAggregator::ParseSubExpression"
+            ),
+            locator="0x1800FE5CC / 0x1800FB80C",
+            supports=("aggregator_receiver_transform",),
+        ),
+        SemanticEvidence(
+            id="aggregator_negated_attribute_consumer",
+            axis="consumer",
+            kind="engine_static",
+            source_ref=(
+                "mpengine.dll 1.443.903.0 RuntimeAggregator::UpdateNegatedAttributes"
+            ),
+            locator="0x1800A76D0",
+            supports=("aggregator_runtime_consumer",),
+        ),
     )
     return RuleSemantics(
         status=(
@@ -309,7 +534,7 @@ def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
             if issue.code == "receiver_ignored"
             else "unsupported"
         ),
-        representation="aggregator.lossless_wire_and_boolean_expr.ast.v2",
+        representation="aggregator.attribute_pair_program.ir.v3",
         data=JSONObject(
             (
                 (
@@ -350,6 +575,8 @@ def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
         )
         if issue is not None
         else (),
+        claims=claims,
+        claim_evidence=claim_evidence,
     )
 
 
@@ -456,7 +683,8 @@ def render_aggregator(parsed: AggregatorPayload) -> FormatResult:
         # AddSignature copies sig_len bytes, appends NUL, then uses C strings.
         # Preserve bytes following an embedded NUL separately from its text view.
         expression = decoded.split(b"\0", 1)[0]
-        condition = interpret_aggregator(parsed)
+        program = interpret_aggregator(parsed)
+        projection = _human_projection(program)
         sections.append(
             DisplaySection(
                 "Aggregator Expression",
@@ -476,20 +704,35 @@ def render_aggregator(parsed: AggregatorPayload) -> FormatResult:
                         "post_nul_length",
                         str(len(decoded) - len(expression) - (b"\0" in decoded)),
                     ),
-                    ("semantic_status", condition.semantic_status),
+                    ("semantic_status", program.semantic_status),
                     *(
-                        (("condition", render_yara_like(condition.expression)),)
-                        if condition.expression is not None
+                        (("pair_count", str(len(program.pairs))),)
+                        if program.issue is None
+                        else ()
+                    ),
+                    *(
+                        (("normalized", program.normalized_expression),)
+                        if program.issue is None
+                        else ()
+                    ),
+                    *(
+                        (
+                            (
+                                "human_projection",
+                                f"{projection} (non-equivalent)",
+                            ),
+                        )
+                        if projection is not None
                         else ()
                     ),
                     *(
                         (
                             (
                                 "semantic_issue",
-                                f"{condition.issue.code} at byte {condition.issue.offset}: {condition.issue.message}",
+                                f"{program.issue.code} at byte {program.issue.offset}: {program.issue.message}",
                             ),
                         )
-                        if condition.issue is not None
+                        if program.issue is not None
                         else ()
                     ),
                 ),
