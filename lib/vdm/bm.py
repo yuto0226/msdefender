@@ -365,7 +365,7 @@ def _interpret_opcode(token: BmToken) -> BmSemanticOperation:
     if dispatch in (0x13, 0x18):
         return BmControlFlow(*source, token, "x86_relative_instruction")
     if dispatch == 0x1B:
-        return BmExtension(*source, token, "BACKREF", operands[0])
+        return BmExtension(*source, token, "BACKREF_COMPARE", operands[0])
     if dispatch in (0x20, 0x21):
         width = 32 if dispatch == 0x20 else 64
         return BmExtension(

@@ -166,13 +166,26 @@ def _operation_ir(
                 "raw opcode 0x04 only; other class opcodes and aliases remain reader-specific",
             ]
     elif isinstance(operation, BmExtension):
-        decoded.update(
-            name=operation.name, value=operation.value, bitmap=operation.bitmap
-        )
+        if operation.name == "BACKREF_COMPARE":
+            decoded.update(
+                name=operation.name,
+                capture_id=operation.value,
+                lookup="BMBackrefCTX capture tree",
+                comparison="translated subject bytes equal stored capture slice",
+                failure="missing key, subject bounds, or byte mismatch",
+            )
+            result["requirements"] = [
+                "requires a populated BM backref context for this capture_id",
+                "capture producer and complete retry lifecycle are not modeled",
+            ]
+        else:
+            decoded.update(
+                name=operation.name, value=operation.value, bitmap=operation.bitmap
+            )
+            result["requirements"] = [
+                "operation parameters are decoded, but reader state effects are not modeled"
+            ]
         result["fidelity"] = "conditional"
-        result["requirements"] = [
-            "operation parameters are decoded, but reader state effects are not modeled"
-        ]
     elif isinstance(operation, BmControlFlow):
         decoded.update(
             form=operation.form,
