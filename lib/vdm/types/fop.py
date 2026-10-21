@@ -11,8 +11,11 @@ from ..core import (
     FormatResult,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
     SemanticJSONValue,
+    SemanticUnknown,
 )
 
 FOP_TYPES: Final = MappingProxyType(
@@ -44,6 +47,46 @@ _FOP_ROUTES: Final = MappingProxyType(
         0xC9: "x64",
     }
 )
+_FOP_WRAPPERS: Final = MappingProxyType(
+    {
+        0x7F: ("FopScanner::AddNewPattern_X86", "0x18046F950"),
+        0x89: ("FopScanner::AddNewPatternEx_X86", "0x18046F980"),
+        0xB4: ("FopScanner::AddNewPattern_VB", "0x18046F860"),
+        0xBA: ("FopScanner::AddNewPattern_MSIL", "0x18046F920"),
+        0xC6: ("FopScanner::AddNewPatternEx_MSIL", "0x180CAEA10"),
+        0xC7: ("FopScanner::AddNewPatternEx_VB", "0x18046F8F0"),
+        0xC8: ("FopScanner::AddNewPattern_X64", "0x18046F890"),
+        0xC9: ("FopScanner::AddNewPatternEx_X64", "0x18046F8C0"),
+    }
+)
+_FOP_PROCESSORS: Final = MappingProxyType(
+    {
+        "x86": (
+            "x86_fop_processor::GetCharAtAddr",
+            "0x180250F70",
+            "mapped_byte_0",
+            "successful_decode_length_1_to_32",
+        ),
+        "x64": (
+            "x64_fop_processor::GetCharAtAddr",
+            "0x180250500",
+            "mapped_byte_0",
+            "successful_decode_length_1_to_32",
+        ),
+        "vb": (
+            "vb_fop_processor::GetCharAtAddr",
+            "0x180555210",
+            "mapped_byte_1_when_mapped_byte_0_is_0xFB_to_0xFF_else_mapped_byte_0",
+            "VBpCode_table_length_plus_operand_adjustment; zero_byte_skips_two_addresses",
+        ),
+        "msil": (
+            "msil_fop_processor::GetCharAtAddr",
+            "0x180481140",
+            "mapped_byte_1_when_mapped_byte_0_is_0xFE_else_mapped_byte_0",
+            "token_length_table; byte_0_0x45_adds_4_times_operand_dword_plus_4",
+        ),
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +101,7 @@ class FopPayload:
     pattern: bytes
     section1: bytes | None
     section2: bytes | None
-    pattern_options: int | None
+    extended_u16: int | None
 
 
 def parse_fop(payload: bytes, *, type_byte: int) -> FopPayload:
@@ -83,7 +126,7 @@ def parse_fop(payload: bytes, *, type_byte: int) -> FopPayload:
             pattern=b"",
             section1=None,
             section2=None,
-            pattern_options=None,
+            extended_u16=None,
         )
 
     flags = payload[0]
@@ -97,7 +140,7 @@ def parse_fop(payload: bytes, *, type_byte: int) -> FopPayload:
             pattern=b"",
             section1=None,
             section2=None,
-            pattern_options=None,
+            extended_u16=None,
         )
 
     prefix_len = payload[1]
@@ -119,12 +162,12 @@ def parse_fop(payload: bytes, *, type_byte: int) -> FopPayload:
             pattern=payload[pattern_start:],
             section1=None,
             section2=None,
-            pattern_options=None,
+            extended_u16=None,
         )
 
     section1_len = int.from_bytes(payload[4:6], "little")
     section2_len = int.from_bytes(payload[6:8], "little")
-    pattern_options = int.from_bytes(payload[8:10], "little")
+    extended_u16 = int.from_bytes(payload[8:10], "little")
     expected_size = (
         FOP_EXTENDED_HEADER_SIZE
         + prefix_len
@@ -154,7 +197,7 @@ def parse_fop(payload: bytes, *, type_byte: int) -> FopPayload:
         pattern=pattern,
         section1=section1,
         section2=section2,
-        pattern_options=pattern_options,
+        extended_u16=extended_u16,
     )
 
 
@@ -189,8 +232,8 @@ def render_fop(parsed: FopPayload) -> FormatResult:
             *_section_rows("pattern", parsed.pattern),
         )
     )
-    if parsed.pattern_options is not None:
-        rows.append(("pattern_options", f"0x{parsed.pattern_options:04X}"))
+    if parsed.extended_u16 is not None:
+        rows.append(("extended_u16", f"0x{parsed.extended_u16:04X}"))
         assert parsed.section1 is not None and parsed.section2 is not None
         rows.extend(_section_rows("section1", parsed.section1))
         rows.extend(_section_rows("section2", parsed.section2))
@@ -199,44 +242,302 @@ def render_fop(parsed: FopPayload) -> FormatResult:
 
 def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
     """Export the confirmed wire/route/matcher subset without verdict claims."""
-    evidence = (
+    route = _FOP_ROUTES[parsed.type_byte]
+    layout = "plain" if parsed.type_byte in FOP_PLAIN_TYPES else "extended"
+    wrapper_name, wrapper_address = _FOP_WRAPPERS[parsed.type_byte]
+    processor_name, processor_address, match_value, advance = _FOP_PROCESSORS[route]
+    active = parsed.ignored_reason is None
+
+    evidence = [
         "mpengine 1.443.903.0 FopScanner::Init @ 0x1805F0120",
-        (
-            "mpengine 1.443.903.0 FopScanner::AddNewPatternCommon "
-            "@ 0x18046F9AC: wire flag mask 0x01 -> candidate metadata "
-            "+0x12 mask 0x01; extended objects/options -> metadata"
+        f"mpengine 1.443.903.0 {wrapper_name} @ {wrapper_address}",
+        "mpengine 1.443.903.0 FopScanner::AddNewPatternCommon @ 0x18046F9AC",
+    ]
+    if active:
+        evidence.extend(
+            (
+                "mpengine 1.443.903.0 FopScanner::AddToResults @ 0x1802BC7BC",
+                "mpengine 1.443.903.0 FopScanner::ScanContext::GetChar @ 0x180250E5C",
+                f"mpengine 1.443.903.0 {processor_name} @ {processor_address}",
+                "mpengine 1.443.903.0 FopScanner::Scan @ 0x18040AF48",
+            )
+        )
+        if layout == "extended":
+            evidence.extend(
+                (
+                    "mpengine 1.443.903.0 BMGetPatternFlags @ 0x1800FEBF4",
+                    "mpengine 1.443.903.0 BMMatchPEMapper @ 0x1803D5E44",
+                )
+            )
+
+    claims: list[SemanticClaim] = [
+        SemanticClaim(
+            id="fop_wire_projection",
+            scope="wire_layout",
+            statement=(
+                f"The {layout} receiver uses a "
+                f"{FOP_PLAIN_HEADER_SIZE if layout == 'plain' else FOP_EXTENDED_HEADER_SIZE}-byte "
+                "header and exact declared section lengths; short or reserved-flag "
+                "payloads take the recorded no-op disposition before insertion."
+            ),
+            coverage="complete",
+            evidence_refs=("fop_receiver",),
         ),
-        (
-            "mpengine 1.443.903.0 FopScanner::AddToResults @ 0x1802BC7BC: "
-            "metadata mask 0x01 -> result row byte +6; extended metadata "
-            "gates byte-set filtering and BMMatchPEMapper"
+        SemanticClaim(
+            id="fop_dispatch_path",
+            scope="loader_dispatch",
+            statement=(
+                f"FopScanner::Init registers type 0x{parsed.type_byte:02X} to "
+                f"{wrapper_name}, which selects the {route}/{layout} receiver route."
+            ),
+            coverage="subset",
+            evidence_refs=("fop_dispatch",),
+            unknowns=(
+                SemanticUnknown(
+                    "loader_dispatch",
+                    "Outer scanner initialization and product enablement gates are not modeled.",
+                ),
+            ),
         ),
-        "mpengine 1.443.903.0 BMGetPatternFlags @ 0x1800FEBF4",
-        "mpengine 1.443.903.0 BMMatchPEMapper @ 0x1803D5E44",
-        "mpengine 1.443.903.0 FopScanner::ScanContext::GetChar @ 0x180250E5C",
-        (
-            "mpengine 1.443.903.0 FopScanner::Scan @ 0x18040AF48: "
-            "result row byte +6 gates candidate aggregation/selection and is "
-            "returned through the candidate out flag"
+        SemanticClaim(
+            id="fop_receiver_transform",
+            scope="receiver_transform",
+            statement=(
+                "The common receiver returns the recorded no-op disposition without "
+                "inserting a trie candidate."
+                if not active
+                else "The common receiver projects the validated fields into the "
+                f"{route} trie candidate metadata for the {layout} route."
+            ),
+            coverage="subset",
+            evidence_refs=("fop_receiver",),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "Allocation, kernel-object storage failures, and all surrounding state mutations are not projected.",
+                ),
+            ),
         ),
-        "mpengine 1.443.903.0 x86_fop_processor::GetCharAtAddr @ 0x180250F70",
-        "mpengine 1.443.903.0 x64_fop_processor::GetCharAtAddr @ 0x180250500",
-        "mpengine 1.443.903.0 vb_fop_processor::GetCharAtAddr @ 0x180555210",
-        "mpengine 1.443.903.0 msil_fop_processor::GetCharAtAddr @ 0x180481140",
+    ]
+
+    if active:
+        runtime_refs = ("fop_processor",)
+        predicate_refs = (
+            ("fop_processor", "fop_extended_gate")
+            if layout == "extended"
+            else ("fop_processor",)
+        )
+        claims.extend(
+            (
+                SemanticClaim(
+                    id="fop_candidate_matcher",
+                    scope="runtime_consumer",
+                    statement=(
+                        f"The {route} processor supplies mapped instruction/token bytes; "
+                        "AddToResults compares them byte-for-byte with this record's trie pattern."
+                    ),
+                    coverage="subset",
+                    evidence_refs=runtime_refs,
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "The engine mapper/decoder, candidate addresses, and scan context are not reproduced.",
+                        ),
+                    ),
+                ),
+                SemanticClaim(
+                    id="fop_candidate_selection",
+                    scope="runtime_consumer",
+                    statement=(
+                        "Wire flag bit 0 becomes candidate metadata bit 1, is normalized "
+                        "into result-row byte +6, and participates in scanner-local "
+                        "aggregation and best-candidate selection."
+                    ),
+                    coverage="subset",
+                    evidence_refs=("fop_selection",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "The product meaning of the flag and any additional consumers are unresolved.",
+                        ),
+                    ),
+                ),
+                SemanticClaim(
+                    id="fop_candidate_predicate",
+                    scope="detection_predicate",
+                    statement=(
+                        "At candidate scope, the selected processor's mapped-byte equality"
+                        + (
+                            ", section2 byte-set filter, and conditional section1 BM gate must pass."
+                            if layout == "extended"
+                            else " must pass."
+                        )
+                    ),
+                    coverage="subset",
+                    evidence_refs=predicate_refs,
+                    unknowns=(
+                        SemanticUnknown(
+                            "detection_predicate",
+                            "Candidate success is not a raw-file predicate or a complete threat detection condition.",
+                        ),
+                    ),
+                ),
+            )
+        )
+    else:
+        claims.extend(
+            (
+                SemanticClaim(
+                    id="fop_candidate_matcher",
+                    scope="runtime_consumer",
+                    statement="No runtime matcher is projected for this receiver no-op payload.",
+                    coverage="unknown",
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "The payload does not enter the confirmed trie insertion path.",
+                        ),
+                    ),
+                ),
+                SemanticClaim(
+                    id="fop_candidate_selection",
+                    scope="runtime_consumer",
+                    statement="No candidate-selection effect is established for this no-op payload.",
+                    coverage="unknown",
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "No candidate row is produced through the confirmed receiver path.",
+                        ),
+                    ),
+                ),
+                SemanticClaim(
+                    id="fop_candidate_predicate",
+                    scope="detection_predicate",
+                    statement="No candidate predicate is established for this receiver no-op payload.",
+                    coverage="unknown",
+                    unknowns=(
+                        SemanticUnknown(
+                            "detection_predicate",
+                            "The confirmed receiver path does not insert this payload as a candidate.",
+                        ),
+                    ),
+                ),
+            )
+        )
+
+    claims.extend(
+        (
+            SemanticClaim(
+                id="fop_report_mapping",
+                scope="report_mapping",
+                statement="FOP candidate identity to product report mapping is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "The selected RecID and flag were not followed into a report policy.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="fop_final_verdict",
+                scope="final_verdict",
+                statement="A FOP candidate result is not a confirmed final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Outer scan arbitration and final report/cure policy remain unresolved.",
+                    ),
+                ),
+            ),
+        )
     )
+
+    claim_evidence = [
+        SemanticEvidence(
+            id="fop_dispatch",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=f"FopScanner::Init @ 0x1805F0120; {wrapper_name} @ {wrapper_address}",
+            supports=("fop_dispatch_path",),
+        ),
+        SemanticEvidence(
+            id="fop_receiver",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                f"{wrapper_name} @ {wrapper_address}; "
+                "FopScanner::AddNewPatternCommon @ 0x18046F9AC"
+            ),
+            supports=("fop_wire_projection", "fop_receiver_transform"),
+        ),
+    ]
+    if active:
+        claim_evidence.extend(
+            (
+                SemanticEvidence(
+                    id="fop_processor",
+                    axis="consumer",
+                    kind="engine_static",
+                    source_ref="mpengine 1.443.903.0",
+                    locator=(
+                        "FopScanner::AddToResults @ 0x1802BC7BC; "
+                        "FopScanner::ScanContext::GetChar @ 0x180250E5C; "
+                        f"{processor_name} @ {processor_address}"
+                    ),
+                    supports=("fop_candidate_matcher", "fop_candidate_predicate"),
+                ),
+                SemanticEvidence(
+                    id="fop_selection",
+                    axis="consumer",
+                    kind="engine_static",
+                    source_ref="mpengine 1.443.903.0",
+                    locator=(
+                        "FopScanner::AddNewPatternCommon @ 0x18046F9AC; "
+                        "FopScanner::AddToResults @ 0x1802BC7BC; "
+                        "FopScanner::Scan @ 0x18040AF48"
+                    ),
+                    supports=("fop_candidate_selection",),
+                ),
+            )
+        )
+        if layout == "extended":
+            claim_evidence.append(
+                SemanticEvidence(
+                    id="fop_extended_gate",
+                    axis="consumer",
+                    kind="engine_static",
+                    source_ref="mpengine 1.443.903.0",
+                    locator=(
+                        "FopScanner::AddToResults @ 0x1802BC7BC; "
+                        "BMGetPatternFlags @ 0x1800FEBF4; "
+                        "BMMatchPEMapper @ 0x1803D5E44"
+                    ),
+                    supports=("fop_candidate_predicate",),
+                )
+            )
+
     if parsed.ignored_reason is not None:
         return RuleSemantics(
             status="ignored",
-            representation="fop.trie_matcher_subset.ir.v7",
+            representation="fop.trie_matcher_subset.ir.v9",
             data=JSONObject(
                 (
                     ("raw_hex", parsed.raw.hex()),
                     ("type_byte", parsed.type_byte),
+                    ("wire_layout", layout),
+                    ("route", route),
                     ("ignored_reason", parsed.ignored_reason),
                 )
             ),
-            evidence=evidence,
+            evidence=tuple(evidence),
             profile="mpengine-1.443.903.0",
+            claims=tuple(claims),
+            claim_evidence=tuple(claim_evidence),
         )
 
     assert parsed.flags is not None
@@ -246,9 +547,9 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         ("semantic_scope", "wire_route_and_core_trie_matcher_shape"),
         (
             "wire_layout",
-            "plain" if parsed.type_byte in FOP_PLAIN_TYPES else "extended",
+            layout,
         ),
-        ("route", _FOP_ROUTES[parsed.type_byte]),
+        ("route", route),
         ("prefix_hex", parsed.prefix.hex()),
         ("pattern_hex", parsed.pattern.hex()),
         ("flag_bit0_raw", bool(parsed.flags & 1)),
@@ -261,7 +562,8 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                         JSONObject(
                             (
                                 ("source_mask", 1),
-                                ("destination", "candidate_metadata+0x12 mask 0x01"),
+                                ("transform", "2 * (flags & 1)"),
+                                ("destination", "candidate_metadata+0x12 mask 0x02"),
                                 ("evidence_address", "0x18046FB56"),
                             )
                         ),
@@ -270,7 +572,8 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                         "trie_metadata_to_result_row",
                         JSONObject(
                             (
-                                ("source", "candidate_metadata+0x12 mask 0x01"),
+                                ("source", "candidate_metadata+0x12 mask 0x02"),
+                                ("normalization", "bool((metadata_word >> 1) & 1)"),
                                 ("destination", "FopResultEntry+6"),
                                 ("evidence_address", "0x1802BCA81"),
                             )
@@ -311,69 +614,12 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
             "processor_match_contract",
             JSONObject(
                 (
-                    (
-                        "x86",
-                        JSONObject(
-                            (
-                                ("function", "x86_fop_processor::GetCharAtAddr"),
-                                ("address", "0x180250F70"),
-                                ("match_value", "mapped_byte_0"),
-                                ("advance", "successful_decode_length_1_to_32"),
-                                ("decode_failure", "-1_with_zero_consumed"),
-                            )
-                        ),
-                    ),
-                    (
-                        "x64",
-                        JSONObject(
-                            (
-                                ("function", "x64_fop_processor::GetCharAtAddr"),
-                                ("address", "0x180250500"),
-                                ("match_value", "mapped_byte_0"),
-                                ("advance", "successful_decode_length_1_to_32"),
-                                ("decode_failure", "-1_with_zero_consumed"),
-                            )
-                        ),
-                    ),
-                    (
-                        "vb",
-                        JSONObject(
-                            (
-                                ("function", "vb_fop_processor::GetCharAtAddr"),
-                                ("address", "0x180555210"),
-                                (
-                                    "match_value",
-                                    "mapped_byte_1_when_mapped_byte_0_is_0xFB_to_0xFF_else_mapped_byte_0",
-                                ),
-                                (
-                                    "advance",
-                                    "VBpCode_table_length_plus_operand_adjustment; zero_byte_skips_two_addresses",
-                                ),
-                                ("decode_failure", "-1_with_zero_consumed"),
-                            )
-                        ),
-                    ),
-                    (
-                        "msil",
-                        JSONObject(
-                            (
-                                (
-                                    "function",
-                                    "msil_fop_processor::GetCharAtAddr",
-                                ),
-                                ("address", "0x180481140"),
-                                (
-                                    "match_value",
-                                    "mapped_byte_1_when_mapped_byte_0_is_0xFE_else_mapped_byte_0",
-                                ),
-                                (
-                                    "advance",
-                                    "token_length_table; byte_0_0x45_adds_4_times_operand_dword_plus_4",
-                                ),
-                                ("decode_failure", "-1_with_zero_consumed"),
-                            )
-                        ),
-                    ),
+                    ("route", route),
+                    ("function", processor_name),
+                    ("address", processor_address),
+                    ("match_value", match_value),
+                    ("advance", advance),
+                    ("decode_failure", "-1_with_zero_consumed"),
                 )
             ),
         ),
@@ -401,7 +647,7 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
             "remain unresolved.",
         ),
     ]
-    if parsed.pattern_options is not None:
+    if parsed.extended_u16 is not None:
         assert parsed.section1 is not None and parsed.section2 is not None
         data_items[2] = (
             "semantic_scope",
@@ -411,7 +657,7 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
             (
                 ("section1_raw_hex", parsed.section1.hex()),
                 ("section2_raw_hex", parsed.section2.hex()),
-                ("pattern_options_raw", parsed.pattern_options),
+                ("extended_u16_raw", parsed.extended_u16),
                 (
                     "extended_runtime_effects",
                     JSONObject(
@@ -460,12 +706,12 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                                 ),
                             ),
                             (
-                                "pattern_options",
+                                "signed_displacement",
                                 JSONObject(
                                     (
                                         (
                                             "storage",
-                                            "raw u16 copied to candidate_metadata+0x10",
+                                            "raw u16 copied to candidate_metadata+0x10 and consumed as i16",
                                         ),
                                         ("storage_address", "0x18046FC36"),
                                         (
@@ -490,7 +736,7 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                                         ("pattern_length_input", "section1_len"),
                                         (
                                             "scan_offset",
-                                            "start_offset + sign_extend_i16(pattern_options)",
+                                            "start_offset + sign_extend_i16(extended_u16_raw)",
                                         ),
                                         (
                                             "mode_argument",
@@ -514,18 +760,20 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                 "extended_field_business_domains_unknown",
                 "Runtime storage and candidate-gate dataflow are confirmed, but "
                 "the product domains represented by section1/section2, the "
-                "policy meaning of pattern_options, flag bit 0, processor-"
+                "product meaning of the extended u16, flag bit 0, processor-"
                 "equivalent matching, and subtype/report policy remain unresolved. "
                 "This is a bounded subset, not a matching-equivalent rule.",
             )
         )
     return RuleSemantics(
         status="confirmed_subset",
-        representation="fop.trie_matcher_subset.ir.v8",
+        representation="fop.trie_matcher_subset.ir.v9",
         data=JSONObject(tuple(data_items)),
-        evidence=evidence,
+        evidence=tuple(evidence),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=tuple(claims),
+        claim_evidence=tuple(claim_evidence),
     )
 
 
