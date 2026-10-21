@@ -1,5 +1,6 @@
 """Lossless parser and concise renderer for REVOKED_CERTIFICATE (0x6C)."""
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -7,6 +8,8 @@ from types import MappingProxyType
 from typing import Final, Literal
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -231,6 +234,7 @@ def export_revoked_certificate_semantics(
         ("policy_trailer", key_end, POLICY_TRAILER_SIZE),
         ("recid_tail", trailer_end, len(parsed.recid_tail_raw)),
     )
+
     unsupported_reasons: list[SemanticIssue] = []
     if parsed.recid_tail_raw:
         unsupported_reasons.append(
@@ -379,10 +383,71 @@ def export_revoked_certificate_semantics(
     )
 
 
+def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
+    """Export a lossless policy observation without X.509 field guesses."""
+    key_end = 2 + parsed.key_len
+    trailer_end = key_end + POLICY_TRAILER_SIZE
+    manifest = {
+        "schema": "vdm.revoked_certificate.artifact.v1",
+        "record_type": {
+            "byte": REVOKED_CERTIFICATE_TYPE,
+            "name": "REVOKED_CERTIFICATE",
+        },
+        "raw_hex": parsed.raw.hex(),
+        "key": {
+            "length": parsed.key_len,
+            "length_raw_hex": parsed.raw[:2].hex(),
+            "raw_hex": parsed.key_data.hex(),
+            "offset": 2,
+            "mode": parsed.mode,
+            "key_type": parsed.key_type,
+            "prefix_raw_hex": parsed.prefix_raw.hex(),
+            "key_material_raw_hex": parsed.key_material_raw.hex(),
+            "text_raw_hex": parsed.text_raw.hex(),
+            "terminator_raw_hex": parsed.terminator_raw.hex(),
+            "trailing_raw_hex": parsed.string_trailing_raw.hex(),
+        },
+        "policy": {
+            "filetime": parsed.filetime,
+            "filetime_raw_hex": parsed.filetime_raw.hex(),
+            "timestamp_utc": (
+                None
+                if parsed.timestamp_utc is None
+                else parsed.timestamp_utc.isoformat().replace("+00:00", "Z")
+            ),
+            "timestamp_error": parsed.timestamp_error,
+            "flags": parsed.revoke_flags,
+            "flags_raw_hex": parsed.revoke_flags_raw.hex(),
+            "skip_signed_file_gate": parsed.skips_signed_file_gate,
+            "unknown_flag_bits": parsed.unknown_flag_bits,
+        },
+        "recid_tail": {"raw_hex": parsed.recid_tail_raw.hex(), "offset": trailer_end},
+        "matcher_boundary": {
+            "confirmed_key_types_queried": [1, 2, 3, 5],
+            "match": "certificate_key_lookup_subject_to_filetime_and_signed_file_gates",
+            "x509_field_mapping": "unknown",
+            "final_trust_or_scan_verdict": "unknown",
+            "recid_tail_effect": "unknown",
+        },
+    }
+    data = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    digest = hashlib.sha256(parsed.raw).hexdigest()[:16]
+    return ArtifactExport(
+        "ready",
+        artifacts=(
+            Artifact(f"6c-{digest}.json", "revoked_certificate_json_manifest", data),
+        ),
+    )
+
+
 SPEC = FamilySpec(
     REVOKED_CERTIFICATE_TYPE,
     "REVOKED_CERTIFICATE",
     parse_revoked_certificate,
     render_revoked_certificate,
+    exporter=export_revoked_certificate,
     semantic_exporter=export_revoked_certificate_semantics,
 )
