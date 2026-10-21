@@ -8,7 +8,10 @@ from ..core import (
     FormatResult,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 _PREVIEW = 64
@@ -92,7 +95,7 @@ def _render(parsed: KpatPayload, *, extended: bool) -> FormatResult:
         rows.append(
             (
                 "pattern_semantics",
-                "BMMatchEx2 matcher confirmed; pattern projection confirmed",
+                "BMMatchEx2 path after successful BM finalization",
             )
         )
     return FormatResult(
@@ -111,16 +114,22 @@ def render_kpatex(parsed: KpatPayload) -> FormatResult:
 def _export_semantics(
     parsed: KpatPayload, *, record_type: str, extended: bool
 ) -> RuleSemantics:
-    """Export the projected matcher subset without claiming a final verdict."""
+    """Export bounded load and candidate semantics without claiming acceptance."""
+    claim_prefix = record_type.lower()
     name_length_offset = parsed.prefix_size + 1
     name_offset = name_length_offset + (parsed.name_raw is not None)
     suffix_offset = name_offset + (len(parsed.name_raw) if parsed.name_raw else 0)
     issues = [
         SemanticIssue(
+            "load_acceptance_not_observed",
+            "Offline parsing does not establish that ReceiveNewTemplate and the "
+            "tsig finalizer accepted this individual record.",
+        ),
+        SemanticIssue(
             "final_verdict_unknown",
             "The registered template projects this record into the matcher row, "
             "but complete candidate validation and final report policy remain unknown.",
-        )
+        ),
     ]
     status = "confirmed_subset"
     if extended:
@@ -133,7 +142,11 @@ def _export_semantics(
                 ("match_map", "BM_MAP_ALL"),
                 ("loaded_row_matcher", "BM token matcher with row flags"),
                 ("wire_payload_projection", "confirmed"),
-                ("pattern_input_equivalence", "confirmed"),
+                (
+                    "pattern_input_equivalence",
+                    "conditional_on_receiver_and_bm_finalizer_success",
+                ),
+                ("load_gate", "BMGetPatternFlags must succeed"),
             )
         )
         matcher_evidence = (
@@ -150,7 +163,11 @@ def _export_semantics(
                 ("wildcard_byte", 0x90),
                 ("wildcard_behavior", "matches any one subject byte"),
                 ("wire_payload_projection", "confirmed"),
-                ("pattern_input_equivalence", "confirmed"),
+                (
+                    "pattern_input_equivalence",
+                    "conditional_on_receiver_and_finalizer_success",
+                ),
+                ("load_gate", "tsig finalizer and trie build must succeed"),
             )
         )
         matcher_evidence = (
@@ -181,14 +198,180 @@ def _export_semantics(
             ("suffix_offset", suffix_offset),
             ("suffix_raw_hex", parsed.suffix.hex()),
             ("runtime_matcher", matcher),
-            ("runtime_matcher_scope", "record_projected_matcher_subset"),
-            ("runtime_matcher_association", "confirmed_by_registered_template"),
+            ("runtime_matcher_scope", "successfully_loaded_candidate_subset"),
+            (
+                "runtime_matcher_association",
+                "conditional_on_receiver_and_finalizer_success",
+            ),
             ("wire_payload_projection", "confirmed"),
         )
     )
+    wire_claim_id = f"{claim_prefix}_wire_projection"
+    dispatch_claim_id = f"{claim_prefix}_loader_dispatch"
+    receiver_claim_id = f"{claim_prefix}_receiver_transform"
+    consumer_claim_id = f"{claim_prefix}_candidate_matcher"
+    predicate_claim_id = f"{claim_prefix}_candidate_predicate"
+    report_claim_id = f"{claim_prefix}_report_mapping"
+    verdict_claim_id = f"{claim_prefix}_final_verdict"
+
+    if extended:
+        consumer_statement = (
+            "After the receiver succeeds and tsig_push_end accepts the pattern with "
+            "BMGetPatternFlags, kpatsearchex passes the loaded pattern and derived "
+            "row flags to BMMatchEx2 with BM_MAP_ALL."
+        )
+        predicate_statement = (
+            "For a successfully finalized KPATEX row, BMGetPatternFlags acceptance "
+            "is a load-time gate and BMMatchEx2 success is only a candidate match."
+        )
+    else:
+        consumer_statement = (
+            "After the receiver and tsig finalizer succeed, kpatsearchex compares "
+            "the loaded pattern bytewise and treats pattern byte 0x90 as one-byte "
+            "wildcard."
+        )
+        predicate_statement = (
+            "For a successfully finalized KPAT row, the bytewise wildcard comparison "
+            "is only a candidate match before ValidateKpatMatch."
+        )
+
+    claims = (
+        SemanticClaim(
+            id=wire_claim_id,
+            scope="wire_layout",
+            statement=(
+                "The payload prefix contains an 8-byte key followed by "
+                "prefix_size - 8 pattern bytes, then an optional length-prefixed name; "
+                "remaining suffix bytes are outside these parsed fields."
+            ),
+            coverage="complete",
+            evidence_refs=("kpat_receiver_descriptor",),
+        ),
+        SemanticClaim(
+            id=dispatch_claim_id,
+            scope="loader_dispatch",
+            statement=(
+                f"pattsearch_init registers wire type "
+                f"{'0xBC' if extended else '0xBB'} into the "
+                f"{'second' if extended else 'first'} tsig row group with the shared "
+                "template descriptor and tsig_push_end finalizer."
+            ),
+            coverage="complete",
+            evidence_refs=("kpat_registration",),
+        ),
+        SemanticClaim(
+            id=receiver_claim_id,
+            scope="receiver_transform",
+            statement=(
+                "On successful ReceiveNewTemplate completion, key, pattern bytes, "
+                "pattern length, and optional name recid are projected into a 0x14-byte "
+                "tsig row; suffix bytes do not enter those row fields."
+            ),
+            coverage="subset",
+            evidence_refs=("kpat_receiver_descriptor",),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "The offline parser does not execute receiver allocation, object, "
+                    "or record-ID failure paths for this individual payload.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id=consumer_claim_id,
+            scope="runtime_consumer",
+            statement=consumer_statement,
+            coverage="subset",
+            evidence_refs=("kpat_candidate_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "FilteredTrie candidate generation and the 8-byte key's complete "
+                    "selection role are not reconstructed as a portable matcher.",
+                ),
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Parser acceptance and synthetic payloads do not prove that the "
+                    "engine receiver and finalizer loaded a row.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id=predicate_claim_id,
+            scope="detection_predicate",
+            statement=predicate_statement,
+            coverage="subset",
+            evidence_refs=("kpat_candidate_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "ValidateKpatMatch p-code, continuation, aggregation, HIPS, and "
+                    "low-fidelity reporting branches are not a closed predicate.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id=report_claim_id,
+            scope="report_mapping",
+            statement="KPAT candidate-to-report mapping is unresolved.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "The complete ValidateKpatMatch report and aggregation policy has "
+                    "not been reconstructed.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id=verdict_claim_id,
+            scope="final_verdict",
+            statement="A KPAT or KPATEX candidate match is not a confirmed verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Outer scan arbitration and the final detection result remain "
+                    "unresolved.",
+                ),
+            ),
+        ),
+    )
+    claim_evidence = (
+        SemanticEvidence(
+            id="kpat_registration",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator="pattsearch_init @ 0x1805653B8",
+            supports=(dispatch_claim_id,),
+        ),
+        SemanticEvidence(
+            id="kpat_receiver_descriptor",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "ReceiveNewTemplate descriptor @ 0x180F67150; row offsets "
+                "+0x00/+0x08/+0x0C/+0x10"
+            ),
+            supports=(wire_claim_id, receiver_claim_id),
+        ),
+        SemanticEvidence(
+            id="kpat_candidate_consumer",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "tsig_push_end @ 0x1804F51E0; kpatsearchex; "
+                "ValidateKpatMatch @ 0x1805FE27C"
+            ),
+            supports=(consumer_claim_id, predicate_claim_id),
+        ),
+    )
     return RuleSemantics(
         status=status,
-        representation="kpat.runtime_matcher_subset.ir.v4",
+        representation="kpat.runtime_matcher_subset.ir.v5",
         data=data,
         evidence=(
             *matcher_evidence,
@@ -199,6 +382,8 @@ def _export_semantics(
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=claims,
+        claim_evidence=claim_evidence,
     )
 
 
