@@ -109,6 +109,22 @@ def export_vdll_meta(
     variant: str,
 ) -> RuleSemantics:
     """Export observed VDLL metadata fields without inventing rule semantics."""
+    boundary_issues = (
+        SemanticIssue(
+            code="vdll_metadata_record_pairing_unknown",
+            message=(
+                "Host-selected global table lookup is confirmed, but this metadata "
+                "record is not paired one-to-one with a VDLL code record."
+            ),
+        ),
+        SemanticIssue(
+            code="vdll_metadata_detection_role_unknown",
+            message=(
+                "Table insertion and linker lookup are confirmed; callback execution, "
+                "scan matching, and final verdict causality are not."
+            ),
+        ),
+    )
     data = JSONObject(
         (
             ("record_type", f"0x{type_byte:02X}"),
@@ -236,7 +252,8 @@ def export_vdll_meta(
                 ),
             ),
             profile="mpengine-1.443.903.0",
-            issues=(
+            issues=boundary_issues
+            + (
                 SemanticIssue(
                     code="unknown_trailing_bytes",
                     message=(
@@ -274,6 +291,7 @@ def export_vdll_meta(
             ),
         ),
         profile="mpengine-1.443.903.0",
+        issues=boundary_issues,
     )
 
 
