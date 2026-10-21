@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 BOOT_TYPE: Final = 0x44
@@ -391,6 +394,254 @@ def export_boot_semantics(parsed: BootPayload) -> RuleSemantics:
             )
         )
 
+    is_current = parsed.variant == "current"
+    has_supported_matcher = parsed.selector_domain in {"ordinary", "special_32"}
+    has_wrapped_matcher = parsed.selector_domain == "wrapped_unknown"
+
+    if is_current:
+        wire_claim = SemanticClaim(
+            id="boot_wire_projection",
+            scope="wire_layout",
+            statement=(
+                "For this current-template payload, the first NUL terminates the "
+                "identity, the next 32 bytes form the descriptor, and any suffix "
+                "is outside the template projection."
+            ),
+            coverage="complete",
+            evidence_refs=("boot_receiver",),
+        )
+        receiver_statement = (
+            "The current receiver creates a 36-byte row from a derived record ID "
+            "and the 32-byte descriptor; it does not require the payload suffix "
+            "to be exhausted."
+        )
+        receiver_coverage = "subset"
+        receiver_unknowns = (
+            SemanticUnknown(
+                "receiver_transform",
+                "Record-ID derivation, allocation, and storage failure paths are not projected.",
+            ),
+        )
+    else:
+        wire_claim = SemanticClaim(
+            id="boot_wire_projection",
+            scope="wire_layout",
+            statement="The preserved legacy payload has no confirmed field grammar.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "wire_layout",
+                    "Current-template rejection does not identify a historical layout.",
+                ),
+            ),
+        )
+        receiver_statement = (
+            "The current receiver rejects this missing-NUL or short-descriptor "
+            "shape with 0xA004 before incrementing the BOOT row count."
+        )
+        receiver_coverage = "complete"
+        receiver_unknowns = ()
+
+    if has_supported_matcher:
+        matcher_statement = (
+            "bootsigsearch consumes the loaded row as an ordinary exact/NOP-wildcard "
+            "candidate probe."
+            if parsed.selector_domain == "ordinary"
+            else "bootsigsearch consumes the loaded row as an 8-byte prefix plus "
+            "CRC_1 candidate probe."
+        )
+        predicate_statement = (
+            "A candidate satisfies the BOOT matcher only when the ordinary byte "
+            "comparison passes its strict end bound and ShouldContinueScanning "
+            "returns false."
+            if parsed.selector_domain == "ordinary"
+            else "A candidate satisfies the BOOT matcher only when the prefix and "
+            "CRC_1 checks pass their strict end bounds and ShouldContinueScanning "
+            "returns false."
+        )
+        matcher_claim = SemanticClaim(
+            id="boot_candidate_matcher",
+            scope="runtime_consumer",
+            statement=matcher_statement,
+            coverage="subset",
+            evidence_refs=("boot_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The outer boot-buffer acquisition and invocation contexts are not modeled.",
+                ),
+            ),
+        )
+        predicate_claim = SemanticClaim(
+            id="boot_candidate_predicate",
+            scope="detection_predicate",
+            statement=predicate_statement,
+            coverage="subset",
+            evidence_refs=("boot_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Candidate acceptance is not a complete threat detection condition.",
+                ),
+            ),
+        )
+    elif has_wrapped_matcher:
+        matcher_claim = SemanticClaim(
+            id="boot_candidate_matcher",
+            scope="runtime_consumer",
+            statement=(
+                "The current matcher executes the ordinary branch with a wrapped "
+                "secondary length for this selector."
+            ),
+            coverage="subset",
+            evidence_refs=("boot_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The selector is outside the confirmed wire domain and the row "
+                    "does not provide every byte that the wrapped span may read.",
+                ),
+            ),
+        )
+        predicate_claim = SemanticClaim(
+            id="boot_candidate_predicate",
+            scope="detection_predicate",
+            statement="No portable candidate predicate is established for this selector.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Wrapped-selector intent and valid input semantics are unresolved.",
+                ),
+            ),
+        )
+    else:
+        matcher_claim = SemanticClaim(
+            id="boot_candidate_matcher",
+            scope="runtime_consumer",
+            statement=(
+                "This rejected payload does not enter bootsigsearch through the "
+                "confirmed current template path."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Historical versions, platform initialization, and independent "
+                    "consumers of this legacy shape were not established.",
+                ),
+            ),
+        )
+        predicate_claim = SemanticClaim(
+            id="boot_candidate_predicate",
+            scope="detection_predicate",
+            statement="No match predicate is established for the opaque legacy payload.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "The legacy grammar and any associated matcher are unresolved.",
+                ),
+            ),
+        )
+
+    claims = (
+        wire_claim,
+        SemanticClaim(
+            id="boot_dispatch_path",
+            scope="loader_dispatch",
+            statement=(
+                "When boot_init_module is active, type 0x44 is registered as a "
+                "template record and DispatchRecord routes it to ReceiveNewTemplate."
+            ),
+            coverage="subset",
+            evidence_refs=("boot_dispatch",),
+            unknowns=(
+                SemanticUnknown(
+                    "loader_dispatch",
+                    "Outer auto-initialization platform gates were not established.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="boot_receiver_disposition",
+            scope="receiver_transform",
+            statement=receiver_statement,
+            coverage=receiver_coverage,
+            evidence_refs=("boot_receiver",),
+            unknowns=receiver_unknowns,
+        ),
+        matcher_claim,
+        predicate_claim,
+        SemanticClaim(
+            id="boot_report_mapping",
+            scope="report_mapping",
+            statement="BOOT candidate identity to product report mapping is unresolved.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "ShouldContinueScanning and caller policy were not reduced to a "
+                    "portable report mapping.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="boot_final_verdict",
+            scope="final_verdict",
+            statement="A BOOT candidate result is not a confirmed final verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Boot-format checks, removal policy, report arbitration, and cure "
+                    "outcomes remain outside this payload rule.",
+                ),
+            ),
+        ),
+    )
+
+    claim_evidence = [
+        SemanticEvidence(
+            id="boot_dispatch",
+            axis="dispatch",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=("boot_init_module @ 0x180C385B0; DispatchRecord @ 0x1800FAF18"),
+            supports=("boot_dispatch_path",),
+        ),
+        SemanticEvidence(
+            id="boot_receiver",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "ReceiveNewTemplate @ 0x1803224D0 with BOOT descriptor "
+                "{0x1016, 0, 0x2020, 4}"
+            ),
+            supports=(
+                ("boot_wire_projection", "boot_receiver_disposition")
+                if is_current
+                else ("boot_receiver_disposition",)
+            ),
+        ),
+    ]
+    if is_current:
+        claim_evidence.append(
+            SemanticEvidence(
+                id="boot_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="bootsigsearch @ 0x180192E10",
+                supports=(
+                    ("boot_candidate_matcher", "boot_candidate_predicate")
+                    if has_supported_matcher
+                    else ("boot_candidate_matcher",)
+                ),
+            )
+        )
+
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
         representation="boot.candidate_probe.ir.v2",
@@ -425,6 +676,8 @@ def export_boot_semantics(parsed: BootPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=claims,
+        claim_evidence=tuple(claim_evidence),
     )
 
 
