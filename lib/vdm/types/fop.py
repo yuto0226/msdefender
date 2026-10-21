@@ -280,7 +280,11 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
                             ("pattern_options", "copied to trie metadata low word"),
                             (
                                 "candidate_gate",
-                                "conditional BMMatchPEMapper; false rejects candidate",
+                                (
+                                    "AddToResults calls BMMatchPEMapper when metadata "
+                                    "bit 2 is set; AddNewPatternCommon sets this bit "
+                                    "for prefix_len > 8; false rejects candidate"
+                                ),
                             ),
                         )
                     ),
@@ -292,9 +296,10 @@ def export_fop_semantics(parsed: FopPayload) -> RuleSemantics:
         issues.append(
             SemanticIssue(
                 "extended_fields_uninterpreted",
-                "Runtime effects are observed, but field domains, gate applicability, "
-                "and complete subtype/report semantics are unresolved. Extended "
-                "records are not represented as matching-equivalent rules.",
+                "Runtime effects and the BMMatchPEMapper gate condition "
+                "(prefix_len > 8) are observed, but field domains and complete "
+                "subtype/report semantics are unresolved. Extended records are "
+                "not represented as matching-equivalent rules.",
             )
         )
     return RuleSemantics(
