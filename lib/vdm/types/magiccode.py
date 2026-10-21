@@ -9,7 +9,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 _BYTE_PREVIEW = 64
@@ -234,6 +237,89 @@ def export_magiccode_semantics(parsed: MagicCodePayload) -> RuleSemantics:
                 "The pattern/evaluation path is confirmed locally, but the complete "
                 "unpacker state change is unresolved; this consumer path does not "
                 "establish a threat report or final detection verdict.",
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                id="magiccode_registration",
+                scope="loader_dispatch",
+                statement=(
+                    "MAGICCODE is registered as 32-byte normalized rows with four "
+                    "descriptor fields."
+                ),
+                coverage="subset",
+                evidence_refs=("magiccode_dispatch",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Accepted trailing bytes are not assigned loader semantics.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="magiccode_entrypoint_resolution",
+                scope="runtime_consumer",
+                statement=(
+                    "The UpxEP consumer range-matches candidates, applies "
+                    "MatchNopSignature, then passes the expression to EvaluateExpression."
+                ),
+                coverage="subset",
+                evidence_refs=("magiccode_unpacker",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The portable expression grammar and complete unpacker state "
+                        "change are unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="magiccode_detection_predicate",
+                scope="detection_predicate",
+                statement="MAGICCODE is not established as a threat detection predicate.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Unpacker entry-point resolution is not a closed threat match path.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="magiccode_final_verdict",
+                scope="final_verdict",
+                statement="MAGICCODE does not establish a final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "No unpacker-consumer-to-report verdict dataflow was observed.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="magiccode_dispatch",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "magiccode_init_module @ 0x1805647A0; "
+                    "ReceiveNewTemplate @ 0x1803224D0"
+                ),
+                supports=("magiccode_registration",),
+            ),
+            SemanticEvidence(
+                id="magiccode_unpacker",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "GetMagicCodeSignatures @ 0x180592D74; "
+                    "Upxw60Unpacker::ResolveEntryPoint @ 0x180269D10"
+                ),
+                supports=("magiccode_entrypoint_resolution",),
             ),
         ),
     )
