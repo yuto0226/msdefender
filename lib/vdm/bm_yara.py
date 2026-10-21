@@ -214,20 +214,26 @@ def render_bm_yara(
                 )
                 parts.append((jump, operation.offset, True, operation.raw[1]))
         elif isinstance(operation, BmAlternatives):
-            if lowercase_map:
+            if not operation.choices or any(not choice for choice in operation.choices):
+                issues.append(
+                    BmRenderIssue(
+                        "empty_alternative", operation.offset, operation.token.raw_id
+                    )
+                )
+            elif operation.token.raw_id == 0x17:
+                issues.append(
+                    BmRenderIssue(
+                        "unsupported.first_success_alternatives",
+                        operation.offset,
+                        operation.token.raw_id,
+                    )
+                )
+            elif lowercase_map:
                 issues.append(
                     BmRenderIssue(
                         "unsupported.ascii_lowercase_alternatives",
                         operation.offset,
                         operation.token.raw_id,
-                    )
-                )
-            elif not operation.choices or any(
-                not choice for choice in operation.choices
-            ):
-                issues.append(
-                    BmRenderIssue(
-                        "empty_alternative", operation.offset, operation.token.raw_id
                     )
                 )
             else:
