@@ -268,9 +268,10 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
     data_offset = data_size_offset + 2
     issues = [
         SemanticIssue(
-            "query_policy_incomplete",
-            "Win32-emulation query fallback and buffer/error rules are modeled; "
-            "unexamined registry APIs and final scan/report policy remain unknown.",
+            "caller_interpretation_unknown",
+            "The modeled Win32-emulation API contract ends at return values and "
+            "output buffers; how PE/P-code callers interpret those results and "
+            "whether they influence scan/report policy remain unknown.",
         ),
         SemanticIssue(
             "value_type_is_raw",
@@ -302,7 +303,7 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="unsupported" if unknown_hive else "confirmed_subset",
-        representation="vreg.virtual_registry_write.ir.v2",
+        representation="vreg.virtual_registry_write.ir.v3",
         data=JSONObject(
             (
                 ("type", "VREG"),
@@ -480,6 +481,17 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
                         "ignored_trailing_bytes",
                         parsed.trailing_raw,
                         data_offset + len(parsed.data_raw),
+                    ),
+                ),
+                (
+                    "consumer_boundary",
+                    JSONObject(
+                        (
+                            ("api_layer", "confirmed virtual-registry behavior"),
+                            ("pe_or_pcode_caller_interpretation", None),
+                            ("direct_threat_report", False),
+                            ("final_scan_verdict", None),
+                        )
                     ),
                 ),
             )
