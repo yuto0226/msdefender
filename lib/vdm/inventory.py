@@ -60,6 +60,13 @@ class _SemanticAccumulator:
     issues: Counter[str] = field(default_factory=Counter)
     profiles: Counter[str] = field(default_factory=Counter)
     evidence: set[str] = field(default_factory=set)
+    claim_coverage: dict[str, Counter[str]] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )
+    claim_unknowns: Counter[str] = field(default_factory=Counter)
+    claim_evidence_axes: dict[str, Counter[str]] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )
     failures: list[dict[str, object]] = field(default_factory=list)
 
     def observe(
@@ -101,6 +108,15 @@ class _SemanticAccumulator:
         self.issues.update(issue.code for issue in semantics.issues)
         self.profiles[semantics.profile or "unprofiled"] += 1
         self.evidence.update(semantics.evidence)
+        evidence_by_id = {item.id: item for item in semantics.claim_evidence}
+        for claim in semantics.claims:
+            self.claim_coverage[claim.scope][claim.coverage] += 1
+            for unknown in claim.unknowns:
+                self.claim_unknowns[unknown.scope] += 1
+            for evidence_ref in claim.evidence_refs:
+                self.claim_evidence_axes[claim.scope][
+                    evidence_by_id[evidence_ref].axis
+                ] += 1
 
     def _fail(self, source: str, offset: int, stage: str, error: str) -> None:
         self.failure_count += 1
@@ -179,6 +195,11 @@ def build_semantic_inventory(
         spec = DEFAULT_REGISTRY.get(type_byte)
         accumulated = semantics[type_byte]
         total_failure_count += accumulated.failure_count
+        claim_scopes = sorted(
+            set(accumulated.claim_coverage)
+            | set(accumulated.claim_unknowns)
+            | set(accumulated.claim_evidence_axes)
+        )
         type_results[f"0x{type_byte:02X}"] = {
             "name": spec.name if spec is not None else None,
             "record_count": counts[type_byte],
@@ -195,6 +216,16 @@ def build_semantic_inventory(
                 "representation_counts": dict(accumulated.representations),
                 "profile_counts": dict(accumulated.profiles),
                 "engine_evidence": sorted(accumulated.evidence),
+                "claim_scope_counts": {
+                    scope: {
+                        "coverage_counts": dict(accumulated.claim_coverage[scope]),
+                        "unknown_count": accumulated.claim_unknowns[scope],
+                        "evidence_axis_counts": dict(
+                            accumulated.claim_evidence_axes[scope]
+                        ),
+                    }
+                    for scope in claim_scopes
+                },
                 "issue_counts": dict(accumulated.issues),
                 "failure_count": accumulated.failure_count,
                 "failure_preview": accumulated.failures,
@@ -212,7 +243,7 @@ def build_semantic_inventory(
         if type_byte not in counts
     ]
     return {
-        "schema": "vdm-semantic-evidence-inventory.v1",
+        "schema": "vdm-semantic-evidence-inventory.v2",
         "sources": source_identities,
         "sampling": {
             "scope": "all_records"
