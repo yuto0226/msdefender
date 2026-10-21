@@ -136,13 +136,15 @@ def export_macro_pcode_semantics(parsed: MacroPcodePayload) -> RuleSemantics:
         ),
         SemanticIssue(
             "scan_policy_unknown",
-            "ShouldContinueScanning receives a candidate and signature "
-            "metadata; its policy meaning is not exported.",
+            "RME::find_pcrc and RME::reportvirus apply separate continuation "
+            "and best-match gates; the complete macro-path policy outcome is "
+            "not resolved.",
         ),
         SemanticIssue(
             "final_verdict_unknown",
-            "The observed RME lookup/report path does not establish a final "
-            "host-visible verdict.",
+            "RME::reportvirus can update the internal best-detection state, but "
+            "the path to an outer scan result or host-visible verdict is not "
+            "established.",
         ),
     ]
     if parsed.suffix:
@@ -293,6 +295,10 @@ def export_macro_pcode_semantics(parsed: MacroPcodePayload) -> RuleSemantics:
             (
                 "RME::find_pcrc uses ordered safecrc comparisons and passes "
                 "candidate RecID/SigSeq/SigSha to ShouldContinueScanning"
+            ),
+            (
+                "RME::reportvirus @ 0x1805EBF24 applies another policy gate and "
+                "may update RME internal best-detection state"
             ),
         ),
         profile="mpengine-1.443.903.0",
