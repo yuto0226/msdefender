@@ -427,14 +427,22 @@ def export_threat_begin_semantics(threat: ThreatBegin) -> RuleSemantics:
 
 
 def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
-    """Export the observed 0x5D cache marker without inventing group semantics."""
+    """Export 0x5D dispatch/cache observations without inventing value semantics."""
     return RuleSemantics(
         status="unsupported" if threat.trailing_raw else "observed_only",
-        representation="threat-end.cache-marker-observation.v1",
+        representation="threat-end.container-observation.v2",
         data=JSONObject(
             (
                 ("record_type", "THREAT_END"),
                 ("container_role", None),
+                (
+                    "raw_dispatch_observation",
+                    (
+                        "DispatchRecords(mode!=0) sends non-0x5C records, including "
+                        "0x5D, through DispatchRecord and the shared ordinal epilogue; "
+                        "no 0x5D-specific close/finalize branch was observed."
+                    ),
+                ),
                 ("raw_hex", threat.raw.hex()),
                 (
                     "observed_value",
@@ -450,13 +458,66 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                     ),
                 ),
                 (
-                    "cache_writer_behavior",
-                    "nonzero value may be deferred and replayed as type 0x5D",
+                    "cache_writer_observation",
+                    JSONObject(
+                        (
+                            ("global", "dword_181289CB8"),
+                            ("source", "DispatchRecords @ 0x1800F99A8"),
+                            (
+                                "behavior",
+                                (
+                                    "For payload size 4, save the DWORD. A nonzero "
+                                    "value defers the current raw-record write. Before "
+                                    "the next record, emit {DWORD 1117, DWORD value} "
+                                    "unless that next type is 0x5C, then clear pending "
+                                    "state. Zero does not take the deferred-write path."
+                                ),
+                            ),
+                            (
+                                "global_xrefs",
+                                JSONArray(
+                                    ("0x1800F9CD2", "0x1800F9CE0", "0x1800F9E4E")
+                                ),
+                            ),
+                            (
+                                "cache_replay",
+                                (
+                                    "DWORD 1117 is bytes 5D 04 00 00; the cache "
+                                    "reader reframes the pair as type 0x5D, size 4, "
+                                    "and DispatchRecords(mode=1) uses ordinary "
+                                    "DispatchRecord."
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "threat_manager_registration",
+                    (
+                        "threat_mgr_init_module @ 0x1809EBA10 registers "
+                        "threat_info_receiver and threat_info_end for type 0x5C "
+                        "only; threat_info_end @ 0x1809EB100 finalizes staged threat "
+                        "rows and dependencies but does not read the 0x5D DWORD."
+                    ),
+                ),
+                (
+                    "error_boundary",
+                    (
+                        "Malformed framing returns 40964; receiver errors propagate; "
+                        "load cancellation returns 36868; unresolved dependency in "
+                        "threat_info_end returns 32780. These are not 0x5D value "
+                        "semantics."
+                    ),
                 ),
                 ("trailing_raw_hex", threat.trailing_raw.hex()),
             )
         ),
-        evidence=("mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8",),
+        evidence=(
+            "mpengine 1.443.903.0 DispatchRecords @ 0x1800F99A8",
+            "mpengine 1.443.903.0 DispatchRecord @ 0x1800FAF18",
+            "mpengine 1.443.903.0 threat_mgr_init_module @ 0x1809EBA10",
+            "mpengine 1.443.903.0 threat_info_end @ 0x1809EB100",
+        ),
         profile="mpengine-1.443.903.0",
         issues=(
             SemanticIssue(
@@ -466,8 +527,9 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
             ),
             SemanticIssue(
                 "threat_container_not_detection_predicate",
-                "Type 0x5D does not describe a scan-time detection predicate or "
-                "verdict; a threat-group closing role is not established.",
+                "No inspected current-binary path establishes type 0x5D as a "
+                "scan-time detection predicate or verdict; a threat-group "
+                "closing role is also not established.",
             ),
             *(
                 (
