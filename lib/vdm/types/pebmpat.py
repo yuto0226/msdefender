@@ -19,6 +19,87 @@ _PREVIEW = 64
 _TEXT_PREVIEW = 512
 
 
+def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject:
+    """Describe only the BMMatchPEMapper/BMSBufferReader candidate stage."""
+    if pattern_data is None:
+        return JSONObject(
+            (
+                ("status", "no_candidate"),
+                ("reader", "BMSBufferReader"),
+                ("operation_fidelity_counts", JSONObject(())),
+                ("buffer_reader_rejecting_operations", JSONArray(())),
+            )
+        )
+
+    pattern_fields = dict(pattern_data.items)
+    operation_values = pattern_fields["operations"]
+    operations = [dict(operation.items) for operation in operation_values.items]
+
+    def fields(value: object) -> dict[str, object]:
+        return dict(value.items) if isinstance(value, JSONObject) else {}
+
+    fidelity_counts = {
+        fidelity: sum(operation["fidelity"] == fidelity for operation in operations)
+        for fidelity in ("exact", "conditional", "unsupported")
+    }
+    buffer_reader_rejecting_operations = [
+        JSONObject(
+            (
+                ("offset", fields(operation["raw_span"])["offset"]),
+                ("raw_id", operation["raw_id"]),
+                ("dispatch", 0x09),
+                (
+                    "reason",
+                    "BMMatchWorker_BMSBufferReader_ routes dispatch 0x09 to its default failure branch",
+                ),
+            )
+        )
+        for operation in operations
+        if fields(operation.get("dispatch")).get("id") == 0x09
+    ]
+    remaining = fields(pattern_fields["remaining_raw"])
+    framing_complete = (
+        pattern_fields["ended"]
+        and not pattern_fields["issues"].items
+        and remaining["length"] == 0
+    )
+    if not framing_complete or fidelity_counts["unsupported"]:
+        status = "unsupported"
+    elif fidelity_counts["conditional"]:
+        status = "conditional"
+    else:
+        status = "confirmed_subset"
+
+    return JSONObject(
+        (
+            ("status", status),
+            (
+                "scope",
+                "BM candidate matching only; this is not trie eligibility, PE mapping, P-code validation, reporting, or a final threat/action verdict",
+            ),
+            ("reader", "BMSBufferReader via BMMatchPEMapper -> BMMatchEx2"),
+            ("framing_complete", framing_complete),
+            ("byte_translation", "BM_MAP_ALL"),
+            ("worker_flags", "(2 * !trie_flags_bit1) | 1"),
+            ("operation_fidelity_counts", JSONObject(tuple(fidelity_counts.items()))),
+            (
+                "buffer_reader_rejecting_operations",
+                JSONArray(tuple(buffer_reader_rejecting_operations)),
+            ),
+            (
+                "requirements",
+                JSONArray(
+                    (
+                        "caller supplies the mapped subject window and start cursor",
+                        "caller supplies BM_MAP_ALL and the BMMatchPEMapper worker flags",
+                        "conditional operations retain their serialized per-operation requirements",
+                    )
+                ),
+            ),
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PEBMPat:
     """Lossless PEBMPAT fields and the receiver's BM insertion outcome."""
@@ -137,15 +218,20 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         ),
     ]
     pattern_data = None
+    candidate_matcher = _candidate_matcher_projection(None)
     if parsed.pattern is not None:
         pattern_data, pattern_issues = serialize_bm_pattern(parsed.pattern)
         issues.extend(pattern_issues)
-        issues.append(
-            SemanticIssue(
-                "bm_operand_semantics_incomplete",
-                "PEMapper window flow is documented; BM opcode operands and reader-state effects remain only partially modeled.",
+        candidate_matcher = _candidate_matcher_projection(pattern_data)
+        matcher_status = dict(candidate_matcher.items)["status"]
+        if matcher_status in ("conditional", "unsupported"):
+            issues.append(
+                SemanticIssue(
+                    "bm_operand_semantics_incomplete",
+                    "This candidate contains conditional or unsupported BM operations; see candidate_matcher and per-operation fidelity.",
+                    (("candidate_matcher_status", matcher_status),),
+                )
             )
-        )
     else:
         if parsed.receiver_result.startswith("no_op."):
             issues.append(
@@ -413,6 +499,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                     )
                 ),
             ),
+            ("candidate_matcher", candidate_matcher),
             ("bm_pattern", pattern_data),
         )
     )
@@ -420,7 +507,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         status=(
             "ignored" if parsed.receiver_result.startswith("no_op.") else "unsupported"
         ),
-        representation="pebmpat.pattern.ir.v5",
+        representation="pebmpat.pattern.ir.v6",
         data=data,
         evidence=(
             (
