@@ -473,6 +473,42 @@ _CONFIRMED_MATCHER_FAMILIES = frozenset(
 )
 
 _CONFIRMED_SCANNER_CONTEXTS = {
+    0x61: {
+        "family_index": 0,
+        "reader_kinds": ("PE_VMM_RANGES",),
+        "report_route": "PE_SCAN_VMEM_REPORT",
+        "report_family_index": 0,
+        "search_mode": 0,
+        "validator_argument": "PefileExtendedAttributesValidator",
+        "state_lifecycle": "shared_across_ranges_within_invocation",
+        "cross_range_score": "distinct_subsignature_contributions_accumulate",
+        "cross_boundary_pattern": "separate_subject_spans",
+        "invocation_reset": "unknown",
+    },
+    0x78: {
+        "family_index": 0,
+        "reader_kinds": ("PE_VMM_RANGES",),
+        "report_route": "PE_SCAN_VMEM_REPORT",
+        "report_family_index": 0,
+        "search_mode": 0,
+        "validator_argument": "PefileExtendedAttributesValidator",
+        "state_lifecycle": "shared_across_ranges_within_invocation",
+        "cross_range_score": "distinct_subsignature_contributions_accumulate",
+        "cross_boundary_pattern": "separate_subject_spans",
+        "invocation_reset": "unknown",
+    },
+    0x85: {
+        "family_index": 0,
+        "reader_kinds": ("PE_VMM_RANGES",),
+        "report_route": "PE_SCAN_VMEM_REPORT",
+        "report_family_index": 0,
+        "search_mode": 0,
+        "validator_argument": "PefileExtendedAttributesValidator",
+        "state_lifecycle": "shared_across_ranges_within_invocation",
+        "cross_range_score": "distinct_subsignature_contributions_accumulate",
+        "cross_boundary_pattern": "separate_subject_spans",
+        "invocation_reset": "unknown",
+    },
     0xD3: {
         "family_index": 9,
         "reader_kinds": ("AUTOIT_UFS_FILE_CHUNKS",),
@@ -482,8 +518,15 @@ _CONFIRMED_SCANNER_CONTEXTS = {
     0x8C: {
         "family_index": 3,
         "reader_kinds": ("ELF_SEGMENT_INTERVAL", "ELF_CALLER_RANGE"),
-        "report_route": "ELFFILE_SCAN_OWNS_SHARED_ELF_STATE",
+        "report_route": "ELFFILE_SCAN_REPORTS_AFTER_HELPERS",
         "report_family_index": None,
+        "search_mode": 1,
+        "validator_argument": None,
+        "state_lifecycle": "helper_local_reset_per_chunk_or_interval",
+        "cross_range_score": "not_accumulated_within_each_helper",
+        "cross_helper_aggregation": "unknown",
+        "cross_boundary_pattern": "helper_specific_overlap",
+        "invocation_reset": "helper_local_state_reset_confirmed",
     },
     0xC5: {
         "family_index": 7,
@@ -509,10 +552,21 @@ def _hstr_scanner_context(type_byte: int) -> JSONObject | None:
         (
             ("family_index", context["family_index"]),
             ("reader_kinds", JSONArray(context["reader_kinds"])),
-            ("search_mode", 1),
-            ("validator_argument", None),
+            ("search_mode", context.get("search_mode", 1)),
+            ("validator_argument", context.get("validator_argument")),
             ("report_route", context["report_route"]),
             ("report_family_index", context["report_family_index"]),
+            ("state_lifecycle", context.get("state_lifecycle", "unknown")),
+            ("cross_range_score", context.get("cross_range_score", "unknown")),
+            (
+                "cross_helper_aggregation",
+                context.get("cross_helper_aggregation", "not_applicable"),
+            ),
+            (
+                "cross_boundary_pattern",
+                context.get("cross_boundary_pattern", "unknown"),
+            ),
+            ("invocation_reset", context.get("invocation_reset", "unknown")),
             ("final_verdict", "unknown"),
         )
     )
@@ -530,7 +584,10 @@ def _hstr_no_candidate_disposition(
     validator_gate_bits = (0x0004, 0x0008, 0x0010, 0x0040)
     if any(bit not in validator_gate_bits for bit in meaning.contextual_bits):
         return None
-    if type_byte not in _CONFIRMED_SCANNER_CONTEXTS:
+    # Context coverage may include callers that use a validator (notably PE).
+    # Keep the no-candidate proof limited to families whose complete known
+    # reader set is explicitly documented to pass a null validator.
+    if type_byte not in {0x8C, 0xC5, 0xD3, 0xD4}:
         return None
     return JSONObject(
         (
@@ -1205,7 +1262,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v4",
+        representation="hstr.matcher-subset.ir.v5",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
@@ -1214,6 +1271,8 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             "mpengine 1.443.903.0 BMPatternToLower @ 0x1800FECFC",
             "mpengine 1.443.903.0 BM_MAP_LOWCASE selected when HSTR flags bit0 is clear",
             "mpengine 1.443.903.0 hstr_internal_report_match_worker @ 0x180136268",
+            "mpengine 1.443.903.0 scan_vmem @ 0x1801379A0 and VMM_range_iterator::get_next_range_ex @ 0x180138208",
+            "mpengine 1.443.903.0 elfscan_hstr_region @ 0x180A57EBC and segment_based_hstr_scan @ 0x180A58870",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
