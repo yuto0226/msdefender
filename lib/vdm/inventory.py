@@ -191,6 +191,8 @@ def build_semantic_inventory(
 
     type_results: dict[str, object] = {}
     total_failure_count = 0
+    types_with_scoped_claims: list[str] = []
+    types_without_scoped_claims: list[str] = []
     for type_byte in sorted(counts):
         spec = DEFAULT_REGISTRY.get(type_byte)
         accumulated = semantics[type_byte]
@@ -200,7 +202,12 @@ def build_semantic_inventory(
             | set(accumulated.claim_unknowns)
             | set(accumulated.claim_evidence_axes)
         )
-        type_results[f"0x{type_byte:02X}"] = {
+        type_key = f"0x{type_byte:02X}"
+        if claim_scopes:
+            types_with_scoped_claims.append(type_key)
+        else:
+            types_without_scoped_claims.append(type_key)
+        type_results[type_key] = {
             "name": spec.name if spec is not None else None,
             "record_count": counts[type_byte],
             "wire_evidence": {
@@ -243,7 +250,7 @@ def build_semantic_inventory(
         if type_byte not in counts
     ]
     return {
-        "schema": "vdm-semantic-evidence-inventory.v2",
+        "schema": "vdm-semantic-evidence-inventory.v3",
         "sources": source_identities,
         "sampling": {
             "scope": "all_records"
@@ -260,8 +267,13 @@ def build_semantic_inventory(
             "registered_type_count": len(DEFAULT_REGISTRY),
             "registered_unobserved_type_count": len(registered_unobserved),
             "semantic_failure_count": total_failure_count,
+            "sampled_type_count_with_scoped_claims": len(types_with_scoped_claims),
+            "sampled_type_count_without_scoped_claims": len(
+                types_without_scoped_claims
+            ),
         },
         "registered_unobserved_types": registered_unobserved,
+        "sampled_observed_types_without_scoped_claims": types_without_scoped_claims,
         "types": type_results,
     }
 
