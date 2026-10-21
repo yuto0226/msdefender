@@ -291,6 +291,16 @@ def _expression_ast(expression: Expr) -> SemanticJSONValue:
 def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
     condition = interpret_aggregator(parsed)
     issue = condition.issue
+    interpretation = (
+        None
+        if condition.expression is None
+        else JSONObject(
+            (
+                ("kind", "boolean_expression_ast"),
+                ("ast", _expression_ast(condition.expression)),
+            )
+        )
+    )
     return RuleSemantics(
         status=(
             "confirmed_subset"
@@ -299,10 +309,36 @@ def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
             if issue.code == "receiver_ignored"
             else "unsupported"
         ),
-        representation="boolean_expr.ast.v1",
-        data=None
-        if condition.expression is None
-        else _expression_ast(condition.expression),
+        representation="aggregator.lossless_wire_and_boolean_expr.ast.v2",
+        data=JSONObject(
+            (
+                (
+                    "wire",
+                    JSONObject(
+                        (
+                            ("family", _FAMILY_NAMES[parsed.type_byte]),
+                            ("type_byte", parsed.type_byte),
+                            ("raw_hex", parsed.raw.hex()),
+                            ("flags", parsed.flags),
+                            ("receiver_ignored", parsed.receiver_ignored),
+                            ("name_length_declared", parsed.name_len),
+                            ("name_raw_hex", parsed.name.hex()),
+                            ("sig_length_declared", parsed.sig_len),
+                            ("sig_data_raw_hex", parsed.sig_data.hex()),
+                            (
+                                "decoded_sig_data_hex",
+                                None
+                                if parsed.decoded_sig_data is None
+                                else parsed.decoded_sig_data.hex(),
+                            ),
+                            ("trailing_raw_hex", parsed.trailing.hex()),
+                            ("body_complete", parsed.body_complete),
+                        )
+                    ),
+                ),
+                ("interpretation", interpretation),
+            )
+        ),
         evidence=("mpengine 1.443.903.0 AddSignature expression subset",),
         profile="mpengine-1.443.903.0",
         issues=(
