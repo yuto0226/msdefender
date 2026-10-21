@@ -122,8 +122,19 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     issues = [
         SemanticIssue(
             "runtime_region_unknown",
-            "ScanContext supplies guest VAs to PEEmuMapper; static flow does not identify "
-            "the mapped subject's backing file bytes or file/RVA translation.",
+            "ScanContext supplies guest VAs to PEEmuMapper. A conditional x86 file-backed "
+            "VMM path is recovered, but this candidate's actual source bytes and mapping "
+            "row are not identified; direct-buffer provenance and x64 mapping also remain unknown.",
+        ),
+        SemanticIssue(
+            "pe_mapping_metadata_unknown",
+            "The x86 interval formula is known, but row field names and the interval row "
+            "selected for a concrete candidate are not established.",
+        ),
+        SemanticIssue(
+            "x64_mapping_unknown",
+            "The x64 page loader has VFS_Read/UfsSeekRead branches, but its guest-VA to "
+            "file-position formula is not recovered.",
         ),
         SemanticIssue(
             "final_detection_policy_unknown",
@@ -190,8 +201,80 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                         (
                             "address_translation_status",
                             (
-                                "not recovered; BM_MAP_ALL is BM byte translation, "
-                                "not a file/RVA mapping"
+                                "conditional x86 file-backed VMM translation is recovered "
+                                "below; a candidate-specific RVA/file mapping is not established"
+                            ),
+                        ),
+                        (
+                            "sentinel_mapping",
+                            JSONObject(
+                                (
+                                    (
+                                        "condition",
+                                        "PEEmuMapper.self+0x18 == 0xFFFFFFFF",
+                                    ),
+                                    ("guest_offset", "x"),
+                                    (
+                                        "returned_pointer",
+                                        "*(uint8_t **)(self+0x10) + x + 1",
+                                    ),
+                                    (
+                                        "bounds_check",
+                                        "x + 1 + length <= *(uint64_t *)(self+0x20)",
+                                    ),
+                                    ("buffer_provenance", None),
+                                    ("rva_or_file_offset", None),
+                                )
+                            ),
+                        ),
+                        (
+                            "x86_file_backed_vmm_mapping",
+                            JSONObject(
+                                (
+                                    (
+                                        "condition",
+                                        "non-sentinel VMM path; file-backed image page branch",
+                                    ),
+                                    (
+                                        "input_memory_offset",
+                                        "guest_va - *(uint64_t *)(pe_vars+0x83798)",
+                                    ),
+                                    ("translator", "pe_mofs_to_fofs_ex"),
+                                    ("interval_table_base_offset", 0x4040),
+                                    ("interval_entry_stride", 0x28),
+                                    (
+                                        "interval_lower_bound_source",
+                                        "*(uint32_t *)(row+0x00)",
+                                    ),
+                                    (
+                                        "returned_file_position_formula",
+                                        "memory_offset + *(uint32_t *)(row+0x10) - *(uint32_t *)(row+0x08)",
+                                    ),
+                                    ("read_position_consumer", "UfsSeekRead"),
+                                    ("read_destination", "VMM page buffer"),
+                                    (
+                                        "interval_index_output",
+                                        "matching interval row index; concrete value unknown",
+                                    ),
+                                    ("read_length", None),
+                                    ("row_field_names", None),
+                                    ("actual_interval_row", None),
+                                    ("candidate_va_to_rva", None),
+                                )
+                            ),
+                        ),
+                        (
+                            "x64_file_backed_vmm_mapping",
+                            JSONObject(
+                                (
+                                    (
+                                        "observed_readers",
+                                        JSONArray(("VFS_Read", "UfsSeekRead")),
+                                    ),
+                                    ("guest_va_to_file_position_formula", None),
+                                    ("row_field_names", None),
+                                    ("actual_interval_row", None),
+                                )
                             ),
                         ),
                         ("bm_byte_translation", "BM_MAP_ALL"),
@@ -205,7 +288,10 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                             "(scan_va, 2048), then (scan_va, 1); the fallback uses the mapped length",
                         ),
                         ("runtime_bytes_observed", False),
-                        ("file_or_rva_translation", None),
+                        (
+                            "file_or_rva_translation",
+                            "conditional x86 file-backed VMM path only; candidate-specific mapping unknown",
+                        ),
                     )
                 ),
             ),
@@ -264,7 +350,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         status=(
             "ignored" if parsed.receiver_result.startswith("no_op.") else "unsupported"
         ),
-        representation="pebmpat.pattern.ir.v3",
+        representation="pebmpat.pattern.ir.v4",
         data=data,
         evidence=(
             (
@@ -277,6 +363,10 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             "ScanContext::GetChar @ 0x180250F0C",
             "PEEmuMapper::mmap @ 0x180251080",
             "__mmap_ex @ 0x180035ED0",
+            "VMM_x32_context::load_page @ 0x180040DD0",
+            "pe_mofs_to_fofs_ex @ 0x1800E9DA0",
+            "UfsSeekRead @ 0x18014A724",
+            "VMM_x64_context::load_page @ 0x1800424D0 (mapping formula unresolved)",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
