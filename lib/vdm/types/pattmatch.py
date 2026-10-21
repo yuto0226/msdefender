@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 PATTMATCH_TYPE: Final = 0x51
@@ -271,6 +274,91 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="pattmatch_candidate_matcher",
+                scope="runtime_consumer",
+                statement=(
+                    "The processor prefilters an engine-decoded instruction candidate "
+                    "with an 8-byte key, then CRC-checks length-selected byte segments."
+                ),
+                coverage="unknown" if unsupported else "subset",
+                evidence_refs=() if unsupported else ("pattmatch_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        (
+                            "The record length stream is not confirmed by the parser."
+                            if unsupported
+                            else "A portable equivalent of the engine decoder and "
+                            "candidate callback is not available."
+                        ),
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="pattmatch_candidate_predicate",
+                scope="detection_predicate",
+                statement=(
+                    "At candidate scope, matching requires the opcode-key prefilter "
+                    "and a successful CRC_0 comparison."
+                ),
+                coverage="unknown" if unsupported else "subset",
+                evidence_refs=() if unsupported else ("pattmatch_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        (
+                            "The malformed or unconfirmed length stream prevents a "
+                            "candidate predicate projection."
+                            if unsupported
+                            else "Candidate success is not a raw-file predicate or a "
+                            "complete threat detection condition."
+                        ),
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="pattmatch_report_mapping",
+                scope="report_mapping",
+                statement="Candidate selection to report mapping is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "No selected-entry-to-report policy path was followed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="pattmatch_final_verdict",
+                scope="final_verdict",
+                statement="A PATTMATCH CRC success is not a confirmed final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "The outer scan arbitration and final report remain unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="pattmatch_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "PattProcessor::get_prematch @ 0x18022DB40; "
+                    "PattProcessor::full_match @ 0x18022D7C4"
+                ),
+                supports=(
+                    "pattmatch_candidate_matcher",
+                    "pattmatch_candidate_predicate",
+                ),
+            ),
+        ),
     )
 
 
