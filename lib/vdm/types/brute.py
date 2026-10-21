@@ -194,8 +194,11 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
                         ),
                         ("pattern_argument", "KCRCE entry +0x00 BM object"),
                         ("pattern_size_argument", "KCRCE entry +0x12 body length"),
-                        ("translation", "identity"),
                         ("translation_symbol", "BM_MAP_ALL"),
+                        (
+                            "translation_semantics",
+                            "caller-selected table; exact byte mapping not reconstructed",
+                        ),
                         ("flags_argument", "KCRCE entry +0x16 runtime control flags"),
                         ("capture_output", "caller_supplied_match_end_slot"),
                         ("offsets_vector_supplied", False),
@@ -210,6 +213,10 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
                                             (
                                                 "direction_filter",
                                                 "skip raw direction 2",
+                                            ),
+                                            (
+                                                "other_direction_values",
+                                                "pass this filter",
                                             ),
                                             (
                                                 "position_gate",
@@ -229,10 +236,37 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
                                                 "skip raw direction 1",
                                             ),
                                             (
+                                                "other_direction_values",
+                                                "pass this filter",
+                                            ),
+                                            (
                                                 "position_gate",
                                                 "fixed-position match must end at subject window end",
                                             ),
                                         )
+                                    ),
+                                )
+                            ),
+                        ),
+                        (
+                            "position_runtime_use",
+                            JSONObject(
+                                (
+                                    (
+                                        "storage",
+                                        "wire u32 is accepted only in 0..0xFFFF or as 0xFFFFFFFF, then stored as u16",
+                                    ),
+                                    (
+                                        "sentinel",
+                                        "0xFFFFFFFF becomes stored 0xFFFF and bypasses the fixed-position gates",
+                                    ),
+                                    (
+                                        "non_sentinel",
+                                        "gates first-pass state and requires second-pass match_end == window_end",
+                                    ),
+                                    (
+                                        "literal_offset_use",
+                                        "not observed in Kcrce_SearchBrute",
                                     ),
                                 )
                             ),
@@ -261,8 +295,8 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
                             "unresolved",
                             JSONArray(
                                 (
-                                    "meaning of raw direction values other than 1 and 2, and exact relation between the two reply windows and file/stream direction",
-                                    "fixed-position first-pass counter gate and how it maps to payload numeric position",
+                                    "business names for raw direction values and the exact relation between the two reply windows and file/stream direction",
+                                    "business meaning of the position mode and its first-pass state gate",
                                     "complete mapping from validator result and SCAN_REPLY policy to externally visible threat verdict",
                                 )
                             ),
@@ -275,7 +309,7 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
     data = JSONObject(pattern_data.items + (("outer", outer),))
     return RuleSemantics(
         status="confirmed_subset",
-        representation="brute.bm_candidate.ir.v2",
+        representation="brute.bm_candidate.ir.v3",
         data=data,
         evidence=(
             "BM wire framing and decoded fields for mpengine 1.443.903.0",
@@ -290,8 +324,8 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
             SemanticIssue(
                 "outer_verdict_unknown",
                 "This export confirms only the modeled BM candidate subset. Raw "
-                "direction values have no domain names here, position's exact "
-                "payload meaning remains unresolved, and validator/report "
+                "direction values have no domain names here, position's business "
+                "meaning remains unresolved despite its confirmed gates, and validator/report "
                 "branches do not establish an externally visible final verdict.",
                 (
                     ("direction_raw", parsed.direction_raw),
