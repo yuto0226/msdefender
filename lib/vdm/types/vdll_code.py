@@ -336,9 +336,10 @@ def export_vdll_code(parsed: VdllCodePayload) -> ArtifactExport:
         artifacts=(Artifact("vdll-code.bin", "opaque_vdll_pe_record", parsed.raw),),
         warnings=(
             ArtifactWarning(
-                "vdll_linkage_unresolved",
-                "The bytes are exported unchanged. Engine image normalization, "
-                "linkage, runtime execution, and scan-time use are not confirmed.",
+                "vdll_raw_image_export",
+                "The bytes are exported unchanged rather than as the engine's "
+                "normalized image. Import/export linkage, callback-body execution, "
+                "and scan-time matching are not confirmed for this record.",
                 (
                     ("record_type", f"0x{parsed.type:02X}"),
                     ("host_association", parsed.host),
@@ -413,22 +414,84 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
                     ),
                 ),
                 ("overlay_length", len(parsed.overlay)),
+                (
+                    "engine_normalization_observed",
+                    JSONObject(
+                        (
+                            (
+                                "header_view",
+                                (
+                                    "PE32/PE32+ fields are copied through engine masks "
+                                    "into an internal normalized header view"
+                                ),
+                            ),
+                            (
+                                "section_image_copy",
+                                (
+                                    "copies min(VirtualSize, SizeOfRawData) bytes from "
+                                    "PointerToRawData to VirtualAddress in a host kstore "
+                                    "image"
+                                ),
+                            ),
+                            (
+                                "image_mapping",
+                                "uses page-aligned PEVAMap shadow-page reservations/commits",
+                            ),
+                            (
+                                "imports_exports",
+                                (
+                                    "parsed into internal import/export indexes; "
+                                    "finalize linking is separate"
+                                ),
+                            ),
+                            (
+                                "relocations",
+                                (
+                                    "not observed in init or shadow-page mapping; "
+                                    "handling elsewhere is unknown"
+                                ),
+                            ),
+                            (
+                                "host_specific_parse_difference",
+                                (
+                                    "not observed among 0x79/0x7C/0x9C/0xC4; receiver "
+                                    "routes to shared init"
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                ("offline_parse_implies_engine_acceptance", False),
                 ("runtime_execution_confirmed", False),
                 ("final_detection_policy_confirmed", False),
             )
         ),
         evidence=(
             "mpengine 1.443.903.0 dllsupp_init registers record types to host receivers",
-            "mpengine 1.443.903.0 vdll_receiver passes payload and length to vdll_data_t::init",
-            "mpengine 1.443.903.0 vdll_load maps VDLL shadow pages into PEVAMap; x86/x64 handle_exception can redirect emulated IP to VDLL callback VA",
-            "The accepted payload is preserved byte-for-byte; PE fields are bounded offline observations",
+            (
+                "mpengine 1.443.903.0 vdll_receiver passes identical "
+                "payload/length/init mode to vdll_data_t::init for registered code types"
+            ),
+            (
+                "mpengine 1.443.903.0 vdll_data_t::init parses PE32/PE32+ headers, "
+                "sections, and import/export directories into internal structures"
+            ),
+            (
+                "mpengine 1.443.903.0 vdll_data_t::init copies bounded raw section bytes "
+                "into a host kstore image; vdll_add_shadow_pages maps sections in PEVAMap"
+            ),
+            (
+                "Offline artifact export preserves the record payload byte-for-byte; "
+                "PE fields are bounded offline observations"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=(
             SemanticIssue(
-                "vdll_inner_framing_and_engine_normalization_unknown",
-                "The VDM record payload boundary is known, but internal chunking, "
-                "header normalization, and engine load acceptance are not established.",
+                "vdll_normalization_details_and_acceptance_partial",
+                "Static analysis confirms masked PE header normalization, bounded "
+                "section copying, and import/export parsing. The exact normalization "
+                "for every field and acceptance of this offline parse are not established.",
             ),
             SemanticIssue(
                 "vdll_record_runtime_use_unknown",
