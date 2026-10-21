@@ -73,8 +73,15 @@ def export_ufsp_disable_semantics(parsed: UfspDisablePayload) -> RuleSemantics:
     issues = [
         SemanticIssue(
             "outer_policy_unknown",
-            "Removing a registered plugin does not establish the final scan policy.",
-        )
+            "Exact removal from the registered-plugin collection is confirmed; "
+            "the resulting scan behavior and final report policy are not.",
+        ),
+        SemanticIssue(
+            "plugin_id_business_name_unknown",
+            "The numeric plugin ID is matched exactly, but its product-facing "
+            "name is not established by this dataflow.",
+            (("plugin_id", parsed.plugin_id),),
+        ),
     ]
     if parsed.trailing_raw:
         issues.append(
@@ -87,7 +94,7 @@ def export_ufsp_disable_semantics(parsed: UfspDisablePayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="confirmed_subset",
-        representation="ufsp_disable.plugin_removal.ir.v1",
+        representation="ufsp_disable.plugin_removal.ir.v2",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
@@ -123,12 +130,17 @@ def export_ufsp_disable_semantics(parsed: UfspDisablePayload) -> RuleSemantics:
                         )
                     ),
                 ),
+                ("record_role", "loader_policy_state_update"),
+                ("content_match_predicate", False),
+                ("special_all_plugins_sentinel", False),
                 ("suffix_disposition", "accepted_and_ignored"),
                 ("final_scan_policy", "unknown"),
             )
         ),
         evidence=(
-            "UFSP_DISABLE receiver DWORD lookup and registered-plugin removal path",
+            "Ufs_init_module @ 0x180B44A80 registers type 0x88 as a DWORD row",
+            "DisableUfsPluginPushEnd @ 0x18055CF20 removes only exact ComparePluginIDs matches",
+            "ComparePluginIDs @ 0x180534CA0 has no 0xFFFFFFFF wildcard branch",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
