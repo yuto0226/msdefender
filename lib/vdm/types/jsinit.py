@@ -17,7 +17,9 @@ from ..core import (
 )
 
 JSINIT_TYPE: Final = 0xCA
-MAX_RECEIVER_SIZE: Final = 0xFFFFFFFF
+# The extended VDM record header carries a 32-bit payload length. This is a
+# wire-format bound, not a hard rejection performed by pushJsInit.
+MAX_VDM_PAYLOAD_SIZE: Final = 0xFFFFFFFF
 TEXT_PREVIEW_BYTES: Final = 512
 
 
@@ -30,9 +32,9 @@ class JsInitPayload:
 
 
 def parse_jsinit(payload: bytes) -> JsInitPayload:
-    """Model the receiver's byte copy without imposing a text grammar."""
-    if len(payload) > MAX_RECEIVER_SIZE:
-        raise ValueError("JSINIT payload exceeds receiver UINT32_MAX size")
+    """Model a wire-representable payload without imposing a text grammar."""
+    if len(payload) > MAX_VDM_PAYLOAD_SIZE:
+        raise ValueError("JSINIT payload exceeds the VDM 32-bit size field")
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError:
