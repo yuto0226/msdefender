@@ -200,12 +200,70 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
                         ("capture_output", "caller_supplied_match_end_slot"),
                         ("offsets_vector_supplied", False),
                         (
+                            "candidate_passes",
+                            JSONArray(
+                                (
+                                    JSONObject(
+                                        (
+                                            ("pass_flag", 1),
+                                            ("subject_base", "reply + 0xC0"),
+                                            (
+                                                "direction_filter",
+                                                "skip raw direction 2",
+                                            ),
+                                            (
+                                                "position_gate",
+                                                "raw 0xFFFFFFFF bypasses fixed-position gate",
+                                            ),
+                                        )
+                                    ),
+                                    JSONObject(
+                                        (
+                                            ("pass_flag", 0),
+                                            (
+                                                "subject_base",
+                                                "reply + 0x20C0 - window_size",
+                                            ),
+                                            (
+                                                "direction_filter",
+                                                "skip raw direction 1",
+                                            ),
+                                            (
+                                                "position_gate",
+                                                "fixed-position match must end at subject window end",
+                                            ),
+                                        )
+                                    ),
+                                )
+                            ),
+                        ),
+                        (
+                            "capture_observation",
+                            (
+                                "BMMatchEx2 writes absolute match_end; pass_flag 0 "
+                                "with non-sentinel position compares it to "
+                                "subject_base + subject_size"
+                            ),
+                        ),
+                        (
+                            "validator_result_observation",
+                            (
+                                "result 0 skips candidate; 1/2 enter ordinary result "
+                                "path; 3/6 call MpReportLowfiMatch with "
+                                "telemetry_only=false and lowfi_mode=(result==6); "
+                                "8 calls it with telemetry_only=true; 10/11 call "
+                                "HipsManager::OnStreamDetection; result 1 can "
+                                "aggregate attributes and all ordinary results are "
+                                "subject to continuation/delay/best-match policy"
+                            ),
+                        ),
+                        (
                             "unresolved",
                             JSONArray(
                                 (
-                                    "payload direction/position to candidate window and scan order",
-                                    "capture output consumer and reporting meaning",
-                                    "PCode result to final report/verdict policy",
+                                    "meaning of raw direction values other than 1 and 2, and exact relation between the two reply windows and file/stream direction",
+                                    "fixed-position first-pass counter gate and how it maps to payload numeric position",
+                                    "complete mapping from validator result and SCAN_REPLY policy to externally visible threat verdict",
                                 )
                             ),
                         ),
@@ -229,8 +287,9 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
         issues=(
             SemanticIssue(
                 "outer_verdict_unknown",
-                "BM match is a candidate only; direction, position, capture, "
-                "and final report policy are not fully resolved.",
+                "BM match is a candidate only. The two pass filters and the "
+                "second-pass match-end gate are observed, but fixed-position "
+                "semantics and final report policy are not fully resolved.",
                 (
                     ("direction_raw", parsed.direction_raw),
                     ("position_raw", parsed.position_raw),
