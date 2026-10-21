@@ -13,7 +13,10 @@ from ..core import (
     FormatResult,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 SNIDEX_TYPE: Final = 0xE5
@@ -121,7 +124,7 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
     raw_key = b"".join(parsed.key_blocks)
     record_name = "SNIDEX2" if parsed.type == SNIDEX2_TYPE else "SNIDEX"
     if parsed.type == SNIDEX2_TYPE:
-        report_path = JSONObject(
+        result_routing = JSONObject(
             (
                 (
                     "attribute_name",
@@ -163,7 +166,7 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
             )
         )
     else:
-        report_path = JSONObject(
+        result_routing = JSONObject(
             (
                 (
                     "attribute_name",
@@ -210,7 +213,7 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="confirmed_subset",
-        representation="snidex.exact_match_entry.v2",
+        representation="snidex.exact_match_entry.v3",
         data=JSONObject(
             (
                 ("type", record_name),
@@ -249,7 +252,7 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
                     ),
                 ),
                 (
-                    "matched_entry_report_path",
+                    "matched_entry_result_routing",
                     JSONObject(
                         (
                             ("resolve_threat_name", True),
@@ -258,7 +261,7 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
                                 "signature_sha_input",
                                 f"type_0x{parsed.type:02x}_plus_wire_prefix_{prefix_size}_bytes",
                             ),
-                            ("report_path", report_path),
+                            ("result_routing", result_routing),
                             ("final_verdict", "unknown"),
                         )
                     ),
@@ -267,17 +270,18 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
         ),
         evidence=(
             (
-                "mpengine 1.443.903.0 SNIDEX Lookup 0x180477668 and "
-                "RecordPush 0x180540574"
-            ),
-            (
                 "mpengine 1.443.903.0 SNIDEX2 Lookup 0x18052EFB0 and "
                 "RecordPush 0x18055B540"
+                if parsed.type == SNIDEX2_TYPE
+                else "mpengine 1.443.903.0 SNIDEX Lookup 0x180477668 and "
+                "RecordPush 0x180540574"
             ),
             "mpengine 1.443.903.0 createrecidz",
-            "mpengine 1.443.903.0 nid64searchrecidex",
-            "mpas.sig corpus: 123 SNIDEX and 50 SNIDEX2 records",
-            "mpav.sig corpus: no SNIDEX or SNIDEX2 records",
+            (
+                "mpas.sig corpus: 50 SNIDEX2 records; mpav.sig: none"
+                if parsed.type == SNIDEX2_TYPE
+                else "mpas.sig corpus: 123 SNIDEX records; mpav.sig: none"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=(
@@ -290,6 +294,175 @@ def export_snidex_semantics(parsed: SnidExPayload) -> RuleSemantics:
                 "verdict remain unknown.",
             ),
         ),
+        claims=_snidex_claims(parsed),
+        claim_evidence=_snidex_claim_evidence(parsed),
+    )
+
+
+def _snidex_claims(parsed: SnidExPayload) -> tuple[SemanticClaim, ...]:
+    family = "snidex2" if parsed.type == SNIDEX2_TYPE else "snidex"
+    record_name = "SNIDEX2" if parsed.type == SNIDEX2_TYPE else "SNIDEX"
+    key_length = len(parsed.key_blocks) * 16
+    report_claim = (
+        SemanticClaim(
+            id=f"{family}_matched_entry_reporting",
+            scope="report_mapping",
+            statement=(
+                "The analyzed SNIDEX2 matched-entry paths can aggregate an "
+                "attribute or write detection data before scan continuation logic."
+            ),
+            coverage="subset",
+            evidence_refs=(f"{family}_report",),
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "Caller-specific reply state, NID64 gating, and outer policy remain unresolved.",
+                ),
+            ),
+        )
+        if parsed.type == SNIDEX2_TYPE
+        else SemanticClaim(
+            id=f"{family}_matched_entry_reporting",
+            scope="report_mapping",
+            statement=(
+                "The SNIDEX lookup exposes local result states and optional RecID "
+                "output, but no report mapping is confirmed."
+            ),
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "report_mapping",
+                    "The analyzed E5 lookup does not call report or scan-continuation helpers.",
+                ),
+            ),
+        )
+    )
+    return (
+        SemanticClaim(
+            id=f"{family}_wire_layout",
+            scope="wire_layout",
+            statement=(
+                f"{record_name} has {key_length} opaque key bytes, one category "
+                "byte, and an optional bounded RecID-name input."
+            ),
+            coverage="complete",
+            evidence_refs=(f"{family}_receiver",),
+        ),
+        SemanticClaim(
+            id=f"{family}_loader_dispatch",
+            scope="loader_dispatch",
+            statement=f"The loader dispatch route for type 0x{parsed.type:02X} is unresolved.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "loader_dispatch",
+                    "No type-specific registration/dispatch chain is included in the current evidence set.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id=f"{family}_receiver_projection",
+            scope="receiver_transform",
+            statement=(
+                f"The receiver copies {key_length} key bytes and the category byte "
+                "without normalization, resolves an optional bounded RecID name, "
+                "and excludes bytes after its first NUL from the interned object."
+            ),
+            coverage="complete",
+            evidence_refs=(f"{family}_receiver",),
+        ),
+        SemanticClaim(
+            id=f"{family}_lookup_consumer",
+            scope="runtime_consumer",
+            statement=(
+                f"The local {record_name} lookup applies its prefilter/range search "
+                f"and then compares all {key_length} key bytes plus the category byte."
+            ),
+            coverage="subset",
+            evidence_refs=(f"{family}_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The provider selector source and raw-key producer remain unknown.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id=f"{family}_local_lookup_predicate",
+            scope="detection_predicate",
+            statement=(
+                "At the analyzed local lookup boundary, a candidate matches only "
+                f"when its {key_length}-byte key and category comparisons succeed."
+            ),
+            coverage="subset",
+            evidence_refs=(f"{family}_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "The outer caller gates and scan-level predicate are not closed.",
+                ),
+            ),
+        ),
+        report_claim,
+        SemanticClaim(
+            id=f"{family}_final_verdict",
+            scope="final_verdict",
+            statement=f"A local {record_name} match does not establish the final scan verdict.",
+            coverage="unknown",
+            unknowns=(
+                SemanticUnknown(
+                    "final_verdict",
+                    "Final scan-result arbitration has not been followed to completion.",
+                ),
+            ),
+        ),
+    )
+
+
+def _snidex_claim_evidence(parsed: SnidExPayload) -> tuple[SemanticEvidence, ...]:
+    family = "snidex2" if parsed.type == SNIDEX2_TYPE else "snidex"
+    receiver_locator = (
+        "RecordPush @ 0x18055B540"
+        if parsed.type == SNIDEX2_TYPE
+        else "RecordPush @ 0x180540574"
+    )
+    consumer_locator = (
+        "Lookup<SnidEx2Provider> @ 0x18052EFB0"
+        if parsed.type == SNIDEX2_TYPE
+        else "Lookup<SnidExProvider> @ 0x180477668"
+    )
+    report_evidence = (
+        (
+            SemanticEvidence(
+                id=f"{family}_report",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=consumer_locator,
+                supports=(f"{family}_matched_entry_reporting",),
+            ),
+        )
+        if parsed.type == SNIDEX2_TYPE
+        else ()
+    )
+    return (
+        SemanticEvidence(
+            id=f"{family}_receiver",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=receiver_locator,
+            supports=(f"{family}_wire_layout", f"{family}_receiver_projection"),
+        ),
+        SemanticEvidence(
+            id=f"{family}_consumer",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=consumer_locator,
+            supports=(f"{family}_lookup_consumer", f"{family}_local_lookup_predicate"),
+        ),
+        *report_evidence,
     )
 
 

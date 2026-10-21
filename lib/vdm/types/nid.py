@@ -14,7 +14,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 NID_TYPE: Final = 0x55
@@ -152,7 +155,7 @@ def render_nid(parsed: NidPayload) -> FormatResult:
     if parsed.ignored_trailing_raw:
         fields.append(("receiver_ignored_raw", parsed.ignored_trailing_raw.hex(" ")))
     return FormatResult(
-        sections=(DisplaySection("Network Identifier", rows=tuple(fields)),)
+        sections=(DisplaySection("Exact-Key Record", rows=tuple(fields)),)
     )
 
 
@@ -245,6 +248,45 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
             )
         )
 
+    family_id = _FAMILY_NAMES[parsed.type_byte].lower()
+    if parsed.type_byte == NID_TYPE:
+        receiver_locator = "RecordPush @ 0x180447AE4"
+        dispatch_locator = "Register @ 0x18048A610"
+        lookup_locator = "Lookup<NidProvider> @ 0x1800AF540"
+        lookup_statement = (
+            "The local NID lookup narrows candidates with its index and then requires "
+            "the 4-byte scalar key and metadata selector to compare equal."
+        )
+    elif parsed.type_byte == SNID_TYPE:
+        receiver_locator = "RecordPush @ 0x1800FA5F0"
+        dispatch_locator = "Register @ 0x180566440"
+        lookup_locator = "Lookup<SnidProvider> @ 0x180145874"
+        lookup_statement = (
+            "The local SNID lookup uses the first key DWORD for prefiltering and "
+            "then requires the full 20-byte key and selector byte to compare equal."
+        )
+    else:
+        receiver_locator = "RecordPush @ 0x180497874"
+        dispatch_locator = "Register @ 0x180566040"
+        lookup_locator = "Lookup<Nid64Provider> @ 0x1800AE800"
+        lookup_statement = (
+            "The local NID64 lookup requires the 8-byte scalar key to compare equal "
+            "and compares the zero-extended entry selector byte with the full "
+            "32-bit query selector; query values above 0xFF cannot match."
+        )
+
+    wire_claim_id = f"{family_id}_wire_layout"
+    dispatch_claim_id = f"{family_id}_loader_dispatch"
+    receiver_claim_id = f"{family_id}_receiver_projection"
+    consumer_claim_id = f"{family_id}_lookup_consumer"
+    predicate_claim_id = f"{family_id}_local_lookup_predicate"
+    report_claim_id = f"{family_id}_matched_entry_reporting"
+    final_claim_id = f"{family_id}_final_verdict"
+    receiver_evidence_id = f"{family_id}_receiver"
+    dispatch_evidence_id = f"{family_id}_dispatch"
+    consumer_evidence_id = f"{family_id}_consumer"
+    report_evidence_id = f"{family_id}_report"
+
     issues: list[SemanticIssue] = [
         SemanticIssue(
             "upstream_key_generation_unknown",
@@ -268,11 +310,11 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
             )
         )
     if parsed.ignored_trailing_raw:
-        unsupported = True
         issues.append(
             SemanticIssue(
                 "receiver_ignored_trailing",
-                "Bytes after the bounded record identity are ignored by the receiver.",
+                "Bytes after the first NUL are passed to createrecidz but excluded "
+                "from the interned name/object span.",
                 (("length", len(parsed.ignored_trailing_raw)),),
             )
         )
@@ -328,26 +370,145 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
             )
         ),
         evidence=(
-            (
-                "provider exact lookups: NidProvider@0x1800AF540, "
-                "SnidProvider@0x180145874, Nid64Provider@0x1800AE800"
-            ),
-            (
-                "NID-family exact lookup wrappers: nidsearchrecidex@0x1800B01B0, "
-                "snidsearchrecidex@0x180145618, nid64searchrecid@0x1800AE690"
-            ),
-            (
-                "provider callers: swf_scan_nid@0x180A5BF1C, "
-                "scan_imphash@0x1804A6370, IsHighlyTrustedPublisher@0x1805179D8, "
-                "CheckPublisher@0x180298E3C"
-            ),
-            (
-                "receiver wire fields: NID RecordPush@0x180447AE4, "
-                "SNID RecordPush@0x1800FA5F0, NID64 RecordPush@0x180497874"
-            ),
+            f"{_FAMILY_NAMES[parsed.type_byte]} receiver: {receiver_locator}",
+            f"{_FAMILY_NAMES[parsed.type_byte]} registration: {dispatch_locator}",
+            f"{_FAMILY_NAMES[parsed.type_byte]} local lookup: {lookup_locator}",
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id=wire_claim_id,
+                scope="wire_layout",
+                statement=(
+                    f"{_FAMILY_NAMES[parsed.type_byte]} has a {key_width}-byte key, "
+                    "one metadata byte, and an optional bounded RecID-name input."
+                ),
+                coverage="complete",
+                evidence_refs=(receiver_evidence_id,),
+            ),
+            SemanticClaim(
+                id=dispatch_claim_id,
+                scope="loader_dispatch",
+                statement=(
+                    f"The analyzed registration path binds type "
+                    f"0x{parsed.type_byte:02X} to its NID-family receiver."
+                ),
+                coverage="subset",
+                evidence_refs=(dispatch_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "The registration site does not close every database/profile dispatch path.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=receiver_claim_id,
+                scope="receiver_transform",
+                statement=(
+                    f"The receiver copies the {key_width}-byte key and metadata byte "
+                    "without normalization, resolves an optional bounded RecID name, "
+                    "and excludes bytes after its first NUL from the interned object."
+                ),
+                coverage="complete",
+                evidence_refs=(receiver_evidence_id,),
+            ),
+            SemanticClaim(
+                id=consumer_claim_id,
+                scope="runtime_consumer",
+                statement=lookup_statement,
+                coverage="subset",
+                evidence_refs=(consumer_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Caller coverage and the general query-key producer remain incomplete.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=predicate_claim_id,
+                scope="detection_predicate",
+                statement=(
+                    "At the analyzed local lookup boundary, a candidate matches only "
+                    "when both its exact key and selector comparisons succeed."
+                ),
+                coverage="subset",
+                evidence_refs=(consumer_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "The outer caller gates and scan-level predicate are not closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=report_claim_id,
+                scope="report_mapping",
+                statement=(
+                    "The analyzed matched-entry path resolves signature details and "
+                    "can route ordinary or attribute names into scan-result handling."
+                ),
+                coverage="subset",
+                evidence_refs=(report_evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "Outer policy, caller-specific reply state, and arbitration remain unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id=final_claim_id,
+                scope="final_verdict",
+                statement=(
+                    f"A local {_FAMILY_NAMES[parsed.type_byte]} match does not by "
+                    "itself establish the final scan verdict."
+                ),
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final scan-result arbitration has not been followed to completion.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id=receiver_evidence_id,
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=receiver_locator,
+                supports=(wire_claim_id, receiver_claim_id),
+            ),
+            SemanticEvidence(
+                id=dispatch_evidence_id,
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=dispatch_locator,
+                supports=(dispatch_claim_id,),
+            ),
+            SemanticEvidence(
+                id=consumer_evidence_id,
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=lookup_locator,
+                supports=(consumer_claim_id, predicate_claim_id),
+            ),
+            SemanticEvidence(
+                id=report_evidence_id,
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=lookup_locator,
+                supports=(report_claim_id,),
+            ),
+        ),
     )
 
 
