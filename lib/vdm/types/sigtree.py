@@ -393,19 +393,42 @@ def _export_sigtree_semantics(
                                                 ),
                                                 (
                                                     "selector_match",
-                                                    "runtime entry byte +0x07 equals procedure selector",
+                                                    "runtime slot +0x07 equals the procedure selector; push copies wire fixed-entry entry_flags byte 3 here",
                                                 ),
                                                 (
                                                     "early_stop_guard",
-                                                    "runtime entry byte +0x06 has bit 0x40",
+                                                    "runtime slot +0x06 has bit 0x40, sourced from wire fixed-entry entry_flags byte 2 (u32 mask 0x00400000)",
                                                 ),
                                                 (
                                                     "eligibility_set_guard",
-                                                    "when per-record procedure state exists, set eligibility to 1 if entry byte +0x06 has bit 0x04, or (byte +0x06 | byte +0x08) has bit 0x02",
+                                                    "when per-record procedure state exists, set eligibility to 1 if wire entry_flags byte 2 has bit 0x04 (u32 mask 0x00040000), or (wire entry_flags byte 2 | first entry-level extension byte) has bit 0x02",
                                                 ),
                                                 (
                                                     "eligibility_clear_case",
                                                     "when per-record procedure state exists and neither eligibility guard matches, write 0",
+                                                ),
+                                                (
+                                                    "runtime_to_wire_projection",
+                                                    JSONObject(
+                                                        (
+                                                            (
+                                                                "runtime_slot_+0x06",
+                                                                "wire fixed-entry +0x02 = entry_flags byte 2",
+                                                            ),
+                                                            (
+                                                                "runtime_slot_+0x07",
+                                                                "wire fixed-entry +0x03 = entry_flags byte 3",
+                                                            ),
+                                                            (
+                                                                "runtime_slot_+0x08",
+                                                                "wire first entry-level extension DWORD byte 0; present when format_level >= 1",
+                                                            ),
+                                                            (
+                                                                "construction_evidence",
+                                                                "SigtreeHandlerInstance::push stores wire [entry+0x00..+0x03] at runtime slot +0x04 and first extension DWORD at runtime slot +0x08",
+                                                            ),
+                                                        )
+                                                    ),
                                                 ),
                                                 (
                                                     "boolean_condition_effect",
@@ -555,7 +578,7 @@ def _export_sigtree_semantics(
     )
     return RuleSemantics(
         status="unsupported" if parsed.trailing_raw else "confirmed_subset",
-        representation="sigtree.wire_storage_evaluator.ir.v3",
+        representation="sigtree.wire_storage_evaluator.ir.v4",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 SigtreeHandlerInstance::push",
@@ -573,8 +596,9 @@ def _export_sigtree_semantics(
             SemanticIssue(
                 "sigtree_entry_state_flags_incomplete",
                 "Countdown and unmatched-procedure eligibility resets are "
-                "partially confirmed; remaining entry grouping flags and their "
-                "wire names are unknown.",
+                "partially confirmed; the guarded bits now have a proven wire "
+                "source, while canonical flag names and remaining grouping "
+                "semantics are unknown.",
             ),
             SemanticIssue(
                 "sigtree_final_policy_context_dependent",
@@ -663,9 +687,10 @@ def _export_sigtree_artifact(
             "semantics are unknown."
         ),
         (
-            "ResetUnmatchedProcedure confirms partial eligibility-reset guards "
-            "at runtime entry +0x06/+0x08, but their wire flag names and full "
-            "grouping semantics are unknown."
+            "ResetUnmatchedProcedure guard bytes project through push to wire "
+            "entry_flags byte 2, entry_flags byte 3, and the first optional "
+            "entry-level DWORD; canonical flag names and full grouping "
+            "semantics remain unknown."
         ),
         (
             "Named-attribute DAG edges require cross-record/runtime attribute "
