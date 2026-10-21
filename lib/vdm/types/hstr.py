@@ -472,6 +472,45 @@ _CONFIRMED_MATCHER_FAMILIES = frozenset(
     }
 )
 
+_CONFIRMED_SCANNER_CONTEXTS = {
+    0xD3: {
+        "family_index": 9,
+        "reader_kinds": ("AUTOIT_UFS_FILE_CHUNKS",),
+        "report_route": "AUTOITSCAN_REPORT_INDEX",
+        "report_family_index": 9,
+    },
+    0x8C: {
+        "family_index": 3,
+        "reader_kinds": ("ELF_SEGMENT_INTERVAL", "ELF_CALLER_RANGE"),
+        "report_route": "ELFFILE_SCAN_OWNS_SHARED_ELF_STATE",
+        "report_family_index": None,
+    },
+    0xC5: {
+        "family_index": 7,
+        "reader_kinds": ("CSMS_CALLER_BUFFER_OR_RANGES",),
+        "report_route": "CSMSSCANNER_CHECKDETECTION_FLAG_SELECTS_INDEX",
+        "report_family_index": 7,
+    },
+}
+
+
+def _hstr_scanner_context(type_byte: int) -> JSONObject | None:
+    """Expose per-family caller facts without extending matcher/verdict scope."""
+    context = _CONFIRMED_SCANNER_CONTEXTS.get(type_byte)
+    if context is None:
+        return None
+    return JSONObject(
+        (
+            ("family_index", context["family_index"]),
+            ("reader_kinds", JSONArray(context["reader_kinds"])),
+            ("search_mode", 1),
+            ("validator_argument", None),
+            ("report_route", context["report_route"]),
+            ("report_family_index", context["report_family_index"]),
+            ("final_verdict", "unknown"),
+        )
+    )
+
 
 def _read_u16(payload: bytes, cursor: int, label: str) -> tuple[int, int]:
     end = cursor + 2
@@ -1102,6 +1141,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             ("tail_word1", parsed.tail_word1),
             ("trailing_raw_hex", parsed.trailing_raw.hex()),
             ("receiver_ignored", parsed.receiver_ignored),
+            ("scanner_context", _hstr_scanner_context(parsed.type_byte)),
         )
     )
     return RuleSemantics(
