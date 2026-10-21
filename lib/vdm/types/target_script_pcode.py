@@ -18,7 +18,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 TARGET_SCRIPT_PCODE_TYPE: Final = 0x90
@@ -597,6 +600,11 @@ def export_target_script_pcode_semantics(
     )
     issues = (
         SemanticIssue(
+            "receiver_acceptance_subset",
+            "The structural parser checks container framing, but the engine also "
+            "requires compileTokensToPattern to accept every pattern token array.",
+        ),
+        SemanticIssue(
             "compiled_token_semantics_unknown",
             "Pattern section tokens are preserved as raw u32 values. Their "
             "compiled u16 representation and detection semantics are not "
@@ -606,6 +614,16 @@ def export_target_script_pcode_semantics(
             "match_predicate_context_dependent",
             "Match fields describe a targeted prefilter; the complete predicate "
             "depends on scanner context and NID lookup state.",
+        ),
+        SemanticIssue(
+            "report_mapping_subset",
+            "searchTargeted exposes only local scanresult and CRC-collection "
+            "effects; their outer report mapping is not established.",
+        ),
+        SemanticIssue(
+            "final_verdict_unknown",
+            "No analyzed path maps TARGET_SCRIPT_PCODE state to the final "
+            "host-visible verdict.",
         ),
     )
     return RuleSemantics(
@@ -623,6 +641,18 @@ def export_target_script_pcode_semantics(
                 ("type_byte", TARGET_SCRIPT_PCODE_TYPE),
                 ("payload_raw_hex", parsed.raw.hex()),
                 ("payload_length", len(parsed.raw)),
+                (
+                    "parser_acceptance",
+                    JSONObject(
+                        (
+                            ("structural_framing", "accepted"),
+                            (
+                                "engine_receiver_equivalence",
+                                "subset; compileTokensToPattern constraints omitted",
+                            ),
+                        )
+                    ),
+                ),
                 ("pattern_sections", sections),
                 (
                     "signature_table",
@@ -641,6 +671,177 @@ def export_target_script_pcode_semantics(
                     ),
                 ),
             )
+        ),
+        claims=(
+            SemanticClaim(
+                id="target_script_pcode.wire",
+                scope="wire_layout",
+                statement=(
+                    "The parser reconstructs the section and terminal TargSig-table "
+                    "framing consumed by pushTargeted and requires exact byte "
+                    "exhaustion."
+                ),
+                coverage="subset",
+                evidence_refs=("target_script_pcode.receiver.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "wire_layout",
+                        "Structural acceptance is broader than engine acceptance "
+                        "because compileTokensToPattern can reject token arrays.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="target_script_pcode.dispatch",
+                scope="loader_dispatch",
+                statement=(
+                    "The analyzed NSCRIPT module registers type 0x90 to pushTargeted."
+                ),
+                coverage="subset",
+                evidence_refs=("target_script_pcode.dispatch.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "Module initialization gates and registration failure paths "
+                        "remain outside this type-to-callback mapping.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="target_script_pcode.receiver",
+                scope="receiver_transform",
+                statement=(
+                    "pushTargeted compiles ordinary u32 token arrays into internal "
+                    "u16 patterns and materializes the terminal signature table as "
+                    "32-byte TargSig entries with Match vectors."
+                ),
+                coverage="subset",
+                evidence_refs=("target_script_pcode.receiver.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The complete token compiler grammar, all failure side "
+                        "effects, and rollback behavior are not modeled.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="target_script_pcode.consumer",
+                scope="runtime_consumer",
+                statement=(
+                    "AddTargetToken consumes compiled patterns to populate local "
+                    "candidate state, while searchTargeted filters TargSig entries "
+                    "by target type, optional context, Match state, NID lookup, and "
+                    "aggregated attributes."
+                ),
+                coverage="subset",
+                evidence_refs=("target_script_pcode.consumer.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The complete compiled-pattern state machine and all callers "
+                        "that populate the scanner context are unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="target_script_pcode.predicate",
+                scope="detection_predicate",
+                statement=(
+                    "A TargSig candidate proceeds only after local type/context and "
+                    "Match gates, a successful NID lookup, and aggregated-attribute "
+                    "checks; raw token or NID equality alone is insufficient."
+                ),
+                coverage="subset",
+                evidence_refs=("target_script_pcode.consumer.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "The compiled-pattern predicate and caller-provided scanner "
+                        "state prevent a closed scan-level Boolean expression.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="target_script_pcode.report",
+                scope="report_mapping",
+                statement=(
+                    "After the visible gates, searchTargeted maps outcome-control "
+                    "values 0 and 1 to local scanresult values 1 and 2; other values "
+                    "collect bounded name CRC state and continue."
+                ),
+                coverage="subset",
+                evidence_refs=("target_script_pcode.policy.static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "The mapping from these local effects to an outer detection "
+                        "report is not established.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="target_script_pcode.final",
+                scope="final_verdict",
+                statement=(
+                    "TARGET_SCRIPT_PCODE local scanresult or CRC state does not "
+                    "establish the final host-visible verdict."
+                ),
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final scan arbitration lies outside the analyzed path.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="target_script_pcode.dispatch.static",
+                axis="dispatch",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "nscript_init_module @ 0x180BF6AD0; pushTargeted @ 0x1802CCBE0"
+                ),
+                supports=("target_script_pcode.dispatch",),
+            ),
+            SemanticEvidence(
+                id="target_script_pcode.receiver.static",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "pushTargeted @ 0x1802CCBE0; compileTokensToPattern @ 0x1802CD9E8"
+                ),
+                supports=(
+                    "target_script_pcode.wire",
+                    "target_script_pcode.receiver",
+                ),
+            ),
+            SemanticEvidence(
+                id="target_script_pcode.consumer.static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "nscript::AddTargetToken @ 0x18010C730; "
+                    "nscript::searchTargeted @ 0x180108E2C"
+                ),
+                supports=(
+                    "target_script_pcode.consumer",
+                    "target_script_pcode.predicate",
+                ),
+            ),
+            SemanticEvidence(
+                id="target_script_pcode.policy.static",
+                axis="policy",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="nscript::searchTargeted @ 0x180108E2C",
+                supports=("target_script_pcode.report",),
+            ),
         ),
     )
 
