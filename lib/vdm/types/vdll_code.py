@@ -64,6 +64,13 @@ _HOST_ASSOCIATION: Final = {
     0xC4: "x86 / PE32 (mpas corpus); managed marker derived from CLI",
     0x91: "ARM64 (receiver-confirmed; no observed records)",
 }
+_HOST_SELECTOR: Final = {0x79: 0, 0x7C: 1, 0x9C: 2, 0x91: 3, 0xC4: 0}
+_METADATA_TYPE_AT_HOST_INDEX: Final = {
+    0: "0xB5",
+    1: "0xE1",
+    2: "0xE2",
+    3: "0x93 (unnamed registration value)",
+}
 
 
 def _u16(data: bytes, offset: int) -> int:
@@ -351,6 +358,7 @@ def export_vdll_code(parsed: VdllCodePayload) -> ArtifactExport:
 
 def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
     """Describe receiver routing and PE observations, not detection policy."""
+    host_selector = _HOST_SELECTOR[parsed.type]
     return RuleSemantics(
         status="observed_only",
         representation="vdll.receiver_observation.v1",
@@ -358,8 +366,31 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
             (
                 ("type", f"0x{parsed.type:02X}"),
                 ("record_payload_raw_hex", parsed.raw.hex()),
-                ("payload_framing", "exact VDM record payload; inner chunking unknown"),
+                (
+                    "payload_framing",
+                    "exact VDM record payload passed as the PE input byte span",
+                ),
                 ("host_association", parsed.host),
+                (
+                    "receiver_routing",
+                    JSONObject(
+                        (
+                            ("host_selector", host_selector),
+                            ("metadata_table_index", host_selector),
+                            (
+                                "metadata_type_array_entry",
+                                _METADATA_TYPE_AT_HOST_INDEX[host_selector],
+                            ),
+                            (
+                                "wire_record_pairing",
+                                (
+                                    "host/table routing does not prove unique "
+                                    "metadata-to-code pairing"
+                                ),
+                            ),
+                        )
+                    ),
+                ),
                 ("payload_length", len(parsed.raw)),
                 ("pe_magic", f"0x{parsed.magic:04X}"),
                 ("machine", f"0x{parsed.machine:04X}"),
@@ -461,8 +492,88 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
                         )
                     ),
                 ),
+                (
+                    "linker_observation",
+                    JSONObject(
+                        (
+                            (
+                                "host_table_selection",
+                                (
+                                    "get_meta_type_from_vtype(host) selects a global "
+                                    "metadata table index"
+                                ),
+                            ),
+                            (
+                                "symbol_key",
+                                "caller-derived hashed import-symbol identifier",
+                            ),
+                            (
+                                "resolution_order",
+                                JSONArray(
+                                    (
+                                        "host-selected global metadata table",
+                                        "current dependency VDLL PE export index",
+                                    )
+                                ),
+                            ),
+                            (
+                                "metadata_to_code_pairing",
+                                JSONObject(
+                                    (("status", "unknown"), ("unique_record_key", None))
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                (
+                    "scan_time_consumers",
+                    JSONObject(
+                        (
+                            (
+                                "bm_export_address_operands",
+                                JSONObject(
+                                    (
+                                        ("opcode_ids", JSONArray((0x20, 0x21))),
+                                        ("host_groups", JSONArray((0, 1))),
+                                        (
+                                            "predicate",
+                                            (
+                                                "resolve export ID in loaded VDLL group, "
+                                                "then compare subject DWORD/QWORD to "
+                                                "resolved VDLL address"
+                                            ),
+                                        ),
+                                        (
+                                            "applicability",
+                                            (
+                                                "BM runtime consumer evidence exists for "
+                                                "host groups 0 and 1 only"
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "callback_path",
+                                JSONObject(
+                                    (
+                                        (
+                                            "static_handoff",
+                                            (
+                                                "x86/x64 exception handlers can set "
+                                                "emulated IP to VDLL callback slots"
+                                            ),
+                                        ),
+                                        ("actual_callback_body_execution", "unknown"),
+                                        ("ARM_or_ARM64_handoff", "unknown"),
+                                    )
+                                ),
+                            ),
+                        )
+                    ),
+                ),
                 ("offline_parse_implies_engine_acceptance", False),
-                ("runtime_execution_confirmed", False),
+                ("record_specific_runtime_execution_confirmed", False),
                 ("final_detection_policy_confirmed", False),
             )
         ),
@@ -479,6 +590,19 @@ def export_vdll_code_semantics(parsed: VdllCodePayload) -> RuleSemantics:
             (
                 "mpengine 1.443.903.0 vdll_data_t::init copies bounded raw section bytes "
                 "into a host kstore image; vdll_add_shadow_pages maps sections in PEVAMap"
+            ),
+            (
+                "mpengine 1.443.903.0 vdll_receiver_end resolves imports through a "
+                "host-selected metadata table before the dependency PE export index"
+            ),
+            (
+                "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ "
+                "export-address opcodes 0x20/0x21 query loaded VDLL "
+                "host groups 0/1"
+            ),
+            (
+                "x86/x64 exception handlers establish callback-IP handoff targets; "
+                "static evidence does not establish record-specific callback execution"
             ),
             (
                 "Offline artifact export preserves the record payload byte-for-byte; "
