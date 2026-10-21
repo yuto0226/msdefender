@@ -1,4 +1,4 @@
-"""Corpus-profile parser and bounded renderer for TITANFLT (0x30)."""
+"""Lossless parser and bounded renderer for TITANFLT (0x30)."""
 
 from dataclasses import dataclass
 from typing import Final
@@ -19,7 +19,7 @@ _ENTRY_PREVIEW_BYTES: Final = 40
 
 @dataclass(frozen=True, slots=True)
 class TitanFltPayload:
-    """Lossless TITANFLT payload and its corpus-profile ASCII entries."""
+    """Lossless payload with optional corpus-only segment observations."""
 
     raw: bytes
     entries: tuple[bytes, ...]
@@ -31,23 +31,19 @@ class TitanFltPayload:
 
 
 def parse_titanflt(payload: bytes) -> TitanFltPayload:
-    """Parse only the observed corpus profile; this is not an engine validator."""
-    if not payload or payload[-1] != 0:
-        raise ValueError("TITANFLT corpus profile requires exactly one terminal NUL")
+    """Preserve arbitrary bytes; split only for the observed corpus profile."""
+    if (
+        payload
+        and payload[-1] == 0
+        and b"\x00" not in payload[:-1]
+        and payload[:-1]
+        and all(0x20 <= byte <= 0x7E for byte in payload[:-1])
+    ):
+        entries = tuple(payload[:-1].split(b"|"))
+        if all(entries):
+            return TitanFltPayload(raw=payload, entries=entries)
 
-    body = payload[:-1]
-    if b"\x00" in body:
-        raise ValueError("TITANFLT corpus profile does not allow embedded NUL")
-    if not body:
-        raise ValueError("TITANFLT corpus profile requires at least one entry")
-
-    entries = tuple(body.split(b"|"))
-    if any(not entry for entry in entries):
-        raise ValueError("TITANFLT corpus profile does not allow an empty entry")
-    if any(byte < 0x20 or byte > 0x7E for entry in entries for byte in entry):
-        raise ValueError("TITANFLT corpus profile entries must use printable ASCII")
-
-    return TitanFltPayload(raw=payload, entries=entries)
+    return TitanFltPayload(raw=payload, entries=())
 
 
 def render_titanflt(parsed: TitanFltPayload) -> FormatResult:
@@ -66,8 +62,14 @@ def render_titanflt(parsed: TitanFltPayload) -> FormatResult:
 
     return FormatResult(
         fields=(
-            ("entry_count", str(len(parsed.entries))),
-            ("entries_preview", " | ".join(preview_entries)),
+            (
+                "corpus_profile_entry_count",
+                str(len(parsed.entries)) if parsed.entries else "not observed",
+            ),
+            (
+                "corpus_profile_entries_preview",
+                " | ".join(preview_entries) if parsed.entries else "not observed",
+            ),
             ("raw_len", str(len(parsed.raw))),
         )
     )
@@ -99,14 +101,46 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
             )
             cursor += 1  # The corpus profile parser validated this byte as '|'.
 
-    terminator = JSONObject(
-        (("offset", len(parsed.raw) - 1), ("length", 1), ("raw_hex", "00"))
+    corpus_profile_observed = bool(parsed.entries)
+    profile_observation = (
+        JSONObject(
+            (
+                ("status", "observed_in_current_corpus"),
+                ("segments", JSONArray(tuple(segments))),
+                ("separators", JSONArray(tuple(separators))),
+                (
+                    "terminal_nul",
+                    JSONObject(
+                        (
+                            ("offset", len(parsed.raw) - 1),
+                            ("length", 1),
+                            ("raw_hex", "00"),
+                        )
+                    ),
+                ),
+                ("is_wire_grammar", False),
+            )
+        )
+        if corpus_profile_observed
+        else JSONObject(
+            (
+                ("status", "not_matching_observed_corpus_profile"),
+                ("raw_hex", parsed.raw.hex()),
+                ("is_wire_grammar", False),
+            )
+        )
     )
     receiver = JSONObject(
         (
             ("function", "RegisterForDatabaseRecords"),
             ("address", "0x180564BC0"),
+            ("template_receiver", "ReceiveNewTemplate"),
+            ("template_receiver_address", "0x1803224D0"),
+            ("template_receiver_size", "0xB70"),
             ("selector", 0x30),
+            ("registration_caller", "cksig_init_module"),
+            ("registration_caller_address", "0x1805648A0"),
+            ("registration_callsite", "0x180564A9F"),
             ("descriptor_address", "0x180E4DFF0"),
             ("instruction_word_count", 2),
             ("row_size", 0x10),
@@ -189,6 +223,7 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                 else (
                     ("compile_function", "CompileVNFlts"),
                     ("compile_address", "0x1805B0370"),
+                    ("compile_resolve_callsite", "0x1805B03DB"),
                     ("object_resolver", "kpopobject"),
                     ("regex_constructor", "Boost basic_regex<char> flags=0"),
                     ("filter_function", "CK_IsVnameFiltered"),
@@ -198,13 +233,22 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                         "Boost regex_search(name, compiled_regex)",
                     ),
                     ("caller", "kvirinfo"),
+                    ("caller_address", "0x180551320"),
+                    ("caller_gate", "filter_names enabled"),
                     (
                         "packed_object_reference",
                         JSONObject(
                             (
                                 (
                                     "payload_prefix_ascii",
-                                    parsed.raw[:8].decode("ascii"),
+                                    (
+                                        parsed.raw[:8].decode("ascii")
+                                        if all(
+                                            0x20 <= byte <= 0x7E
+                                            for byte in parsed.raw[:8]
+                                        )
+                                        else None
+                                    ),
                                 ),
                                 ("row_dword_hex", parsed.raw[:4].hex()),
                                 ("row_dword_value", row_dword),
@@ -218,6 +262,10 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                                 ("packed_chunk_index", normalized_object_id >> 16),
                                 ("packed_byte_offset", normalized_object_id & 0xFFFF),
                                 ("resolution", "unconfirmed"),
+                                (
+                                    "resolution_limitation",
+                                    "requires runtime gktab chunk tables and contents",
+                                ),
                             )
                         ),
                     ),
@@ -228,19 +276,18 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
     reporting = JSONObject((("status", "unknown"),))
     return RuleSemantics(
         status="unsupported" if payload_short else "observed_only",
-        representation="titanflt.engine_registration.v3",
+        representation="titanflt.packed_object_candidate.v4",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
                 ("raw_length", len(parsed.raw)),
                 (
-                    "wire",
+                    "corpus_profile_observation",
                     JSONObject(
                         (
-                            ("partition", JSONArray(tuple(segments))),
-                            ("separators", JSONArray(tuple(separators))),
-                            ("terminator", terminator),
-                            ("tail_disposition", "corpus_profile_fully_partitioned"),
+                            ("profile", profile_observation),
+                            ("not_wire_grammar", True),
+                            ("raw_hex_always_preserved", True),
                         )
                     ),
                 ),
@@ -254,6 +301,7 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                             ("known_payload_length", 331),
                             ("mpav_record_count", 0),
                             ("input_identity_verified", False),
+                            ("engine_loader_resolution", "unconfirmed"),
                         )
                     ),
                 ),
@@ -269,24 +317,32 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
                 "331-byte payload; mpav.sig contains none."
             ),
             (
-                "The payload is printable ASCII segments separated by pipe bytes, "
-                "followed by one terminal NUL; this describes the corpus profile only."
+                "The observed sample contains printable pipe-separated segments "
+                "and a terminal NUL; this is not established as wire grammar."
             ),
             (
-                "RegisterForDatabaseRecords registers type 0x30 with one 0x1005 "
-                "descriptor; ReceiveNewTemplate copies payload[0:8] to row[0:8]."
+                "mpengine 1.443.903.0 cksig_init_module (0x1805648A0) calls "
+                "RegisterForDatabaseRecords at 0x180564A9F for type 0x30, a "
+                "16-byte row, and descriptor 0x180E4DFF0"
             ),
             (
-                "CompileVNFlts resolves row DWORD +0 through kpopobject and builds "
-                "a Boost regex; CK_IsVnameFiltered checks names with regex_search."
+                "mpengine 1.443.903.0 ReceiveNewTemplate (0x1803224D0) copies "
+                "payload[0:8] to row[0:8] for descriptor opcode 0x1005"
+            ),
+            (
+                "mpengine 1.443.903.0 CompileVNFlts (0x1805B0370) resolves row "
+                "DWORD +0 through kpopobject at 0x1805B03DB and builds a Boost "
+                "regex; CK_IsVnameFiltered (0x180BBADC4) checks names and is "
+                "called by kvirinfo (0x180551320) when filter_names is enabled"
             ),
             *(
                 (
                     "The 0x1005 receiver requires eight bytes and returns 0xA004 "
                     "before copying when the payload is shorter."
                     if payload_short
-                    else f"The payload prefix projects to packed index "
-                    f"0x{row_dword >> 16:04X}:0x{row_dword & 0xFFFF:04X}; its "
+                    else f"The payload prefix normalizes to packed index "
+                    f"0x{normalized_object_id >> 16:04X}:"
+                    f"0x{normalized_object_id & 0xFFFF:04X}; its "
                     "resolution is unconfirmed, and payload bytes 8 onward are "
                     "not consumed by the registered template."
                 ),
@@ -311,7 +367,7 @@ def export_titanflt_semantics(parsed: TitanFltPayload) -> RuleSemantics:
             ),
             SemanticIssue(
                 "corpus_profile_only",
-                "Pipe-delimited printable segments describe corpus bytes only; the engine template consumes only the first eight payload bytes.",
+                "Pipe-delimited printable segments describe one corpus profile, not a validated wire grammar; the template consumes only the first eight payload bytes.",
             ),
         ),
     )
