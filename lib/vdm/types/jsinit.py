@@ -13,7 +13,10 @@ from ..core import (
     FormatResult,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 JSINIT_TYPE: Final = 0xCA
@@ -169,6 +172,100 @@ def export_jsinit_semantics(parsed: JsInitPayload) -> RuleSemantics:
                 "detection_verdict_unknown",
                 "Runtime emulation evidence does not establish a detection "
                 "verdict or report mapping.",
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                id="jsinit_receiver_copy",
+                scope="receiver_transform",
+                statement=(
+                    "pushJsInit copies the first accepted payload into strJSInit, "
+                    "stores its length, and appends an internal NUL terminator."
+                ),
+                coverage="subset",
+                evidence_refs=("jsinit_receiver",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The complete multi-record database context is not described.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="jsinit_runtime_input",
+                scope="runtime_consumer",
+                statement=(
+                    "runJSEmulation reads strJSInit and nJSInitSize as runtime input."
+                ),
+                coverage="subset",
+                evidence_refs=("jsinit_runtime",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "No dataflow binds these bytes to the UFS buffer passed as the "
+                        "JavaScript eval source or to a scan target.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="jsinit_detection_predicate",
+                scope="detection_predicate",
+                statement="JSINIT is not a confirmed detection predicate.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Emulation input and result-to-predicate mapping are unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="jsinit_report_mapping",
+                scope="report_mapping",
+                statement="JSINIT result-to-report mapping is unresolved.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "No emulation-result policy/report path has been closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="jsinit_final_verdict",
+                scope="final_verdict",
+                statement="JSINIT does not establish a final verdict.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Verdict arbitration remains unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="jsinit_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "nscript_init_module @ 0x180BF6AD0 callsite 0x180BF752B; "
+                    "pushJsInit @ 0x1805BBBE0"
+                ),
+                supports=("jsinit_receiver_copy",),
+            ),
+            SemanticEvidence(
+                id="jsinit_runtime",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "nscript::runJSEmulation @ 0x18037351C; "
+                    "JavaScriptInterpreter::eval @ 0x180375954"
+                ),
+                supports=("jsinit_runtime_input",),
             ),
         ),
     )
