@@ -460,8 +460,49 @@ def export_rpf_routine_semantics(parsed: RpfRoutinePayload) -> RuleSemantics:
                             ("metadata_cache_address", "0x180259344"),
                             ("native_module_loader", "init_native_rpf_routines"),
                             ("native_module_loader_address", "0x180BEB244"),
-                            ("routine_interpreter", None),
-                            ("routine_call_sites", None),
+                            ("routine_interpreter", "netvm_emulate"),
+                            ("routine_interpreter_address", "0x18017B750"),
+                            (
+                                "managed_dispatch_path",
+                                JSONArray(
+                                    (
+                                        "rpf_pInvoke@0x180120660",
+                                        "netvm_loadmodule2@0x180121CF0",
+                                        "netvm_parse_routine@0x18017ACB0",
+                                        "netvm_emulate@0x18017B750",
+                                    )
+                                ),
+                            ),
+                            (
+                                "jit_dispatch_path",
+                                JSONArray(
+                                    (
+                                        "netvm_loadmodule2@0x180121CF0",
+                                        "netvm_jitc_execute@0x1801213F4",
+                                    )
+                                ),
+                            ),
+                            (
+                                "native_dispatch_path",
+                                JSONArray(
+                                    (
+                                        "native_rpf_pInvoke@0x1805CA28C",
+                                        "NativeFunctionEntry map indirect callback",
+                                    )
+                                ),
+                            ),
+                            (
+                                "match_result_consumers",
+                                JSONArray(
+                                    (
+                                        "ShouldContinueScanning@0x1801449E4",
+                                        "IsDelayedDetection@0x1800A9F4C",
+                                        "IsBetterMatch@0x1800F8308",
+                                        "SCAN_REPLY match merge",
+                                    )
+                                ),
+                            ),
+                            ("final_verdict_established", False),
                             ("method_body_semantics", "unknown"),
                         )
                     ),
@@ -485,6 +526,11 @@ def export_rpf_routine_semantics(parsed: RpfRoutinePayload) -> RuleSemantics:
             "mpengine 1.443.903.0 nvsig_pushend publishes the DynamicModule",
             "mpengine 1.443.903.0 nvmcache_data links CLR metadata and routines",
             "mpengine 1.443.903.0 init_native_rpf_routines loads native RPF DLLs",
+            "mpengine 1.443.903.0 netvm_parse_routine calls netvm_emulate",
+            (
+                "mpengine 1.443.903.0 rpf_pInvoke and native_rpf_pInvoke "
+                "merge scan matches"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
