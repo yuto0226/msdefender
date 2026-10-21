@@ -661,7 +661,7 @@ def render_nscript_brute(parsed: NScriptBrutePayload) -> FormatResult:
                     (
                         "runtime_gate",
                         (
-                            "UFS base plugin id 6"
+                            "UFS base plugin id 6; worker candidate entry type byte == 6"
                             if parsed.runtime_consumer is not None
                             else "record-specific consumer unknown"
                         ),
@@ -724,9 +724,23 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
             (
                 "runtime_gate",
                 (
-                    "runtime type 6 and UFS base plugin id 6"
+                    "UFS base plugin id 6; worker candidate entry type byte == 6"
                     if parsed.runtime_consumer is not None
                     else "record-specific consumer unknown"
+                ),
+            ),
+            (
+                "worker_candidate_subset",
+                JSONObject(
+                    (
+                        ("context_transform", "mapSP byte mapping before trie search"),
+                        ("candidate_index", "FilteredTrie::matchUsingMap output"),
+                        ("entry_size", 24),
+                        ("entry_type_offset", 0x15),
+                        ("entry_type_gate", 6),
+                        ("matcher", "BMMatchEx2"),
+                        ("base_plugin_id_gate", 6),
+                    )
                 ),
             ),
         )
@@ -741,8 +755,8 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
                 "SearchBruteWorker @ 0x1800AA6F0"
             ),
             (
-                "SearchBruteWorker reads 24-byte entries and only runtime type 6 "
-                "enters its BMMatchEx2 candidate path"
+                "SearchBruteWorker uses mapSP + FilteredTrie::matchUsingMap; "
+                "24-byte entries with byte +0x15 == 6 enter BMMatchEx2"
             ),
             "0x29 NSCRIPT_BRUTE registration is distinct from 0xD0 BRUTE",
         ),
