@@ -15,6 +15,7 @@ from .core import (
     RuleSemantics,
     SemanticIssue,
 )
+from .inventory import build_semantic_inventory
 from .lua51 import Lua51Export, Lua51ExportWarning, export_lua51
 from .luaq import (
     LuaQChunk,
@@ -611,6 +612,7 @@ __all__ = [
     "VregPayload",
     "WireRecord",
     "build_registry",
+    "build_semantic_inventory",
     "compute_delta_blob_output_crc32",
     "decode_record",
     "export_aggregator_semantics",
