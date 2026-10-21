@@ -141,6 +141,7 @@ class BmAlternatives(BmOperation):
 
 @dataclass(frozen=True, slots=True)
 class BmScan(BmOperation):
+    token: BmToken
     kind: Literal["fixed_skip", "forward_search", "backward_scan", "backward_search"]
     operand: int
     support_note: str
@@ -352,7 +353,7 @@ def _interpret_opcode(token: BmToken) -> BmSemanticOperation:
         return BmGap(*source, 0, operands[0], bounded=True)
     if dispatch in _SCAN_OPERATIONS:
         kind, note = _SCAN_OPERATIONS[dispatch]
-        return BmScan(*source, kind, int.from_bytes(operands, "little"), note)
+        return BmScan(*source, token, kind, int.from_bytes(operands, "little"), note)
     if dispatch in _CLASS_DISPATCH_IDS:
         # Preserve the wire count: flags and reader-specific predicates prevent
         # a general conversion to regex/YARA membership or repetition.
