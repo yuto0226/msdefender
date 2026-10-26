@@ -9,6 +9,7 @@ from .bm_yara import BmYaraFidelity
 from .condition import _atom_identifiers, render_yara
 from .core import Artifact, ArtifactExport, semantic_json_to_data
 from .types.hstr import (
+    EXPORT_PROJECTION_LIMITS,
     HstrPayload,
     HstrSubsignature,
     _hstr_scanner_context,
@@ -219,7 +220,7 @@ def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
         return _unsupported("score_weights: positive signed WORD tags are required")
     if sum(weights) > 0x7FFF:
         return _unsupported("score_weights: sum exceeds signed WORD range")
-    scores = summarize_hstr_scores(parsed)
+    scores = summarize_hstr_scores(parsed, limits=EXPORT_PROJECTION_LIMITS)
     identifiers = scores.identifiers
     condition = scores.combined_condition
     if len(identifiers) != len(parsed.subsignatures):

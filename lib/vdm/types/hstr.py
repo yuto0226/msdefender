@@ -100,6 +100,27 @@ class HstrSubsignatureMeaning:
 
 
 @dataclass(frozen=True, slots=True)
+class ProjectionLimits:
+    """Bound exhaustive projection work separately from its score semantics."""
+
+    max_variables: int = 8
+    max_minima: int = 4
+    max_rendered_chars: int | None = 160
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.max_variables <= 12:
+            raise ValueError("max_variables must be between 1 and 12")
+        if not 1 <= self.max_minima <= 128:
+            raise ValueError("max_minima must be between 1 and 128")
+        if self.max_rendered_chars is not None and self.max_rendered_chars < 1:
+            raise ValueError("max_rendered_chars must be positive or None")
+
+
+TERMINAL_PROJECTION_LIMITS = ProjectionLimits()
+EXPORT_PROJECTION_LIMITS = ProjectionLimits(12, 128, None)
+
+
+@dataclass(frozen=True, slots=True)
 class HstrScoreThresholds:
     """Score classification eligibility; validators/policy may modify or cancel it.
 
@@ -276,9 +297,12 @@ def _semantic_sets(identifiers: tuple[str, ...]) -> dict[str, frozenset[int]]:
 
 
 def _verified_projection(
-    expr: Expr, expected: int, identifiers: tuple[str, ...]
+    expr: Expr, expected: int, identifiers: tuple[str, ...], limits: ProjectionLimits
 ) -> Expr | None:
-    if rendered_length(expr) > 160:
+    if (
+        limits.max_rendered_chars is not None
+        and rendered_length(expr) > limits.max_rendered_chars
+    ):
         return None
     actual = sum(
         1 << assignment
@@ -296,7 +320,10 @@ def _verified_projection(
 
 
 def _threshold_projection(
-    weights: tuple[int, ...], identifiers: tuple[str, ...], threshold: int
+    weights: tuple[int, ...],
+    identifiers: tuple[str, ...],
+    threshold: int,
+    limits: ProjectionLimits,
 ) -> Expr | None:
     """Lower bounded score eligibility to AST without presentation-dependent parsing."""
     size = len(weights)
@@ -311,14 +338,16 @@ def _threshold_projection(
     whole = frozenset(range(size))
     if expected == _count_truth(whole, size, size):
         return _verified_projection(
-            at_least(size, atoms, "them"), expected, identifiers
+            at_least(size, atoms, "them"), expected, identifiers, limits
         )
     if expected == _count_truth(whole, 1, size):
-        return _verified_projection(at_least(1, atoms, "them"), expected, identifiers)
+        return _verified_projection(
+            at_least(1, atoms, "them"), expected, identifiers, limits
+        )
     if len(set(weights)) == 1 and weights[0] > 0:
         required = (threshold + weights[0] - 1) // weights[0]
         return _verified_projection(
-            at_least(required, atoms, "them"), expected, identifiers
+            at_least(required, atoms, "them"), expected, identifiers, limits
         )
     sets = _semantic_sets(identifiers)
     for selector, members in sets.items():
@@ -326,7 +355,10 @@ def _threshold_projection(
         for required in range(1, len(members) + 1):
             if expected == _count_truth(members, required, size):
                 return _verified_projection(
-                    at_least(required, selected, selector), expected, identifiers
+                    at_least(required, selected, selector),
+                    expected,
+                    identifiers,
+                    limits,
                 )
     minima = []
     for assignment in sorted(
@@ -337,7 +369,7 @@ def _threshold_projection(
         ):
             continue
         minima.append(assignment)
-        if len(minima) > 4:
+        if len(minima) > limits.max_minima:
             return None
     terms = []
     for term in minima:
@@ -353,17 +385,21 @@ def _threshold_projection(
         parts.extend(atoms[index] for index in sorted(members))
         terms.append(conjunction(*parts))
     return _verified_projection(
-        minimize_dnf(disjunction(*terms)), expected, identifiers
+        minimize_dnf(disjunction(*terms)), expected, identifiers, limits
     )
 
 
 def _level_conditions(
-    weights: tuple[int, ...], identifiers: tuple[str, ...], header0: int, header1: int
+    weights: tuple[int, ...],
+    identifiers: tuple[str, ...],
+    header0: int,
+    header1: int,
+    limits: ProjectionLimits,
 ) -> tuple[Expr | None, Expr | None, Expr | None]:
-    level1 = _threshold_projection(weights, identifiers, header0)
+    level1 = _threshold_projection(weights, identifiers, header0, limits)
     if header0 == header1:
         return level1, level1, None
-    candidate = _threshold_projection(weights, identifiers, header1)
+    candidate = _threshold_projection(weights, identifiers, header1, limits)
     level2 = None
     if level1 is not None and candidate is not None:
         expected = sum(
@@ -378,7 +414,7 @@ def _level_conditions(
             < header0
         )
         level2 = _verified_projection(
-            conjunction(candidate, negate(level1)), expected, identifiers
+            conjunction(candidate, negate(level1)), expected, identifiers, limits
         )
     return candidate, level1, level2
 
@@ -389,6 +425,7 @@ def _combined_condition(
     level2: Expr | None,
     identifiers: tuple[str, ...],
     same_threshold: bool,
+    limits: ProjectionLimits,
 ) -> Expr | None:
     if candidate is None or level1 is None or (level2 is None and not same_threshold):
         return None
@@ -399,10 +436,17 @@ def _combined_condition(
     best = select_equivalent(
         source, (minimize_dnf(source), candidate, minimize_dnf(candidate)), identifiers
     )
-    return best if rendered_length(best) <= 160 else None
+    return (
+        best
+        if limits.max_rendered_chars is None
+        or rendered_length(best) <= limits.max_rendered_chars
+        else None
+    )
 
 
-def summarize_hstr_scores(parsed: HstrPayload) -> HstrScoreThresholds:
+def summarize_hstr_scores(
+    parsed: HstrPayload, *, limits: ProjectionLimits = TERMINAL_PROJECTION_LIMITS
+) -> HstrScoreThresholds:
     """Report score classification eligibility, independent of final verdict policy."""
     meanings = tuple(
         classify_hstr_subsignature(subsig, type_byte=parsed.type_byte)
@@ -423,7 +467,7 @@ def summarize_hstr_scores(parsed: HstrPayload) -> HstrScoreThresholds:
         # Unknown flags and extra bytes prevent Boolean interpretation. Limit
         # variables, minimal terms, and rendered length to keep output bounded.
         if (
-            len(weights) <= 8
+            len(weights) <= limits.max_variables
             and all(meaning.matching != "UNKNOWN" for meaning in meanings)
             and not parsed.trailing_raw
             and 0 < parsed.header_word1 <= parsed.header_word0
@@ -434,6 +478,7 @@ def summarize_hstr_scores(parsed: HstrPayload) -> HstrScoreThresholds:
                 identifiers,
                 parsed.header_word0,
                 parsed.header_word1,
+                limits,
             )
             combined_condition = _combined_condition(
                 condition,
@@ -441,6 +486,7 @@ def summarize_hstr_scores(parsed: HstrPayload) -> HstrScoreThresholds:
                 level2_condition,
                 identifiers,
                 parsed.header_word0 == parsed.header_word1,
+                limits,
             )
     tail = parsed.tail_word1
     return HstrScoreThresholds(
