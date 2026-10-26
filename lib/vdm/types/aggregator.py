@@ -344,6 +344,79 @@ def _pair_json(pair: AggregatorPair) -> SemanticJSONValue:
     )
 
 
+def _runtime_contract() -> JSONObject:
+    """Pinned consumer facts, without executing or binding this local program."""
+    return JSONObject(
+        (
+            ("scope", "positive attribute events in the pinned runtime consumer"),
+            ("engine_equivalent_evaluator", False),
+            (
+                "event_lookup",
+                "exact complete C string; no synthetic-ID or affix parsing",
+            ),
+            (
+                "synthetic_prefix_effect",
+                "#ATTR_ bypasses sigtree only; pair lookup remains exact",
+            ),
+            ("ir_pair_index_scope", "record-local zero-based symbolic index"),
+            ("engine_pair_id_scope", "database-global one-based vector index"),
+            ("local_to_engine_pair_id_binding", None),
+            (
+                "generated_names_scope",
+                "local symbolic placeholders, not recovered engine names",
+            ),
+            (
+                "state_lifecycle",
+                "SCAN_REPLY/caller-owned runtime state; reset timing unknown",
+            ),
+            ("stateless_expression_evaluation", False),
+            (
+                "pair_state",
+                JSONObject(
+                    (
+                        ("left_event_bit", 1),
+                        ("right_event_bit", 2),
+                        ("update", "state |= incoming"),
+                        (
+                            "duplicate_suppression",
+                            "skip when existing state already contains incoming",
+                        ),
+                        ("or_operator_code", 0),
+                        ("or_completion", "state != 0"),
+                        ("and_operator_code", 1),
+                        ("and_completion", "state == 3"),
+                        ("completion_latch", 3),
+                        (
+                            "latch_order",
+                            "before candidate policy; policy rejection does not roll it back",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "intermediate_event",
+                "recid -1 re-emits generated_name unchanged through MpAggregateAttributeExInternal",
+            ),
+            ("set_attribute_return", "candidate RecID or 0xFFFFFFFF"),
+            ("set_attribute_out_flag", "candidate fuzzy state"),
+            (
+                "wrapper_result",
+                JSONObject(
+                    (
+                        (
+                            "0",
+                            "no usable candidate, including delayed-detection filtering",
+                        ),
+                        ("1", "nonfuzzy candidate"),
+                        ("2", "fuzzy candidate"),
+                    )
+                ),
+            ),
+            ("wrapper_result_is_verdict", False),
+        )
+    )
+
+
 def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
     program = interpret_aggregator(parsed)
     issue = program.issue
@@ -426,16 +499,62 @@ def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
             id="aggregator_runtime_consumer",
             scope="runtime_consumer",
             statement=(
-                "Runtime finalization inspects leading-'!' pair operands by "
-                "looking up the corresponding positive attribute name."
+                "SetAttribute resolves complete C-string event names exactly, "
+                "without parsing synthetic IDs or affixes; #ATTR_ only bypasses "
+                "sigtree. Runtime pair IDs are database-global and one-based, "
+                "not local IR indices plus one. Separate negative-attribute "
+                "finalization looks up the corresponding positive name."
             ),
             coverage="subset",
-            evidence_refs=("aggregator_negated_attribute_consumer",),
+            evidence_refs=(
+                "aggregator_runtime_name_lookup",
+                "aggregator_negated_attribute_consumer",
+            ),
             unknowns=(
                 SemanticUnknown(
                     "runtime_consumer",
-                    "RuntimeAggregator::SetAttribute truth-table and complete pair "
-                    "state transitions remain unresolved.",
+                    "Full negative-attribute finalization, database-global ID/name "
+                    "bindings for this local IR, and caller-owned state reset "
+                    "timing are not modeled.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="aggregator_runtime_pair_state",
+            scope="runtime_consumer",
+            statement=(
+                "Exact left/right events contribute bits 1/2, merged by OR; "
+                "events already represented in state are suppressed. A completed "
+                "pair is latched to state 3 before candidate policy, and policy "
+                "rejection does not roll back that latch."
+            ),
+            coverage="subset",
+            evidence_refs=("aggregator_pair_state_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "State allocation/reset across caller lifecycles and full "
+                    "negative/fuzzy interactions are outside this positive-event contract.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="aggregator_runtime_candidate_handoff",
+            scope="runtime_consumer",
+            statement=(
+                "A recid=-1 pair re-emits its generated_name unchanged through "
+                "MpAggregateAttributeExInternal. SetAttribute returns candidate "
+                "RecID or 0xFFFFFFFF and outputs candidate fuzzy state. Wrapper "
+                "results 0/1/2 mean no usable/nonfuzzy/fuzzy candidate, not verdict; "
+                "MpAggregateAttributeEx can also return a filtered cached candidate."
+            ),
+            coverage="subset",
+            evidence_refs=("aggregator_candidate_handoff_consumer",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Complete candidate arbitration, fuzzy matching rules, policy "
+                    "acceptance and report mapping are not evaluated.",
                 ),
             ),
         ),
@@ -443,15 +562,22 @@ def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
             id="aggregator_detection_predicate",
             scope="detection_predicate",
             statement=(
-                "The AttributePair program is not yet an engine-equivalent "
-                "Boolean detection predicate."
+                "The local pair gate completes OR (op=0) when state!=0 and "
+                "AND (op=1) when state==3. Original predicate instructions were "
+                "tested for op 0/1/2 and state 0..3 only; this does not establish "
+                "a complete engine-equivalent expression evaluator."
             ),
-            coverage="unknown",
+            coverage="subset",
+            evidence_refs=(
+                "aggregator_pair_gate_consumer",
+                "aggregator_pair_gate_native",
+            ),
             unknowns=(
                 SemanticUnknown(
                     "detection_predicate",
-                    "The runtime pair truth table, fuzzy behavior, and synthetic "
-                    "attribute propagation have not been engine-equivalent tested.",
+                    "The bounded native test excludes lookup, state merge/latch, "
+                    "intermediate recursion, full negative/fuzzy semantics, "
+                    "arbitration and caller state lifecycle.",
                 ),
             ),
         ),
@@ -525,6 +651,56 @@ def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
             locator="0x1800A76D0",
             supports=("aggregator_runtime_consumer",),
         ),
+        SemanticEvidence(
+            id="aggregator_runtime_name_lookup",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine.dll 1.443.903.0 RuntimeAggregator::SetAttribute",
+            locator="0x1800A82B8-0x1800A838B / 0x1800A8409-0x1800A845E / 0x1800A8B1D-0x1800A8B34",
+            supports=("aggregator_runtime_consumer",),
+        ),
+        SemanticEvidence(
+            id="aggregator_pair_state_consumer",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine.dll 1.443.903.0 RuntimeAggregator::SetAttribute",
+            locator="0x1800A846E-0x1800A84D3 / 0x1800A935E-0x1800A9381 / 0x1800A8839",
+            supports=("aggregator_runtime_pair_state",),
+        ),
+        SemanticEvidence(
+            id="aggregator_candidate_handoff_consumer",
+            axis="consumer",
+            kind="engine_static",
+            source_ref=(
+                "mpengine.dll 1.443.903.0 RuntimeAggregator::SetAttribute / "
+                "MpAggregateAttributeExInternal / MpAggregateAttributeEx"
+            ),
+            locator="0x1800A8DA9-0x1800A8DBB / 0x1800A80B0 / 0x1800B2824",
+            supports=("aggregator_runtime_candidate_handoff",),
+        ),
+        SemanticEvidence(
+            id="aggregator_pair_gate_consumer",
+            axis="consumer",
+            kind="engine_static",
+            source_ref=(
+                "mpengine.dll 1.443.903.0 SetAttribute predicate; operator codes "
+                "cross-checked against ParseSubExpression"
+            ),
+            locator="0x1800A87F7-0x1800A8816 / 0x1800A89AE / 0x1800FBBDA-0x1800FBBEF",
+            supports=("aggregator_detection_predicate",),
+        ),
+        SemanticEvidence(
+            id="aggregator_pair_gate_native",
+            axis="engine_equivalent_test",
+            kind="engine_equivalent_test",
+            source_ref=(
+                "original predicate slices only, pinned DLL SHA256 "
+                "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                "12 bounded op/state cases, not full SetAttribute execution"
+            ),
+            locator="0x1800A87F7+0x25 / 0x1800A89AE+0x09; op=0,1,2 and state=0..3",
+            supports=("aggregator_detection_predicate",),
+        ),
     )
     return RuleSemantics(
         status=(
@@ -534,7 +710,7 @@ def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
             if issue.code == "receiver_ignored"
             else "unsupported"
         ),
-        representation="aggregator.attribute_pair_program.ir.v3",
+        representation="aggregator.attribute_pair_program.ir.v4",
         data=JSONObject(
             (
                 (
@@ -562,6 +738,7 @@ def export_aggregator_semantics(parsed: AggregatorPayload) -> RuleSemantics:
                     ),
                 ),
                 ("interpretation", interpretation),
+                ("runtime_contract", _runtime_contract()),
             )
         ),
         evidence=("mpengine 1.443.903.0 AddSignature expression subset",),
