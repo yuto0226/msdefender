@@ -666,6 +666,27 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             ),
         ),
     )
+    hash_comparison_claim = SemanticClaim(
+        id="static_hash_comparison_primitive",
+        scope="runtime_consumer",
+        statement=(
+            "Differential execution of staticrec_t::CompareHash supports inline "
+            "and extra-store equality/order behavior and length gates for modes "
+            "0-4 (widths 16/20/4/4/32); mode 3 compares only the caller's "
+            "four-byte digest prefix."
+        ),
+        coverage="subset",
+        evidence_refs=("static_hash_comparison_differential",),
+        unknowns=(
+            SemanticUnknown(
+                "runtime_consumer",
+                "Hash generation/GetHashes, I/O ranges, stage aggregation, signature "
+                "policy, and final verdict are not covered. Modes 5-7 length-zero "
+                "equality does not establish complete-comparator acceptance; "
+                "caller rejection has not been differentially validated.",
+            ),
+        ),
+    )
     common_evidence = (
         SemanticEvidence(
             id="static_dispatch",
@@ -705,6 +726,23 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 "61 vectors (empty through 65536 bytes, alignments/seeds as applicable)"
             ),
             supports=(crc_primitive_claim.id,),
+        ),
+        SemanticEvidence(
+            id="static_hash_comparison_differential",
+            axis="engine_equivalent_test",
+            kind="engine_equivalent_test",
+            source_ref=(
+                "mpengine path label 1.443.903.0; PE fixed version 1.1.25110.1; "
+                "SHA-256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3"
+            ),
+            locator=(
+                "ignored harness tests/local_static_engine_differential.py; "
+                "staticrec_t::CompareHash @ 0x18055D644, "
+                "MpSignatureExtraStore::Get @ 0x1800F930C, "
+                "memcmp @ 0x180D38C00; 40 new vectors "
+                "(101 total including 61 CRC vectors)"
+            ),
+            supports=(hash_comparison_claim.id,),
         ),
     )
     mode = parsed.mode
@@ -779,6 +817,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             claims=(
                 corpus_claim,
                 crc_primitive_claim,
+                hash_comparison_claim,
                 wire_claim,
                 dispatch_claim,
                 receiver_claim,
@@ -1180,6 +1219,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         claims=(
             corpus_claim,
             crc_primitive_claim,
+            hash_comparison_claim,
             wire_claim,
             dispatch_claim,
             receiver_claim,
