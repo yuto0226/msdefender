@@ -166,7 +166,44 @@ def _operation_ir(
                 "raw opcode 0x04 only; other class opcodes and aliases remain reader-specific",
             ]
     elif isinstance(operation, BmExtension):
-        if operation.name == "BACKREF_COMPARE":
+        if operation.name == "RANGE_SEARCH":
+            unit_width = 2 if token.descriptor_flags & 1 else 1
+            decoded.update(
+                name=operation.name,
+                value=operation.value,
+                value_unit="bytes",
+                bitmap=operation.bitmap,
+                wire_count=operation.value // unit_width,
+                unit_width=unit_width,
+                padding_mapped_byte=0 if unit_width == 2 else None,
+            )
+            exact_context = bool(
+                context is not None
+                and context.reader_kind == "BUFFER"
+                and context.translation in ("identity", "ascii_lowercase")
+                and context.worker_modes == (1,)
+                and context.capture_enabled is False
+            )
+            decoded["buffer_mode1_predicate"] = {
+                "minimum_units": 0,
+                "maximum_units": operation.value // unit_width,
+                "candidate_order": "increasing unit boundaries, including endpoint",
+                "membership": "the membership bit for the translated byte equals 0",
+                "continuation": "retry the complete remaining pattern at each candidate",
+                "suffix_before_membership": True,
+                "failed_suffix_reader_committed": False,
+                "scope": "Boolean acceptance; offsets and capture effects excluded",
+            }
+            result["fidelity"] = "exact" if exact_context else "conditional"
+            result["requirements"] = (
+                []
+                if exact_context
+                else [
+                    "BUFFER reader, identity or ASCII-lowercase translation, worker mode exactly 1, capture disabled",
+                    "ASCII-lowercase requires the complete pattern to be normalized",
+                ]
+            )
+        elif operation.name == "BACKREF_COMPARE":
             decoded.update(
                 name=operation.name,
                 capture_id=operation.value,
@@ -178,6 +215,7 @@ def _operation_ir(
                 "requires a populated BM backref context for this capture_id",
                 "capture producer and complete retry lifecycle are not modeled",
             ]
+            result["fidelity"] = "conditional"
         else:
             decoded.update(
                 name=operation.name, value=operation.value, bitmap=operation.bitmap
@@ -185,7 +223,7 @@ def _operation_ir(
             result["requirements"] = [
                 "operation parameters are decoded, but reader state effects are not modeled"
             ]
-        result["fidelity"] = "conditional"
+            result["fidelity"] = "conditional"
     elif isinstance(operation, BmControlFlow):
         decoded.update(
             form=operation.form,

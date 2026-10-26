@@ -156,6 +156,13 @@ class BmClass(BmOperation):
 
 @dataclass(frozen=True, slots=True)
 class BmExtension(BmOperation):
+    """An extension operand; bitmap ranges use an effective BYTE budget.
+
+    A descriptor-bit0 alias consumes a class byte plus mapped-zero padding per
+    unit, so its wire LE16 count is value / 2. Primary units are one byte.
+    The original wire operand remains available in token.operands.
+    """
+
     token: BmToken
     name: str
     value: int | None = None
