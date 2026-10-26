@@ -563,11 +563,29 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                             (
                                 "behavior",
                                 (
-                                    "For payload size 4, save the DWORD. A nonzero "
-                                    "value defers the current raw-record write. Before "
-                                    "the next record, emit {DWORD 1117, DWORD value} "
-                                    "unless that next type is 0x5C, then clear pending "
-                                    "state. Zero does not take the deferred-write path."
+                                    "Only the mode=0 generic cache-serialization path is "
+                                    "described here. A type 0x5D record with payload size "
+                                    "4 and nonzero DWORD sets/replaces pending state and "
+                                    "skips its raw write; zero clears pending state and "
+                                    "is written normally. Before a later eligible record, "
+                                    "type 0x5C clears pending state without emitting it; "
+                                    "any other eligible type first emits the synthesized "
+                                    "{0x45D, pending DWORD} record, then processes the "
+                                    "current record. A subsequent eligible 0x5D,size=4 "
+                                    "overwrites pending state. EOF and early returns do "
+                                    "not flush or clear pending state. Special/versioning, "
+                                    "RecordPush, and no-writer paths may bypass this flow. "
+                                    "The pending branch also depends on cache-writer, "
+                                    "version, and record-filter gates; runtime configuration "
+                                    "is unknown."
+                                ),
+                            ),
+                            (
+                                "mode_boundary",
+                                (
+                                    "Raw VDM load_database uses DispatchRecords(mode=0); "
+                                    "load_database_cache replay uses mode=1. Pending cache "
+                                    "behavior is conditional on writer/version/filter gates."
                                 ),
                             ),
                             (
@@ -579,10 +597,22 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                             (
                                 "cache_replay",
                                 (
-                                    "DWORD 1117 is bytes 5D 04 00 00; the cache "
-                                    "reader reframes the pair as type 0x5D, size 4, "
-                                    "and DispatchRecords(mode=1) uses ordinary "
-                                    "DispatchRecord."
+                                    "Synthesized 0x45D is DWORD 1117, bytes 5D 04 00 "
+                                    "00, followed by the pending DWORD. The cache reader "
+                                    "interprets this as a 4-byte 0x5D record and "
+                                    "DispatchRecords(mode=1) uses ordinary DispatchRecord."
+                                ),
+                            ),
+                            (
+                                "synthesized_record_layout",
+                                JSONObject(
+                                    (
+                                        ("cache_prefix_dword", 1117),
+                                        ("cache_prefix_hex", "5d040000"),
+                                        ("following_value", "pending 0x5D DWORD"),
+                                        ("replayed_record_type", "0x5D"),
+                                        ("replayed_payload_size", 4),
+                                    )
                                 ),
                             ),
                         )
@@ -665,6 +695,49 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                             ("dangling", 0),
                             ("end_value_matches_inner_record_count_count", 0),
                             (
+                                "successor_facts",
+                                JSONObject(
+                                    (
+                                        (
+                                            "mpas",
+                                            JSONObject(
+                                                (
+                                                    ("threat_end_records", 17989),
+                                                    ("next_0x5C", 17988),
+                                                    ("next_0x74", 1),
+                                                    ("eof", 0),
+                                                    ("zero_value_dword", 0),
+                                                )
+                                            ),
+                                        ),
+                                        (
+                                            "mpav",
+                                            JSONObject(
+                                                (
+                                                    ("threat_end_records", 342609),
+                                                    ("next_0x5C", 342608),
+                                                    ("next_0x74", 1),
+                                                    ("eof", 0),
+                                                    ("zero_value_dword", 0),
+                                                )
+                                            ),
+                                        ),
+                                        (
+                                            "each_0x5C_predecessor",
+                                            "SOF once or 0x5D for all remaining cases",
+                                        ),
+                                        (
+                                            "interpretation_boundary",
+                                            (
+                                                "Corpus successor facts are distinct from "
+                                                "the engine route observations; they do not "
+                                                "prove a shared finalizer or checksum."
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
                                 "value_interpretation",
                                 "unassigned; not identified as checksum",
                             ),
@@ -698,16 +771,24 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                 "Current mpas/mpav corpus invariant (subset): mpas BEGIN/END "
                 "17989/17989; mpav 342609/342609; every END has a four-byte payload "
                 "matching its paired BEGIN threat_id; nested/orphan/unmatched/dangling "
-                "counts are zero; END values do not equal inner-record counts. This "
-                "does not identify a checksum or establish engine semantics."
+                "counts are zero; END values do not equal inner-record counts. Of "
+                "17989 mpas END records, 17988 precede 0x5C and one precedes 0x74; "
+                "of 342609 mpav END records, 342608 precede 0x5C and one precedes "
+                "0x74; none are EOF or carry a zero-valued DWORD. Every 0x5C is "
+                "preceded by "
+                "SOF once or 0x5D otherwise. These corpus successor facts are "
+                "separate from engine-route observations and establish neither a "
+                "shared finalizer nor checksum semantics."
             ),
         ),
         profile="mpengine-1.443.903.0",
         issues=(
             SemanticIssue(
                 "threat_end_value_semantics_unknown",
-                "No inspected current-binary path proves that this value is a "
-                "threat ID, checksum, namespace, or group terminator.",
+                "The generic mode=0 cache writer can defer and synthesize this "
+                "record, and corpus successor patterns are recorded separately; "
+                "neither proves that the DWORD is a threat ID, checksum, namespace, "
+                "or finalizer input.",
             ),
             SemanticIssue(
                 "threat_container_not_detection_predicate",
