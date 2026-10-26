@@ -6,7 +6,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 _DETECTION_FLAG_BITS = (
@@ -603,6 +606,63 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                "bm-info-wire",
+                "wire_layout",
+                "BM_INFO carries a length-prefixed blob, friendly filter mask, NUL-terminated fidelity and actions strings, and accepted trailing bytes.",
+                "subset",
+                ("bm-info-receiver",),
+                (
+                    SemanticUnknown(
+                        "wire_layout",
+                        "Blob subformat and trailing byte fields are unknown.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "bm-info-policy",
+                "runtime_consumer",
+                "Selected friendly-filter mask bits have observed local effects in report and throttling consumers.",
+                "subset",
+                ("bm-info-policy-evidence",),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Formal bit names and complete policy semantics are not established.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "bm-info-verdict",
+                "final_verdict",
+                "BM_INFO alone does not establish a final verdict.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final report outcome depends on broader runtime policy.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "bm-info-receiver",
+                "wire_parser",
+                "engine_static",
+                "BMDetectionReceiver 0x1802A6610",
+                ("bm-info-wire",),
+            ),
+            SemanticEvidence(
+                "bm-info-policy-evidence",
+                "consumer",
+                "engine_static",
+                "ProcessFriendlyFiltering; ReportDetection; IsExpensiveOperationAllowed",
+                ("bm-info-policy",),
+            ),
+        ),
     )
 
 

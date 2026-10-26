@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 IL2_PATTERN_TYPE: Final = 0xA6
@@ -220,6 +223,69 @@ def export_il2_pattern_semantics(parsed: IL2Pattern) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                "il2-bounded-receiver",
+                "receiver_transform",
+                "IL2_PATTERN validates count bounds, stores count-bounded operand arrays, and ignores accepted trailing bytes.",
+                "subset",
+                ("il2-receiver",),
+                (
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "Operand values are not interpreted by the receiver.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "il2-lookup",
+                "runtime_consumer",
+                "IL2_PATTERN lookup buckets use the first two key DWORDs and compare the complete 20-byte key.",
+                "complete",
+                ("il2-lookup-evidence",),
+            ),
+            SemanticClaim(
+                "il2-operand-meaning",
+                "runtime_consumer",
+                "The individual operand emulator meaning remains unknown.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Wire operands have not been mapped to emulator handlers.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "il2-final-verdict",
+                "final_verdict",
+                "IL2_PATTERN lookup does not establish a final verdict.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "final_verdict", "The final verdict policy is not established."
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "il2-receiver",
+                "receiver",
+                "engine_static",
+                "IL_pattern_receiver / try_breakloop",
+                ("il2-bounded-receiver",),
+            ),
+            SemanticEvidence(
+                "il2-lookup-evidence",
+                "consumer",
+                "engine_static",
+                "IL2_PATTERN bucket hash and full-key comparison",
+                ("il2-lookup",),
+            ),
+        ),
     )
 
 

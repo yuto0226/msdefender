@@ -9,7 +9,10 @@ from ..core import (
     FormatResult,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 NDAT_TYPE: Final = 0xA9
@@ -244,6 +247,76 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                "ndat-wire-framing",
+                "wire_layout",
+                "NDAT frames counted data, a callback index, and an optional NUL-terminated record-ID suffix.",
+                "subset",
+                ("ndat-wire-evidence",),
+                (
+                    SemanticUnknown(
+                        "wire_layout",
+                        "The data blob schema is callback-specific.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "ndat-callback-dispatch",
+                "loader_dispatch",
+                "The callback index dispatches through the registered callback table.",
+                "subset",
+                ("ndat-dispatch-evidence",),
+                (
+                    SemanticUnknown(
+                        "loader_dispatch",
+                        "The per-callback payload schema is callback-specific.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "ndat-callback-schema",
+                "runtime_consumer",
+                "NDAT callback input/output semantics are only claimed where that callback has a traced schema; other callback business effects remain unknown.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Callback-specific schema and effects are unresolved for this record.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "ndat-verdict",
+                "final_verdict",
+                "NDAT framing and callback dispatch do not establish a broad business interpretation or final verdict.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "final_verdict",
+                        "The callback and downstream policy do not establish final disposition.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "ndat-wire-evidence",
+                "wire_parser",
+                "engine_static",
+                "ReceiveNewTemplate NDAT field decoding",
+                ("ndat-wire-framing",),
+            ),
+            SemanticEvidence(
+                "ndat-dispatch-evidence",
+                "dispatch",
+                "engine_static",
+                "ReceiveNewTemplate / NdatPostCallback callback table and registration sites",
+                ("ndat-callback-dispatch",),
+            ),
+        ),
     )
 
 

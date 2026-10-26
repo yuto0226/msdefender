@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 GENSFX_TYPE: Final = 0x56
@@ -251,6 +254,71 @@ def export_gensfx_semantics(parsed: GenSfxPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=issues,
+        claims=(
+            SemanticClaim(
+                "gensfx-row-layout",
+                "receiver_transform",
+                "The receiver stores each GENSFX payload as one fixed 0x54-byte row.",
+                "complete",
+                ("gensfx-receiver",),
+            ),
+            SemanticClaim(
+                "gensfx-row-and-search",
+                "runtime_consumer",
+                "A 32-bit key selects an exact row, which supplies a bounded region and exact four-byte pattern search.",
+                "subset",
+                ("gensfx-engine",),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Key derivation and downstream attribution are unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "gensfx-attribution",
+                "report_mapping",
+                "Threat attribution and report mapping are not established by GENSFX matching.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "report_mapping", "No report mapping evidence is available."
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "gensfx-final",
+                "final_verdict",
+                "A GENSFX candidate does not establish a final verdict.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final scan policy is outside this record consumer.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "gensfx-receiver",
+                "receiver",
+                "engine_static",
+                "mpengine-1.443.903.0 expk_init_module fixed-row registration",
+                ("gensfx-row-layout",),
+                "0x180C45070",
+            ),
+            SemanticEvidence(
+                "gensfx-engine",
+                "consumer",
+                "engine_static",
+                "mpengine-1.443.903.0: expk_init_module, gsfxs_cmp, gsfxs_keycmp, gsfx_ismine",
+                ("gensfx-row-and-search",),
+                "0x180C45070; 0x18058B6C0; 0x1806015E0; 0x180095070",
+            ),
+        ),
     )
 
 

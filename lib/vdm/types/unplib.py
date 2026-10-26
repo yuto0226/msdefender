@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 UNPLIB_TYPE: Final = 0x57
@@ -187,6 +190,62 @@ def export_unplib_semantics(parsed: UnpLibPayload) -> RuleSemantics:
                     "and any direct runtime consumer remain unknown."
                 ),
                 (("offset", 4), ("length", 4)),
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                "unplib-row-layout",
+                "wire_layout",
+                "UNPLIB rows are 0x18 bytes; bytes +0x10..+0x17 are parsed as one u64le field.",
+                "subset",
+                ("unplib-wire",),
+                (
+                    SemanticUnknown(
+                        "wire_layout", "The role of +0x04..+0x07 is unknown."
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "unplib-key-lookup",
+                "runtime_consumer",
+                "UNPLIB lookup compares the first DWORD exactly; +0x08, +0x0C, and the u64le field at +0x10 participate in bounded output handling.",
+                "subset",
+                ("unplib-consumer",),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The broader business meaning of bounded output handling is unknown.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "unplib-business",
+                "final_verdict",
+                "UNPLIB lookup and output handling do not establish a final verdict.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "final_verdict",
+                        "No report or verdict consumer has been established.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "unplib-wire",
+                "wire_parser",
+                "engine_static",
+                "unplib_init_module / UNPLIB 24-byte row receiver",
+                ("unplib-row-layout",),
+            ),
+            SemanticEvidence(
+                "unplib-consumer",
+                "consumer",
+                "engine_static",
+                "getSignature / unplib_search / rOutStream::flush_internal",
+                ("unplib-key-lookup",),
             ),
         ),
     )

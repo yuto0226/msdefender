@@ -9,7 +9,10 @@ from ..core import (
     FormatResult,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 COMMON_CODE_TYPE: Final = 0xAF
@@ -166,6 +169,62 @@ def export_common_code_semantics(parsed: CommonCodePayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                "common-code-wire",
+                "wire_layout",
+                "COMMON_CODE uses a four-byte header with u16le flags and code_size followed by exactly code_size bytes; accepted size is 1 through 256.",
+                "complete",
+                ("common-code-receiver",),
+            ),
+            SemanticClaim(
+                "common-code-lookup",
+                "loader_dispatch",
+                "The low two flag bits select GlobalBlocksInfo lookup mode 1 or 2 for values 0 and 1; values 2 and 3 skip lookup.",
+                "complete",
+                ("common-code-loader",),
+            ),
+            SemanticClaim(
+                "common-code-body",
+                "runtime_consumer",
+                "COMMON_CODE body runtime meaning is unknown.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer", "Body is passed as an opaque byte span."
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "common-code-verdict",
+                "final_verdict",
+                "COMMON_CODE loading does not establish a final verdict.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "final_verdict", "Execution and final policy are unconfirmed."
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "common-code-receiver",
+                "wire_parser",
+                "engine_static",
+                "ccode_receiver",
+                ("common-code-wire",),
+            ),
+            SemanticEvidence(
+                "common-code-loader",
+                "dispatch",
+                "engine_static",
+                "GBB_load_ccode",
+                ("common-code-lookup",),
+            ),
+        ),
     )
 
 

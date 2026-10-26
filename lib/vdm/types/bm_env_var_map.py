@@ -9,7 +9,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 BM_ENV_VAR_MAP_TYPE: Final = 0xED
@@ -268,6 +271,63 @@ def export_bm_env_var_map_semantics(parsed: BMEnvVarMap) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=issues,
+        claims=(
+            SemanticClaim(
+                "bm-env-wire-map",
+                "receiver_transform",
+                "BM_ENV_VAR_MAP receiver resolves the name case-insensitively and ORs the environment ID into entries keyed by WORDs in two maps.",
+                "subset",
+                ("bm-env-receiver",),
+                (
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "Environment-name enumeration and the semantic names of WORD values are unknown.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "bm-env-candidate-expansion",
+                "runtime_consumer",
+                "The tokenized-path consumer looks up both maps and delegates candidate string expansion to IEnvMatch virtual methods.",
+                "subset",
+                ("bm-env-consumer",),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Expansion rules and token/selector meanings are not established.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "bm-env-verdict",
+                "final_verdict",
+                "Candidate expansion does not establish a final detection verdict.",
+                "unknown",
+                (),
+                (
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Final policy is outside the confirmed candidate handoff.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "bm-env-receiver",
+                "receiver",
+                "engine_static",
+                "BMEnvVarReceiver / BmEnvVarMapping_AddVar / AddVarInMap",
+                ("bm-env-wire-map",),
+            ),
+            SemanticEvidence(
+                "bm-env-consumer",
+                "consumer",
+                "engine_static",
+                "GetVarListFromSigs / SignatureHandler_TestForDetectionWithTokenizedPath",
+                ("bm-env-candidate-expansion",),
+            ),
+        ),
     )
 
 
