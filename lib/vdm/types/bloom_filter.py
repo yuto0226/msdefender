@@ -10,7 +10,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 BLOOM_FILTER_TYPE: Final = 0xDB
@@ -248,6 +251,31 @@ def export_bloom_filter_semantics(parsed: BloomFilterPayload) -> RuleSemantics:
                 "keys_encoding_unknown",
                 "keys_data is retained as bytes; its encoding and termination "
                 "requirements are not established by the wire parser.",
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                id="bloom_filter_runtime_membership_subset",
+                scope="runtime_consumer",
+                statement="For version 0, the consumer probes candidate values and sets a scan attribute on membership; nonzero versions skip comparison and return false.",
+                coverage="subset",
+                evidence_refs=("bloom_filter_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Candidate derivation depends on engine scan context and the membership result is not a direct threat verdict.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="bloom_filter_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="BloomFilterProvider::CompareValues version gate and version-0 consumer",
+                supports=("bloom_filter_runtime_membership_subset",),
             ),
         ),
     )

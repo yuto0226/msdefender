@@ -12,8 +12,11 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
     SemanticJSONValue,
+    SemanticUnknown,
 )
 
 VERSIONCHECK_TYPE: Final = 0x7A
@@ -620,6 +623,43 @@ def export_versioncheck_semantics(parsed: VersionCheckPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="versioncheck_runtime_selector_subset",
+                scope="runtime_consumer",
+                statement=(
+                    "Known VERSIONCHECK selectors evaluate the confirmed engine-profile state predicate; this models a runtime selector check only."
+                    if predicate is not None and predicate.status == "known"
+                    else "No runtime predicate is established for this VERSIONCHECK selector."
+                ),
+                coverage="subset"
+                if predicate is not None and predicate.status == "known"
+                else "unknown",
+                evidence_refs=("versioncheck_evaluator",)
+                if predicate is not None and predicate.status == "known"
+                else (),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Unknown selectors and trailing bytes are outside the modeled selector subset; a selector result is not a threat verdict.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            (
+                SemanticEvidence(
+                    id="versioncheck_evaluator",
+                    axis="consumer",
+                    kind="engine_static",
+                    source_ref="mpengine 1.443.903.0",
+                    locator="EvaluateVersioningOperator selector dispatch and state reads",
+                    supports=("versioncheck_runtime_selector_subset",),
+                ),
+            )
+            if predicate is not None and predicate.status == "known"
+            else ()
+        ),
     )
 
 

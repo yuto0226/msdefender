@@ -11,7 +11,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 DEFAULTS_TYPE: Final = 0x58
@@ -253,6 +256,41 @@ def export_defaults_semantics(parsed: DefaultsPayload) -> RuleSemantics:
                 "DefaultsSignatureParser returns success for flags_0a & 6 in {2, 6} before entry construction",
             ),
             profile="mpengine-1.443.903.0",
+            claims=(
+                SemanticClaim(
+                    id="defaults_receiver_early_return",
+                    scope="receiver_transform",
+                    statement="Flags 0x0a & 6 in {2, 6} return success before entry construction.",
+                    coverage="complete",
+                    evidence_refs=("defaults_early_return",),
+                ),
+                SemanticClaim(
+                    id="defaults_no_entry_early_return",
+                    scope="receiver_transform",
+                    statement="No DEFAULTS entry is appended on the early-return path.",
+                    coverage="subset",
+                    evidence_refs=("defaults_early_return",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "receiver_transform",
+                            "Later behavior without a registered entry is outside this receiver claim.",
+                        ),
+                    ),
+                ),
+            ),
+            claim_evidence=(
+                SemanticEvidence(
+                    id="defaults_early_return",
+                    axis="receiver",
+                    kind="engine_static",
+                    source_ref="mpengine 1.443.903.0",
+                    locator="DefaultsSignatureParser flag-controlled early return before entry construction",
+                    supports=(
+                        "defaults_receiver_early_return",
+                        "defaults_no_entry_early_return",
+                    ),
+                ),
+            ),
         )
 
     is_special = bool(parsed.field_06 & 0x1000)
@@ -387,6 +425,64 @@ def export_defaults_semantics(parsed: DefaultsPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="defaults_receiver_routing",
+                scope="receiver_transform",
+                statement="Valid selectors append an entry to the general or special list according to field_06 bit 0x1000.",
+                coverage="subset",
+                evidence_refs=("defaults_receiver",),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "Out-of-range selectors do not append, and allocation failure behavior is not modeled.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="defaults_runtime_consumer",
+                scope="runtime_consumer",
+                statement="The confirmed consumer subset performs exact-key lookup with an OS-mask condition from the general list; a matched file-resource default may be applied contextually.",
+                coverage="subset",
+                evidence_refs=("defaults_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The special-list retrieval consumer and other general-list consumers are unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="defaults_detection_predicate",
+                scope="detection_predicate",
+                statement="DEFAULTS registration and lookup do not establish a threat-detection predicate.",
+                coverage="unknown",
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "No detection-predicate dataflow is established for these entries.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="defaults_receiver",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="DefaultsSignatureParser and AddDefaultData selector routing",
+                supports=("defaults_receiver_routing",),
+            ),
+            SemanticEvidence(
+                id="defaults_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="CDefaultDataList::FindExact; GetDefaultData; CResmgrFile::Action",
+                supports=("defaults_runtime_consumer",),
+            ),
+        ),
     )
 
 

@@ -10,7 +10,10 @@ from ..core import (
     FormatResult,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 
 REMOVAL_POLICY_TYPE: Final = 0x6A
@@ -180,6 +183,31 @@ def export_removal_policy_semantics(parsed: RemovalPolicy) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="removal_policy_threat_id_lookup",
+                scope="runtime_consumer",
+                statement="The consumer performs an exact threat-ID lookup before name rules and returns the matched policy DWORD opaquely.",
+                coverage="subset",
+                evidence_refs=("removal_policy_threat_lookup",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Individual policy bits and later product behavior are unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="removal_policy_threat_lookup",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="GetThreatRemovalPolicy exact threat-ID lookup",
+                supports=("removal_policy_threat_id_lookup",),
+            ),
+        ),
     )
 
 
@@ -259,6 +287,31 @@ def export_removal_policy_by_name_semantics(
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(
+            SemanticClaim(
+                id="removal_policy_name_lookup",
+                scope="runtime_consumer",
+                statement="After threat-ID lookup, the consumer regex-searches the name and contributes an opaque allow or deny mask to the reduction.",
+                coverage="subset",
+                evidence_refs=("removal_policy_name_lookup",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Regex compile failure handling outside this function and individual policy-bit meanings are unresolved.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                id="removal_policy_name_lookup",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator="GetThreatRemovalPolicy regex search and allow_or & ~deny_or reduction",
+                supports=("removal_policy_name_lookup",),
+            ),
+        ),
     )
 
 
