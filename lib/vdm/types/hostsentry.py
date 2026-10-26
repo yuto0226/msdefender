@@ -1,6 +1,7 @@
 """Lossless parser and bounded renderer for HOSTSENTRY (0x64) payloads."""
 
 import json
+import zlib
 from dataclasses import dataclass
 from typing import Final
 
@@ -11,7 +12,10 @@ from ..core import (
     JSONArray,
     JSONObject,
     RuleSemantics,
+    SemanticClaim,
+    SemanticEvidence,
     SemanticIssue,
+    SemanticUnknown,
 )
 from ._semantic_claims import scoped_claim
 
@@ -48,6 +52,57 @@ class HostsentryPayload:
     def wildcard_hostname(self) -> bool:
         """Whether the hostname C-string starts with the observed ``*.`` prefix."""
         return self.hostname_c_string.startswith(b"*.")
+
+
+@dataclass(frozen=True, slots=True)
+class HostsentryKeys:
+    """Record-local loader keys, without aggregate insertion/selection state."""
+
+    sentinel_origin: bool
+    stored_address_key: int
+    exact_hostname_key: int | None
+    record_id: None = None
+
+
+def hostsentry_crc_lower_string_a(raw: bytes) -> int:
+    """Hash first-NUL bytes with ASCII folding, seed FFFFFFFF, no final XOR."""
+    # bytes.lower changes only ASCII A..Z; zlib complements its returned state.
+    return zlib.crc32(raw.split(b"\0", 1)[0].lower()) ^ 0xFFFFFFFF
+
+
+def project_hostsentry_keys(parsed: HostsentryPayload) -> HostsentryKeys:
+    """Project one record's keys without deriving its loader-created RecID."""
+    return HostsentryKeys(
+        parsed.address_null_sentinel,
+        0xFFFFFFFF
+        if parsed.address_null_sentinel
+        else hostsentry_crc_lower_string_a(parsed.address_c_string),
+        None
+        if parsed.wildcard_hostname
+        else hostsentry_crc_lower_string_a(parsed.hostname_c_string),
+    )
+
+
+def evaluate_hostsentry_exact_candidate(
+    parsed: HostsentryPayload, *, query_address: bytes, query_hostname: bytes
+) -> bool | None:
+    """Test one exact entry's key eligibility, not aggregate effective selection.
+
+    Inputs are caller-provided MPEnumHostsEntries callback tokens. This stage
+    does not parse a line, validate an IP address, trim a dot, or perform IP/DNS
+    canonicalization.
+    First-NUL/ASCII folding follows the callback's CRC helper. Wildcard entries
+    return None because their comparator is outside this portable stage.
+    """
+    keys = project_hostsentry_keys(parsed)
+    if keys.exact_hostname_key is None:
+        return None
+    return keys.exact_hostname_key == hostsentry_crc_lower_string_a(
+        query_hostname
+    ) and (
+        keys.stored_address_key == 0xFFFFFFFF
+        or keys.stored_address_key == hostsentry_crc_lower_string_a(query_address)
+    )
 
 
 def _read_string_span(payload: bytes, cursor: int, label: str) -> tuple[bytes, int]:
@@ -147,10 +202,13 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
         "hostsentry",
         "callback_candidate",
         "runtime_consumer",
-        "The runtime callback looks up exact entries by address key and wildcard entries by derived domain key.",
-        "The domain's product meaning, callback result meaning, and final verdict are unknown.",
+        "The runtime callback consumes tokens from the current SCAN_REPLY UFS "
+        "stream, using an exact hostname-CRC multimap or a derived wildcard tree key.",
+        "Aggregate record selection/order, wildcard comparator equivalence, "
+        "callback/report policy and final verdict are not modeled.",
         "consumer",
-        "hosts_callback @ 0x1804E9580",
+        "hosts_callback @ 0x1804E9580; OpenHostsFile @ 0x1805D16C4; "
+        "MPEnumHostsEntries @ 0x1804270AC; exact multimap _Emplace @ 0x18042C808",
     )
     address_length = len(parsed.address_raw)
     hostname_length_offset = 1 + address_length
@@ -159,6 +217,7 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
     address_c_string = parsed.address_c_string
     hostname_c_string = parsed.hostname_c_string
     wildcard = parsed.wildcard_hostname
+    keys = project_hostsentry_keys(parsed)
     hosts_domain = _hosts_domain_suffix(hostname_c_string[2:]) if wildcard else None
     address_key = (
         JSONObject((("kind", "constant"), ("value", 0xFFFFFFFF)))
@@ -167,6 +226,7 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
             (
                 ("kind", "crc_lower_string_a"),
                 ("input_hex", address_c_string.hex()),
+                ("value", keys.stored_address_key),
             )
         )
     )
@@ -177,13 +237,16 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
         ),
         SemanticIssue(
             "final_scan_report_policy_unknown",
-            "The observed path maps callback 0x29 to a nonzero enumerator result "
-            "and then to scanresult 0xFE; the final SCAN_REPLY/report meaning of "
-            "that control-flow value is not established.",
+            "Nonzero enumerator results map to scanresult 0xFE. Callback 0x29 "
+            "enters the enumerator's modification/control-flow branch and does "
+            "not unconditionally produce a nonzero enumerator result; final "
+            "SCAN_REPLY/report meaning remains unknown.",
         ),
         SemanticIssue(
-            "hosts_file_format_and_scope_unknown",
-            "The observed callback path does not establish an operating-system hosts-file format or broader hostname policy.",
+            "os_hosts_equivalence_and_policy_unknown",
+            "The query producer's token grammar and current UFS stream source "
+            "are confirmed. Equivalence to an OS-specific hosts format/path, "
+            "upstream stream selection and broader hostname policy remain unknown.",
         ),
     ]
     if parsed.trailing_raw:
@@ -192,6 +255,14 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
                 "trailing_bytes_meaning_unknown",
                 "Trailing bytes are accepted and included in record identity, but are not parsed as fields.",
                 (("length", len(parsed.trailing_raw)),),
+            )
+        )
+    if wildcard:
+        issues.append(
+            SemanticIssue(
+                "wildcard_candidate_unmodeled",
+                "Wildcard key slices are retained, but the portable candidate "
+                "stage does not model the suffix comparator or aggregate selection.",
             )
         )
     if wildcard and hosts_domain is None:
@@ -237,6 +308,10 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
                 ("kind", "exact_crc_map"),
                 ("map", "HostsDomain"),
                 ("key_operation", "CRCLowerStringA(hostname_c_string)"),
+                ("key_value", keys.exact_hostname_key),
+                ("storage", "multimap; duplicate insertion does not overwrite"),
+                ("secondary_string_check", False),
+                ("aggregate_record_selection", None),
             )
         )
     )
@@ -246,7 +321,7 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
             if parsed.trailing_raw or (wildcard and hosts_domain is None)
             else "confirmed_subset"
         ),
-        representation="hostsentry.map-lookup.ir.v4",
+        representation="hostsentry.map-lookup.ir.v5",
         data=JSONObject(
             (
                 ("type", "HOSTSENTRY"),
@@ -266,6 +341,11 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
                             ("c_string_hex", address_c_string.hex()),
                             ("null_sentinel", parsed.address_null_sentinel),
                             (
+                                "stored_key_matches_any_address",
+                                keys.stored_address_key == 0xFFFFFFFF,
+                            ),
+                            ("runtime_key_preserves_sentinel_origin", False),
+                            (
                                 "domain",
                                 JSONObject(
                                     (
@@ -274,8 +354,14 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
                                             "engine_interpretation",
                                             "case-insensitive NULL sentinel or CRCLowerStringA key",
                                         ),
-                                        ("syntax_validation_observed", False),
-                                        ("semantic_domain", "unknown"),
+                                        ("receiver_syntax_validation_observed", False),
+                                        (
+                                            "semantic_domain",
+                                            (
+                                                "opaque address C-string interpreted as NULL sentinel "
+                                                "or literal CRC key; numeric IP semantics not observed"
+                                            ),
+                                        ),
                                     )
                                 ),
                             ),
@@ -341,6 +427,39 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
                         (
                             ("enumerator", "MPEnumHostsEntries"),
                             ("callback", "hosts_callback"),
+                            (
+                                "query_stage_contract",
+                                JSONObject(
+                                    (
+                                        (
+                                            "source",
+                                            "current SCAN_REPLY UFS stream at reply +0x20C0",
+                                        ),
+                                        ("opens_os_path", False),
+                                        (
+                                            "opens_os_path_scope",
+                                            (
+                                                "OpenHostsFile/MPEnumHostsEntries only; upstream "
+                                                "stream selection is not modeled"
+                                            ),
+                                        ),
+                                        (
+                                            "input",
+                                            "caller-provided callback address/hostname C-string tokens",
+                                        ),
+                                        (
+                                            "address_token_gate",
+                                            "1..39 bytes from .0123456789:ABCDEFabcdef; not an IP grammar",
+                                        ),
+                                        ("portable_stage_parses_lines", False),
+                                        ("portable_stage_trims_trailing_dot", False),
+                                        (
+                                            "portable_stage_result",
+                                            "single exact record key eligibility; wildcard/aggregate selection unknown",
+                                        ),
+                                    )
+                                ),
+                            ),
                             (
                                 "callback_match_outputs",
                                 JSONArray(("matched_byte", "record_id")),
@@ -430,8 +549,88 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
-        claims=(claim,),
-        claim_evidence=(claim_evidence,),
+        claims=(
+            claim,
+            SemanticClaim(
+                "hostsentry.key_projection",
+                "receiver_transform",
+                "For exact entries, the loader hashes first-NUL address/hostname bytes with "
+                "ASCII-only folding and raw reflected CRC seeded FFFFFFFF. "
+                "NULL address instead stores FFFFFFFF; an empty C-string's "
+                "CRC reaches the same key without sentinel origin. Exact "
+                "entries retain keys and RecID, not original strings.",
+                "subset",
+                ("hostsentry.key_projection.static",),
+                (
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The numeric RecID requires loader identity/context. "
+                        "Wildcard comparator behavior and aggregate insertion "
+                        "availability are outside the single-record projection.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                "hostsentry.exact_candidate",
+                "detection_predicate",
+                "For a provided exact entry, equal hostname CRC and either "
+                "stored address key FFFFFFFF or equal address CRC establish "
+                "record-local key eligibility. No secondary string comparison "
+                "rejects CRC collisions; the stored key, not NULL origin, "
+                "controls any-address eligibility.",
+                "subset",
+                (
+                    "hostsentry.exact_candidate.static",
+                    "hostsentry.exact_candidate.native",
+                ),
+                (
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Tokens must already be provided by the callback producer; "
+                        "this stage does not parse lines or validate IP syntax. "
+                        "Multimap ordering, aggregate RecID selection, "
+                        "exact-before-wildcard arbitration and wildcard matching "
+                        "are not modeled; eligibility is not a verdict.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            claim_evidence,
+            SemanticEvidence(
+                "hostsentry.key_projection.static",
+                "receiver",
+                "engine_static",
+                "hosts_push 0x18059E170/0x30E; CRCLowerStringA "
+                "0x180704AB0/0x3C; ASCII LowercaseTable 0x180E8AD20 and "
+                "reflected CRC table 0x180DBC0D0",
+                ("hostsentry.key_projection",),
+            ),
+            SemanticEvidence(
+                "hostsentry.exact_candidate.static",
+                "consumer",
+                "engine_static",
+                "hosts_callback 0x1804E9580/0x34E exact hostname-CRC equal "
+                "range and stored-address key gate; CRCLowerStringA "
+                "0x180704AB0/0x3C; multimap _Emplace 0x18042C808/0xF2",
+                ("hostsentry.exact_candidate",),
+            ),
+            SemanticEvidence(
+                "hostsentry.exact_candidate.native",
+                "engine_equivalent_test",
+                "engine_equivalent_test",
+                "Pinned DLL SHA256 "
+                "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                "local_hostsentry_engine_closure: 12 original CRC function "
+                "cases and 6 original callback cases with synthetic single-node "
+                "exact trees, including hostname collision and empty-address "
+                "FFFFFFFF; stack-cookie utility only substituted. No "
+                "wildcard comparator or aggregate selection execution.",
+                ("hostsentry.exact_candidate",),
+                "CRCLowerStringA code SHA256 "
+                "23078a0c7c5cef670d98fe60e610efac09d14c1fe9fad601ab8b96bd6d057e26",
+            ),
+        ),
     )
 
 
