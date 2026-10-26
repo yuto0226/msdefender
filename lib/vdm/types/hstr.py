@@ -2038,7 +2038,7 @@ def _parser_for(type_byte: int) -> Callable[[bytes], HstrPayload]:
     return parser
 
 
-def _export_arhstr_yara(parsed: HstrPayload) -> ArtifactExport:
+def _export_selected_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
     # Import at call time so the artifact module can reuse this module's
     # classification and BM context without a registry import cycle.
     from ..hstr_yara import export_hstr_yara
@@ -2052,7 +2052,7 @@ HSTR_SPECS = tuple(
         name,
         _parser_for(type_byte),
         render_hstr,
-        exporter=_export_arhstr_yara if type_byte == 0xC5 else None,
+        exporter=_export_selected_hstr_yara if type_byte in (0xC5, 0x8C) else None,
         semantic_exporter=export_hstr_semantics,
     )
     for type_byte, name in _FAMILY_NAMES.items()

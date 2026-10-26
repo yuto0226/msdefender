@@ -1,7 +1,8 @@
-"""Fail-closed YARA score eligibility for one selected ARHSTR_EXT subject."""
+"""Fail-closed YARA score eligibility for one selected HSTR subject."""
 
 import hashlib
 import json
+import re
 
 from .bm import decode_bm_pattern
 from .bm_yara import BmYaraFidelity
@@ -17,12 +18,51 @@ from .types.hstr import (
 )
 
 PROFILE = "hstr.selected-subject-score.v2"
-_TYPE_BYTE = 0xC5
-_READER_KIND = "CSMS_CALLER_BUFFER_OR_RANGES"
+_SUPPORTED_PROFILES = {
+    0xC5: {
+        "type_name": "ARHSTR_EXT",
+        "reader_kinds": ("CSMS_CALLER_BUFFER_OR_RANGES",),
+        "scanner_contract": "CSMS_CALLER_BUFFER_OR_RANGES",
+        "input": "caller-selected single subject buffer",
+    },
+    0x8C: {
+        "type_name": "ELFHSTR_EXT",
+        "reader_kinds": ("ELF_CALLER_RANGE", "ELF_SEGMENT_INTERVAL"),
+        "scanner_contract": "ELF_CALLER_RANGE | ELF_SEGMENT_INTERVAL",
+        "input": "caller-selected single ELF subject span",
+    },
+}
+_LOWERCASE_HEX_TOKEN = re.compile(
+    r"\( [0-9A-F]{2} \| [0-9A-F]{2} \)|\[[0-9]+(?:-[0-9]+)?\]|[0-9A-F]{2}"
+)
 
 
 def _unsupported(reason: str) -> ArtifactExport:
     return ArtifactExport("unsupported", reason=reason)
+
+
+def _lowercase_hex_to_regex(body: str) -> str:
+    """Compact only the EXACT lowercase literal/jump hex grammar into byte regex."""
+    if not body.startswith("{ ") or not body.endswith(" }"):
+        raise ValueError("bm_yara: unrecognized lowercase hex body")
+    inner = body[2:-2]
+    tokens = _LOWERCASE_HEX_TOKEN.findall(inner)
+    if " ".join(tokens) != inner:
+        raise ValueError("bm_yara: unrecognized lowercase hex token")
+    parts = []
+    for token in tokens:
+        if token.startswith("("):
+            upper, lower = (int(value, 16) for value in (token[2:4], token[7:9]))
+            if not (0x41 <= upper <= 0x5A and lower == upper + 0x20):
+                raise ValueError("bm_yara: invalid ASCII lowercase choice")
+            parts.append(f"[{chr(upper)}{chr(lower)}]")
+        elif token.startswith("["):
+            bounds = token[1:-1].split("-")
+            repeat = ",".join(bounds) if len(bounds) == 2 else bounds[0]
+            parts.append(r"[\x00-\xff]{" + repeat + "}")
+        else:
+            parts.append(f"\\x{token}")
+    return "/" + "".join(parts) + "/"
 
 
 def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, dict]:
@@ -56,11 +96,14 @@ def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, di
                 "bm_yara: requires EXACT fidelity with no requirements or diagnostics"
                 + (f" ({details})" if details else "")
             )
-        return (
-            rendered.body,
-            "bm_exact_selected_subject",
-            semantic_json_to_data(runtime_context),
-        )
+        context = semantic_json_to_data(runtime_context)
+        body = rendered.body
+        if context["translation"] == "ascii_lowercase":
+            try:
+                body = _lowercase_hex_to_regex(body)
+            except ValueError:
+                pass  # An unrecognized EXACT body keeps the original BM lowering.
+        return body, "bm_exact_selected_subject", context
 
     if meaning.matching != "BYTE_EXACT":
         raise ValueError("literal_matching: BYTE_EXACT is required")
@@ -72,15 +115,18 @@ def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, di
 
 
 def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
-    """Emit score eligibility for one fresh, static, caller-selected buffer."""
-    if parsed.type_byte != _TYPE_BYTE:
-        return _unsupported(
-            "unsupported_family: only ARHSTR_EXT (0xC5) has this subject profile"
-        )
+    """Emit score eligibility for one fresh, static, caller-selected span."""
+    profile = _SUPPORTED_PROFILES.get(parsed.type_byte)
+    if profile is None:
+        return _unsupported("unsupported_family: no selected-subject profile")
     scanner_context = _hstr_scanner_context(parsed.type_byte)
-    if (
-        scanner_context is None
-        or _READER_KIND not in dict(scanner_context.items)["reader_kinds"].items
+    if scanner_context is None:
+        return _unsupported("unconfirmed_subject_contract")
+    context = dict(scanner_context.items)
+    if not (
+        set(profile["reader_kinds"]).issubset(set(context["reader_kinds"].items))
+        and context["search_mode"] == 1
+        and context["validator_argument"] is None
     ):
         return _unsupported("unconfirmed_subject_contract")
     if parsed.receiver_ignored:
@@ -133,17 +179,17 @@ def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
     if _atom_identifiers(condition) != frozenset(identifiers):
         return _unsupported("score_condition: not all subsignatures are referenced")
     digest = hashlib.sha256(parsed.raw).hexdigest()
-    stem = f"c5-{digest}"
-    rule_name = f"HSTR_C5_{digest}"
+    stem = f"{parsed.type_byte:02x}-{digest}"
+    rule_name = f"HSTR_{parsed.type_byte:02X}_{digest}"
     expression = render_yara(condition)
     rule = (
-        "// Selected-subject score eligibility; scan one fresh caller-selected buffer.\n"
+        "// Selected-subject score eligibility; scan one fresh caller-selected span.\n"
         "// Multiple ranges, reused hit state, and Defender verdict are outside scope.\n"
         f"rule {rule_name} {{\n"
         "    meta:\n"
         f'        profile = "{PROFILE}"\n'
         '        artifact_scope = "selected-subject score eligibility"\n'
-        f'        subject_contract = "{_READER_KIND}: fresh state, exact single buffer"\n'
+        f'        subject_contract = "{profile["scanner_contract"]}: fresh state, exact single span"\n'
         '        cross_boundary_match = "forbidden"\n'
         '        report_mapping = "unknown"\n'
         f'        source_type = "0x{parsed.type_byte:02X}"\n'
@@ -157,7 +203,7 @@ def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
         "artifact_scope": "selected-subject score eligibility",
         "record": {
             "type_byte": parsed.type_byte,
-            "type_name": "ARHSTR_EXT",
+            "type_name": profile["type_name"],
             "payload_raw_hex": parsed.raw.hex(),
             "payload_sha256": digest,
             "header_word0": parsed.header_word0,
@@ -171,8 +217,9 @@ def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
             "subsignatures": matchers,
         },
         "subject_contract": {
-            "scanner_contract": _READER_KIND,
-            "input": "caller-selected single subject buffer",
+            "scanner_contract": profile["scanner_contract"],
+            "reader_kinds": profile["reader_kinds"],
+            "input": profile["input"],
             "requires_caller_selects_exact_same_subject_span": True,
             "requires_fresh_empty_hit_container": True,
             "search_mode": 1,
@@ -185,6 +232,17 @@ def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
             "cross_boundary_match": False,
             "cross_range_aggregation_in_scope": False,
             "whole_file_only_if_selected_span_is_whole_file": True,
+            **(
+                {
+                    "elf_caller_offset": "runtime_unknown",
+                    "span_selection": "runtime_unknown",
+                    "requires_elf_caller_gates": True,
+                    "region_chunk_or_segment_interval": "one actual reader buffer",
+                    "cross_chunk_or_interval_aggregation_in_scope": False,
+                }
+                if parsed.type_byte == 0x8C
+                else {}
+            ),
         },
         "tail_word0_scope": (
             "zero in the observed record; the known candidate ordering branch "
