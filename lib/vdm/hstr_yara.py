@@ -65,6 +65,18 @@ def _lowercase_hex_to_regex(body: str) -> str:
     return "/" + "".join(parts) + "/"
 
 
+def _ascii_fold_literal_regex(data: bytes) -> str:
+    """Match a fixed byte sequence after ASCII A-Z folding on both sides."""
+    parts = []
+    for byte in data:
+        if 0x41 <= byte <= 0x5A or 0x61 <= byte <= 0x7A:
+            upper = byte & ~0x20
+            parts.append(f"[{chr(upper)}{chr(upper + 0x20)}]")
+        else:
+            parts.append(f"\\x{byte:02X}")
+    return "/" + "".join(parts) + "/"
+
+
 def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, dict]:
     """Lower one complete subsignature, or reject the whole record."""
     if not subsig.data:
@@ -76,7 +88,7 @@ def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, di
         raise ValueError("unknown_subsignature_flags")
     if meaning.contextual_bits:
         raise ValueError("contextual_subsignature_flags: validator or context gate")
-    if subsig.flags.value not in (0x0001, 0x0002, 0x0003):
+    if subsig.flags.value not in (0x0000, 0x0001, 0x0002, 0x0003):
         raise ValueError("subsignature_flags: matcher behavior is outside profile")
 
     if subsig.flags.value & 0x0002:
@@ -104,6 +116,15 @@ def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, di
             except ValueError:
                 pass  # An unrecognized EXACT body keeps the original BM lowering.
         return body, "bm_exact_selected_subject", context
+
+    if subsig.flags.value == 0:
+        if meaning.matching != "ASCII_FOLD_AZ":
+            raise ValueError("literal_matching: ASCII_FOLD_AZ is required")
+        return (
+            _ascii_fold_literal_regex(subsig.data),
+            "literal_ascii_fold_selected_subject",
+            {"translation": "ascii_lowercase", "reader_kind": "BUFFER"},
+        )
 
     if meaning.matching != "BYTE_EXACT":
         raise ValueError("literal_matching: BYTE_EXACT is required")
