@@ -83,7 +83,7 @@ def export_friendlyfile_sha256(parsed: FriendlyFileSha256) -> ArtifactExport:
             "trailing_offset": SHA256_SIZE + 1 + len(tail.object_raw),
         }
     manifest = {
-        "format": "vdm.friendly_file_sha256.record.v2",
+        "format": "vdm.friendly_file_sha256.record.v3",
         "record": {
             "type": FRIENDLYFILE_SHA256_TYPE,
             "type_hex": f"0x{FRIENDLYFILE_SHA256_TYPE:02X}",
@@ -100,6 +100,37 @@ def export_friendlyfile_sha256(parsed: FriendlyFileSha256) -> ArtifactExport:
             "raw_offset": 0,
             "raw_length": SHA256_SIZE,
             "comparison": "exact_32_bytes",
+        },
+        "reuse": {
+            "role": "friendly_file_lookup_key",
+            "comparison": "exact_32_bytes",
+            "digest_subject": None,
+            "observed_digest_profile": {
+                "producer": "troj_scan @ 0x180B03685..0x180B036D6",
+                "hash": "SHA-256",
+                "input": "current UFS scan object bytes [0, SCAN_REPLY+0x50)",
+                "normalization": "none_observed_in_analyzed_chain",
+                "length_producer": None,
+                "disk_file_identity": None,
+                "lookup_gate": {
+                    "store_exists": True,
+                    "pool_plus_0x90_nonzero": True,
+                    "lookup_result": 1,
+                    "nid64searchrecid_133_result": "not_1",
+                    "reply_plus_0x2990_mask_0x4000000000000": 0,
+                },
+                "consumer_effect": "sets_friendly_attribute_and_optional_ttl",
+                "final_allow_or_bypass": None,
+            },
+            "final_policy": None,
+            "portable_allowlist": None,
+            "standalone_detection": False,
+            "limitations": [
+                "Final scan verdict is not established by this lookup key.",
+                "A universal file-hash scope is not established across all provider callers.",
+                "Portable allowlist behavior is unknown.",
+                "Standalone detection behavior is not established by this record.",
+            ],
         },
         "recid_tail": tail_json,
     }
@@ -265,6 +296,36 @@ def export_friendlyfile_sha256_semantics(
                 ),
             ),
             ("recid_tail", _recid_tail_semantics(tail)),
+            (
+                "caller_digest_profile",
+                JSONObject(
+                    (
+                        ("algorithm", "sha256"),
+                        ("input", "current_ufs_scan_object"),
+                        ("raw_span", "[0, SCAN_REPLY+0x50)"),
+                        ("normalization", "none_observed_in_analyzed_chain"),
+                        ("length_producer", None),
+                        ("disk_file_identity", None),
+                        (
+                            "lookup_gate",
+                            JSONArray(
+                                (
+                                    "friendly_store_exists",
+                                    "pool+0x90 != 0",
+                                    "friendly_lookup == 1",
+                                    "nid64searchrecid(133, NULL, reply+0x90) != 1",
+                                    "(reply+0x2990 & 0x4000000000000) == 0",
+                                )
+                            ),
+                        ),
+                        (
+                            "matched_effect",
+                            "sets MpMoacFriendlyAdd and optional MpMoacFriendlyAddTTL",
+                        ),
+                        ("final_allow_or_bypass", None),
+                    )
+                ),
+            ),
         )
     )
     return RuleSemantics(
@@ -376,6 +437,39 @@ def export_friendlyfile_sha256_semantics(
                 ),
             ),
             SemanticClaim(
+                id="friendlyfile_sha256_caller_digest_profile",
+                scope="runtime_consumer",
+                statement=(
+                    "In the analyzed troj_scan caller slice, SHA-256 is computed "
+                    "over the current UFS scan object bytes [0, SCAN_REPLY+0x50); "
+                    "no normalization is observed in this chain."
+                ),
+                coverage="subset",
+                evidence_refs=("friendlyfile_sha256_caller",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The length producer and identity with the on-disk file are unresolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="friendlyfile_sha256_caller_match_effect",
+                scope="runtime_consumer",
+                statement=(
+                    "When the friendly lookup and caller gates pass, troj_scan "
+                    "sets the MpMoacFriendlyAdd state attribute."
+                ),
+                coverage="subset",
+                evidence_refs=("friendlyfile_sha256_caller",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Optional TTL behavior and any final allow or bypass effect are unknown.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
                 id="friendlyfile_sha256_final_verdict",
                 scope="final_verdict",
                 statement="An exact friendly-file digest lookup does not establish a final allow or scan verdict.",
@@ -389,6 +483,20 @@ def export_friendlyfile_sha256_semantics(
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                id="friendlyfile_sha256_caller",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "troj_scan @ 0x180B03685..0x180B036D6; "
+                    "IsFriendlyFileEntry @ 0x1802D7AB0"
+                ),
+                supports=(
+                    "friendlyfile_sha256_caller_digest_profile",
+                    "friendlyfile_sha256_caller_match_effect",
+                ),
+            ),
             SemanticEvidence(
                 id="friendlyfile_sha256_dispatch",
                 axis="dispatch",
