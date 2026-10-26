@@ -79,19 +79,19 @@ MAX_YARA_RHS_CHARS = 32 * 1024
 _FIXED_REPEAT_BYTES = {
     0x0D: bytes((0x09, 0x0A, 0x0D, 0x20)),
     0x26: bytes((0x09, 0x0A, 0x0D, 0x20)),
-    0x0F: bytes((*range(0x30, 0x3A), *range(0xF7, 0x100))),
-    0x28: bytes((*range(0x30, 0x3A), *range(0xF7, 0x100))),
+    0x0F: bytes(range(0x30, 0x3A)),
+    0x28: bytes(range(0x30, 0x3A)),
     # 0x11 dispatches to g_ALRange. The worker rejects bitmap bit 1 and
     # consumes bit 0; under identity translation the accepted set is A-Z/a-z.
     0x11: bytes((*range(0x41, 0x5B), *range(0x61, 0x7B))),
-    0x1C: bytes((*range(0x30, 0x3A), *range(0x41, 0x5B), *range(0xF8, 0x100))),
-    0x2E: bytes((*range(0x30, 0x3A), *range(0x41, 0x5B), *range(0xF8, 0x100))),
+    # RANGE_NEGATIVE_REPEAT names the IR operation, not an inverted byte set.
+    0x1C: bytes((*range(0x30, 0x3A), *range(0x41, 0x5B), *range(0x61, 0x7B))),
+    0x2E: bytes((*range(0x30, 0x3A), *range(0x41, 0x5B), *range(0x61, 0x7B))),
     0x1E: bytes(
         (
             *range(0x30, 0x3A),
             *range(0x41, 0x47),
             *range(0x61, 0x67),
-            *range(0xF8, 0x100),
         )
     ),
     0x30: bytes(
@@ -99,7 +99,6 @@ _FIXED_REPEAT_BYTES = {
             *range(0x30, 0x3A),
             *range(0x41, 0x47),
             *range(0x61, 0x67),
-            *range(0xF8, 0x100),
         )
     ),
 }
@@ -258,6 +257,11 @@ def render_bm_yara(
             if count:
                 values = _FIXED_REPEAT_BYTES[operation.token.raw_id]
                 atom = "( " + " | ".join(f"{value:02X}" for value in values) + " )"
+                if operation.token.descriptor_flags & 1:
+                    # The IR count is a byte budget, but the worker consumes
+                    # each alias unit as one class byte followed by mapped zero.
+                    count //= 2
+                    atom += " 00"
                 # Check before multiplication so malformed or extreme counts
                 # cannot allocate an unbounded candidate string.
                 estimated = count * len(atom) + count - 1
