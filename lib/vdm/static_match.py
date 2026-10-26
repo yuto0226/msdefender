@@ -25,6 +25,9 @@ class StaticMatchContext:
     provider_offset: int | None = None
     provider_size: int | None = None
     scan_reply_first_page: bytes | None = None
+    # Caller-supplied aggregate of the applicable engine CheckConfig calls.
+    # True also covers a caller-confirmed case with no applicable CFG gate.
+    configuration_gate: bool | None = None
     threat_exception_name: bool | None = None
     valid_signed: bool | None = None
 
@@ -212,12 +215,23 @@ def _mode_hash(record: StaticPayload, context: StaticMatchContext) -> StaticStag
     if gate != "match":
         reason = "size_mismatch" if gate == "no_match" else "provider_size_unavailable"
         return _stage(3, name, gate, reason)
+    if context.configuration_gate is False:
+        return _stage(3, name, "no_match", "configuration_gate_failed")
     selected = _selected_source(context)
     if selected is None:
         return _stage(3, name, "unknown", "selected_source_unavailable")
     actual = _digest(record, selected[: record.file_size])
     if actual != record.hash_raw:
         return _stage(3, name, "no_match", "hash_mismatch", record.hash_raw, actual)
+    if context.configuration_gate is not True:
+        return _stage(
+            3,
+            name,
+            "unknown",
+            "configuration_gate_context_required",
+            record.hash_raw,
+            actual,
+        )
     if context.provider_size == record.file_size:
         return _stage(
             3, name, "match", "hash_equal_exact_size", record.hash_raw, actual

@@ -267,6 +267,7 @@ def _stage_profile(parsed: StaticPayload) -> JSONObject:
                     "provider_size",
                     "selected_file_bytes",
                     "scan_reply_first_page_buffer_when_offset_zero",
+                    "configuration_gate",
                 )
             ),
         ),
@@ -341,6 +342,20 @@ def _stage_profile(parsed: StaticPayload) -> JSONObject:
                     caller="CompareValues",
                     comparison_supported=mode is not None,
                     size_gate=size_gate,
+                    pre_hash_configuration_gate=obj(
+                        caller="CompareValues",
+                        applicable_name_prefix="CFG:",
+                        name_source="get_threat_name_after_first_character",
+                        exception_name_check="IsExceptionName",
+                        config_calls=obj(
+                            A=1, M=3, P=2, arguments=JSONArray(("SCAN_REPLY", 0))
+                        ),
+                        predicate="all_applicable_CheckConfig_calls_succeed",
+                        runtime_context_required=JSONArray(("configuration_gate",)),
+                        false_result="no_match_before_GetHashes",
+                        unknown_result="no_positive_match",
+                        true_includes="caller_confirmed_no_applicable_gate",
+                    ),
                     source="provider_selected_scan_range",
                     start="provider_offset",
                     byte_count=parsed.file_size,
