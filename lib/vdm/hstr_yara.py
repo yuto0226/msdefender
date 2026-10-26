@@ -35,6 +35,9 @@ _SUPPORTED_PROFILES = {
 _LOWERCASE_HEX_TOKEN = re.compile(
     r"\( [0-9A-F]{2} \| [0-9A-F]{2} \)|\[[0-9]+(?:-[0-9]+)?\]|[0-9A-F]{2}"
 )
+_BYTE_ALTERNATIVE_HEX_TOKEN = re.compile(
+    r"\( [0-9A-F]{2}(?: \| [0-9A-F]{2})+ \)|\[[0-9]+(?:-[0-9]+)?\]|[0-9A-F]{2}"
+)
 
 
 def _unsupported(reason: str) -> ArtifactExport:
@@ -77,6 +80,46 @@ def _ascii_fold_literal_regex(data: bytes) -> str:
     return "/" + "".join(parts) + "/"
 
 
+def _compact_byte_alternatives(body: str) -> str:
+    """Replace single-byte hex ORs with exact byte classes, without RE splits.
+
+    Only literal bytes, finite jumps and flat single-byte alternatives are
+    accepted. Other EXACT BM grammars retain their original lowering.
+    """
+    if not body.startswith("{ ") or not body.endswith(" }"):
+        return body
+    inner = body[2:-2]
+    tokens = _BYTE_ALTERNATIVE_HEX_TOKEN.findall(inner)
+    if " ".join(tokens) != inner or not any(t.startswith("(") for t in tokens):
+        return body
+    parts = []
+    for token in tokens:
+        if token.startswith("("):
+            values = sorted({int(value, 16) for value in token[2:-2].split(" | ")})
+            ranges = []
+            start = end = values[0]
+            for value in values[1:]:
+                if value == end + 1:
+                    end = value
+                else:
+                    ranges.append((start, end))
+                    start = end = value
+            ranges.append((start, end))
+            parts.append(
+                "["
+                + "".join(
+                    f"\\x{start:02X}" + (f"-\\x{end:02X}" if start != end else "")
+                    for start, end in ranges
+                )
+                + "]"
+            )
+        elif token.startswith("["):
+            parts.append(r"[\x00-\xff]{" + token[1:-1].replace("-", ",") + "}")
+        else:
+            parts.append(f"\\x{token}")
+    return "/" + "".join(parts) + "/"
+
+
 def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, dict]:
     """Lower one complete subsignature, or reject the whole record."""
     if not subsig.data:
@@ -115,6 +158,7 @@ def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, di
                 body = _lowercase_hex_to_regex(body)
             except ValueError:
                 pass  # An unrecognized EXACT body keeps the original BM lowering.
+        body = _compact_byte_alternatives(body)
         return body, "bm_exact_selected_subject", context
 
     if subsig.flags.value == 0:
