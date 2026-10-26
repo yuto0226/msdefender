@@ -16,7 +16,7 @@ from .bm import (
     BmScan,
     BmSemanticOperation,
     interpret_bm_pattern,
-    raw_04_byte_set,
+    raw_04_05_byte_set,
 )
 from .core import JSONArray, JSONObject, SemanticIssue
 
@@ -59,7 +59,7 @@ def _pattern_preparation_is_exact(context: BmSemanticContext) -> bool:
     )
 
 
-def _raw_04_context_is_exact(
+def _primary_class_context_is_exact(
     context: BmSemanticContext | None, pattern: BmPattern | None
 ) -> bool:
     return bool(
@@ -130,13 +130,13 @@ def _operation_ir(
         decoded.update(count=operation.count, spec_hex=operation.spec.hex())
         if (
             token is not None
-            and token.raw_id == 0x04
-            and token.dispatch_id == 0x04
+            and token.raw_id in (0x04, 0x05)
+            and token.dispatch_id == token.raw_id
             and token.descriptor_flags == 0x02
-            and _raw_04_context_is_exact(context, pattern)
+            and _primary_class_context_is_exact(context, pattern)
         ):
             assert context is not None
-            accepted = raw_04_byte_set(
+            accepted = raw_04_05_byte_set(
                 operation.spec,
                 pattern_preparation=(
                     "ascii_lowercase"
@@ -145,11 +145,8 @@ def _operation_ir(
                 ),
             )
             decoded["engine_predicate"] = {
-                "kind": "fixed_count_byte_class",
                 "accepted_bytes_hex": accepted.hex(),
-                "count": operation.count,
                 "count_source": "token_byte_2",
-                "cursor_advance_per_match": 1,
                 "subject_translation": context.translation,
                 "pattern_preparation": context.pattern_preparation,
                 "class_spec_normalization": (
@@ -159,11 +156,32 @@ def _operation_ir(
                 ),
                 "worker_modes": list(context.worker_modes),
             }
+            if token.raw_id == 0x04:
+                decoded["engine_predicate"].update(
+                    kind="fixed_count_byte_class",
+                    count=operation.count,
+                    cursor_advance_per_match=1,
+                )
+            else:
+                decoded["engine_predicate"].update(
+                    kind="bounded_byte_class_search",
+                    minimum_units=0,
+                    maximum_units=operation.count,
+                    unit_width=1,
+                    candidate_order="increasing unit boundaries, including endpoint",
+                    continuation="retry the complete remaining pattern at each candidate",
+                    suffix_before_membership=True,
+                    failed_suffix_reader_committed=False,
+                    scope="BUFFER/mode1/capture disabled Boolean acceptance; offsets excluded",
+                    caller_address="0x1800EE352",
+                    helper_address="0x1800F04C0",
+                    engine_evidence="primary raw05 caller and complete original-worker differential",
+                )
         else:
             result["fidelity"] = "conditional"
             result["requirements"] = [
                 "requires BUFFER reader, known translation, worker mode 1, and no raw 90 1B byte sequence in the full pattern",
-                "raw opcode 0x04 only; other class opcodes and aliases remain reader-specific",
+                "primary raw opcodes 0x04/0x05 only; other class opcodes and aliases remain reader-specific",
                 "ASCII-lowercase requires caller-proven pattern_preparation='ascii_lowercase'; BMPatternToLower normalizes literal/spec bytes, not count/framing",
             ]
     elif isinstance(operation, BmExtension):

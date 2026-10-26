@@ -17,7 +17,7 @@ from .bm import (
     BmScan,
     BmSemanticOperation,
     interpret_bm_pattern,
-    raw_04_byte_set,
+    raw_04_05_byte_set,
     render_bm_printable_preview,
 )
 
@@ -253,10 +253,30 @@ _SEARCH_RANGE_BYTES = {
 }
 
 
+def _is_primary_class(operation: BmSemanticOperation, raw_id: int) -> bool:
+    return (
+        isinstance(operation, BmClass)
+        and operation.token.raw_id == operation.token.dispatch_id == raw_id
+        and operation.token.descriptor_flags == 0x02
+    )
+
+
+def _primary_class_subject_bytes(spec: bytes, *, lowercase_map: bool) -> bytes:
+    accepted = raw_04_05_byte_set(
+        spec, pattern_preparation="ascii_lowercase" if lowercase_map else "identity"
+    )
+    return bytes(
+        byte
+        for byte in range(256)
+        if (byte + 0x20 if lowercase_map and 0x41 <= byte <= 0x5A else byte) in accepted
+    )
+
+
 def _simplify_search_operations(
     operations: tuple[BmSemanticOperation, ...],
     *,
-    raw04_pattern_closed: bool = False,
+    class_pattern_closed: bool = False,
+    lowercase_map: bool = False,
 ) -> tuple[BmSemanticOperation, ...]:
     """Boolean-only simplification; the original decoded/semantic IR stays intact."""
     nonempty = []
@@ -275,21 +295,30 @@ def _simplify_search_operations(
                 and operation.value == 0
             )
             or (
-                raw04_pattern_closed
+                class_pattern_closed
                 and isinstance(operation, BmClass)
-                and operation.token.raw_id == operation.token.dispatch_id == 0x04
-                and operation.token.descriptor_flags == 0x02
+                and (
+                    _is_primary_class(operation, 0x04)
+                    or _is_primary_class(operation, 0x05)
+                )
                 and operation.count == 0
+            )
+            or (
+                class_pattern_closed
+                and isinstance(operation, BmClass)
+                and _is_primary_class(operation, 0x05)
+                and not _primary_class_subject_bytes(
+                    operation.spec, lowercase_map=lowercase_map
+                )
             )
         ):
             continue
         nonempty.append(operation)
     # The first candidate of a terminal search has an empty continuation and
     # succeeds at zero units. This removes no required subject consumption.
-    while (
-        nonempty
-        and isinstance(nonempty[-1], BmExtension)
-        and nonempty[-1].name == "RANGE_SEARCH"
+    while nonempty and (
+        (isinstance(nonempty[-1], BmExtension) and nonempty[-1].name == "RANGE_SEARCH")
+        or (class_pattern_closed and _is_primary_class(nonempty[-1], 0x05))
     ):
         nonempty.pop()
     merged: list[BmSemanticOperation] = []
@@ -305,6 +334,18 @@ def _simplify_search_operations(
         ):
             # R{0,N} R{0,M} = R{0,N+M}; only this rendering copy is merged.
             merged[-1] = replace(previous, value=previous.value + operation.value)
+        elif (
+            class_pattern_closed
+            and isinstance(previous, BmClass)
+            and isinstance(operation, BmClass)
+            and _is_primary_class(previous, 0x05)
+            and _is_primary_class(operation, 0x05)
+            and _primary_class_subject_bytes(previous.spec, lowercase_map=lowercase_map)
+            == _primary_class_subject_bytes(operation.spec, lowercase_map=lowercase_map)
+        ):
+            # R{0,N} R{0,M} = R{0,N+M} only for identical prepared subject
+            # preimages. This never combines a fixed-count raw04.
+            merged[-1] = replace(previous, count=previous.count + operation.count)
         else:
             merged.append(operation)
     return tuple(merged)
@@ -321,20 +362,23 @@ def render_bm_yara(
     requirements as gaps. Zero jumps vanish before checking YARA's grammar.
     RANGE_SEARCH composes a bounded byte class with the complete continuation
     in a regex, restricted to BUFFER/mode 1/no captures and backend budgets.
-    Primary raw04 uses the same backend with an exact fixed count and the
-    translation preimage of its prepared spec; aliases remain unsupported.
+    Primary raw04 uses an exact fixed count; primary raw05 searches 0..count
+    over the prepared spec's subject preimage. Aliases remain unsupported.
     """
     operations = interpret_bm_pattern(pattern).operations
     has_range_search = any(
         isinstance(operation, BmExtension) and operation.name == "RANGE_SEARCH"
         for operation in operations
     )
-    has_raw04 = any(
-        isinstance(operation, BmClass) and operation.token.raw_id == 0x04
+    has_class_search = any(
+        _is_primary_class(operation, 0x05) for operation in operations
+    )
+    has_primary_class = any(
+        _is_primary_class(operation, 0x04) or _is_primary_class(operation, 0x05)
         for operation in operations
     )
-    regex_backend = has_range_search or has_raw04
-    raw04_pattern_closed = (
+    regex_backend = has_range_search or has_primary_class
+    class_pattern_closed = (
         pattern.issue is None
         and pattern.ended
         and not pattern.remaining_raw
@@ -343,9 +387,12 @@ def render_bm_yara(
     requirements, context_issues = _context_requirements(
         context, strict_mode=regex_backend
     )
-    if has_range_search:
+    lowercase_map = _uses_ascii_lowercase_profile(context)
+    if has_range_search or has_class_search:
         operations = _simplify_search_operations(
-            operations, raw04_pattern_closed=raw04_pattern_closed
+            operations,
+            class_pattern_closed=class_pattern_closed,
+            lowercase_map=lowercase_map,
         )
     issues = list(context_issues)
     printable_preview = render_bm_printable_preview(pattern)
@@ -356,7 +403,6 @@ def render_bm_yara(
         issues.append(BmRenderIssue("remaining_raw", pattern.consumed))
 
     parts: list[tuple[str, int, bool, int | None]] = []
-    lowercase_map = _uses_ascii_lowercase_profile(context)
     output_limited = False
     has_required_bytes = False
     maximum_match_bytes = 0
@@ -506,43 +552,45 @@ def render_bm_yara(
                 parts.append((alternative, operation.offset, False, None))
         elif (
             isinstance(operation, BmClass)
-            and operation.token.raw_id == 0x04
-            and operation.token.dispatch_id == 0x04
+            and operation.token.raw_id in (0x04, 0x05)
+            and operation.token.dispatch_id == operation.token.raw_id
             and operation.token.descriptor_flags == 0x02
         ):
-            if not raw04_pattern_closed:
+            raw_id = operation.token.raw_id
+            if not class_pattern_closed:
                 issues.append(
                     BmRenderIssue(
-                        "unsupported.raw04_pattern_context", operation.offset, 0x04
+                        f"unsupported.raw{raw_id:02x}_pattern_context",
+                        operation.offset,
+                        raw_id,
                     )
                 )
             elif operation.count:
-                # flags=0x02 is not a two-byte alias: count is the wire u8.
-                accepted = raw_04_byte_set(
-                    operation.spec,
-                    pattern_preparation="ascii_lowercase"
-                    if lowercase_map
-                    else "identity",
+                # flags=0x02 does not double the wire u8 count. Search counts
+                # may have been added only in the Boolean rendering copy.
+                values = _primary_class_subject_bytes(
+                    operation.spec, lowercase_map=lowercase_map
                 )
-                values = bytes(
-                    byte
-                    for byte in range(256)
-                    if (byte + 0x20 if lowercase_map and 0x41 <= byte <= 0x5A else byte)
-                    in accepted
-                )
-                # A positive count over an empty set is never satisfiable;
-                # a zero count above is epsilon even when the spec is empty.
+                # raw04 with a positive count and empty set is never true;
+                # raw05 still has its zero-unit continuation candidate.
+                if raw_id == 0x05 and not values:
+                    continue  # Only k=0 can match, so keep the complete suffix.
                 atom = _regex_byte_class(values) if values else r"[^\x00-\xFF]"
                 parts.append(
                     (
-                        _regex_repeat(atom, operation.count, bounded=False),
+                        _regex_repeat(atom, operation.count, bounded=raw_id == 0x05),
                         operation.offset,
                         False,
-                        0x04,
+                        raw_id,
                     )
                 )
-                has_required_bytes = True
+                has_required_bytes |= raw_id == 0x04
                 maximum_match_bytes += operation.count
+                if raw_id == 0x05:
+                    regex_splits += 1
+                    regex_paths = min(
+                        MAX_YARA_REGEX_PATHS + 1, regex_paths * (operation.count + 1)
+                    )
         elif (
             isinstance(operation, BmExtension)
             and operation.name == "RANGE_SEARCH"

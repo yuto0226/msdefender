@@ -154,10 +154,10 @@ class BmClass(BmOperation):
     spec: bytes
 
 
-def raw_04_byte_set(
+def raw_04_05_byte_set(
     spec: bytes, *, pattern_preparation: Literal["identity", "ascii_lowercase"]
 ) -> bytes:
-    """Parse primary raw04's wire spec after its proven ingestion preparation.
+    """Parse primary raw04/raw05 wire specs after proven ingestion preparation.
 
     This returns accepted mapped bytes, not the subject translation preimage.
     Only spec bytes are normalized; count, spec_len and framing stay intact.
@@ -165,7 +165,7 @@ def raw_04_byte_set(
     if pattern_preparation == "ascii_lowercase":
         spec = bytes(byte + 0x20 if 0x41 <= byte <= 0x5A else byte for byte in spec)
     elif pattern_preparation != "identity":
-        raise ValueError("unsupported raw04 pattern preparation")
+        raise ValueError("unsupported primary class pattern preparation")
     accepted = bytearray(256)
     cursor = 0
     while cursor < len(spec):
