@@ -970,6 +970,12 @@ def _hstr_bm_runtime_context(
         (
             ("reader_kind", "BUFFER"),
             ("translation", "identity" if identity else "ascii_lowercase"),
+            ("pattern_input", "HSTR wire BM bytes before ingestion preparation"),
+            ("pattern_preparation", "identity" if identity else "ascii_lowercase"),
+            (
+                "pattern_preparation_source",
+                "identity" if identity else "BMPatternToLower @ 0x1800FECFC",
+            ),
             ("worker_mode", worker_mode),
             ("offsets_argument_present", False),
             ("capture_marker_bytes_present", capture_marker_bytes_present),
@@ -982,6 +988,7 @@ def _hstr_bm_runtime_context(
             translation=translation if identity else "ascii_lowercase",
             worker_mode=worker_mode,
             capture_enabled=False,
+            pattern_preparation="identity" if identity else "ascii_lowercase",
         )
     complete_single_segment = (
         pattern.issue is None and pattern.ended and not pattern.remaining_raw
@@ -997,6 +1004,7 @@ def _hstr_bm_runtime_context(
             and not capture_marker_bytes_present
             else None
         ),
+        pattern_preparation="identity" if identity else "ascii_lowercase",
     )
     return display, match_context, semantic_context
 

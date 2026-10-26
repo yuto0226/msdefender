@@ -45,10 +45,21 @@ class BmSemanticContext:
     translation: Literal["identity", "ascii_lowercase"] | None = None
     worker_modes: tuple[int, ...] | None = None
     capture_enabled: bool | None = None
+    pattern_preparation: Literal["identity", "ascii_lowercase"] | None = None
+
+
+def _pattern_preparation_is_exact(context: BmSemanticContext) -> bool:
+    return (
+        context.translation == "identity"
+        and context.pattern_preparation in (None, "identity")
+    ) or (
+        context.translation == "ascii_lowercase"
+        and context.pattern_preparation == "ascii_lowercase"
+    )
 
 
 def _raw_04_byte_set(spec: bytes, *, lowercase_pattern: bool) -> bytes:
-    """Rebuild raw 0x04's accepted bitmap from its runtime class spec."""
+    """Derive a bitmap from the wire spec plus caller-proven ingestion prep."""
     if lowercase_pattern:
         spec = bytes(byte + 0x20 if 0x41 <= byte <= 0x5A else byte for byte in spec)
     accepted = bytearray(256)
@@ -77,6 +88,7 @@ def _raw_04_context_is_exact(
         and b"\x90\x1b" not in pattern.raw
         and context.reader_kind == "BUFFER"
         and context.translation in ("identity", "ascii_lowercase")
+        and _pattern_preparation_is_exact(context)
         and context.worker_modes == (1,)
         and context.capture_enabled is False
     )
@@ -152,6 +164,7 @@ def _operation_ir(
                 "count_source": "token_byte_2",
                 "cursor_advance_per_match": 1,
                 "subject_translation": context.translation,
+                "pattern_preparation": context.pattern_preparation,
                 "class_spec_normalization": (
                     "BMPatternToLower_ascii_AZ"
                     if context.translation == "ascii_lowercase"
@@ -164,6 +177,7 @@ def _operation_ir(
             result["requirements"] = [
                 "requires BUFFER reader, known translation, worker mode 1, and no raw 90 1B byte sequence in the full pattern",
                 "raw opcode 0x04 only; other class opcodes and aliases remain reader-specific",
+                "ASCII-lowercase requires caller-proven pattern_preparation='ascii_lowercase'; BMPatternToLower normalizes literal/spec bytes, not count/framing",
             ]
     elif isinstance(operation, BmExtension):
         if operation.name == "RANGE_SEARCH":
@@ -181,6 +195,7 @@ def _operation_ir(
                 context is not None
                 and context.reader_kind == "BUFFER"
                 and context.translation in ("identity", "ascii_lowercase")
+                and _pattern_preparation_is_exact(context)
                 and context.worker_modes == (1,)
                 and context.capture_enabled is False
             )
@@ -193,6 +208,9 @@ def _operation_ir(
                 "suffix_before_membership": True,
                 "failed_suffix_reader_committed": False,
                 "scope": "Boolean acceptance; offsets and capture effects excluded",
+                "pattern_preparation": (
+                    context.pattern_preparation if context is not None else None
+                ),
             }
             result["fidelity"] = "exact" if exact_context else "conditional"
             result["requirements"] = (
@@ -200,7 +218,7 @@ def _operation_ir(
                 if exact_context
                 else [
                     "BUFFER reader, identity or ASCII-lowercase translation, worker mode exactly 1, capture disabled",
-                    "ASCII-lowercase requires the complete pattern to be normalized",
+                    "ASCII-lowercase requires caller-proven pattern_preparation='ascii_lowercase'; BMPatternToLower normalizes literal/spec bytes, not count/framing",
                 ]
             )
         elif operation.name == "BACKREF_COMPARE":
@@ -365,6 +383,9 @@ def serialize_bm_pattern(
     data = _object(
         {
             "profile": pattern.profile,
+            "pattern_preparation": (
+                context.pattern_preparation if context is not None else None
+            ),
             "raw_hex": pattern.raw.hex(),
             "consumed": pattern.consumed,
             "ended": pattern.ended,

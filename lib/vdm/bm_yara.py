@@ -40,13 +40,15 @@ class BmMatchContext:
 
     Translation is either a complete 256-byte map or one explicitly modeled
     map. HSTR BYTE_EXACT is a wire flag, not evidence for worker_mode. Invalid
-    or incompatible facts fail closed.
+    or incompatible facts fail closed. Pattern preparation is a separate
+    caller-proven ingestion step, not an operation performed by the worker.
     """
 
     reader_kind: Literal["BUFFER", "FILE"] | None = None
     translation: bytes | Literal["ascii_lowercase"] | None = None
     worker_mode: int | None = None
     capture_enabled: bool | None = None
+    pattern_preparation: Literal["identity", "ascii_lowercase"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +115,16 @@ _FIXED_REPEAT_BYTES = {
 }
 
 
+def _uses_ascii_lowercase_profile(context: BmMatchContext | None) -> bool:
+    return context is not None and (
+        context.translation == "ascii_lowercase"
+        or (
+            context.translation is None
+            and context.pattern_preparation == "ascii_lowercase"
+        )
+    )
+
+
 def _context_requirements(
     context: BmMatchContext | None,
     *,
@@ -123,6 +135,12 @@ def _context_requirements(
         if range_search
         else _REQUIREMENTS
     )
+    if _uses_ascii_lowercase_profile(context):
+        requirements = (
+            requirements[0],
+            "ASCII-lowercase subject translation",
+            *requirements[2:],
+        )
     if context is None:
         return requirements, ()
     missing = []
@@ -156,6 +174,17 @@ def _context_requirements(
             missing.append(requirement)
         elif not compatible:
             issues.append(BmRenderIssue(f"incompatible_context.{name}", 0))
+    if _uses_ascii_lowercase_profile(context):
+        if context.pattern_preparation is None:
+            missing.append(
+                "pattern_preparation='ascii_lowercase': BMPatternToLower normalizes literal/spec bytes, not count/framing"
+            )
+        elif context.pattern_preparation != "ascii_lowercase":
+            # This lowering models prepared patterns; this is not a claim that
+            # the worker rejects an unprepared pattern in every subject.
+            issues.append(BmRenderIssue("unsupported.pattern_preparation", 0))
+    elif context.pattern_preparation not in (None, "identity"):
+        issues.append(BmRenderIssue("unsupported.pattern_preparation", 0))
     return tuple(missing), tuple(issues)
 
 
@@ -302,7 +331,7 @@ def render_bm_yara(
         issues.append(BmRenderIssue("remaining_raw", pattern.consumed))
 
     parts: list[tuple[str, int, bool, int | None]] = []
-    lowercase_map = context is not None and context.translation == "ascii_lowercase"
+    lowercase_map = _uses_ascii_lowercase_profile(context)
     output_limited = False
     has_required_bytes = False
     maximum_match_bytes = 0
