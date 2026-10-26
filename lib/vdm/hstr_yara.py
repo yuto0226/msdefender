@@ -5,7 +5,11 @@ import json
 import re
 
 from .bm import decode_bm_pattern
-from .bm_yara import BmYaraFidelity
+from .bm_yara import (
+    MAX_YARA_REGEX_MATCH_BYTES,
+    MAX_YARA_REGEX_RHS_CHARS,
+    BmYaraFidelity,
+)
 from .condition import _atom_identifiers, render_yara
 from .core import Artifact, ArtifactExport, semantic_json_to_data
 from .types.hstr import (
@@ -51,6 +55,86 @@ def _unsupported(reason: str) -> ArtifactExport:
     return ArtifactExport("unsupported", reason=reason)
 
 
+class _BmRegexBackendLimit(ValueError):
+    """A recognized lowering exceeds a YARA backend limit, not its grammar."""
+
+
+def _check_regex_segment(maximum_bytes: int) -> None:
+    if maximum_bytes > MAX_YARA_REGEX_MATCH_BYTES:
+        raise _BmRegexBackendLimit("bm_yara: regex_span_limit")
+
+
+def _regex_rhs(parts: list[str], *, dotall: bool = False) -> str:
+    content = "".join(parts)
+    if len(content) + 2 > MAX_YARA_REGEX_RHS_CHARS:
+        raise _BmRegexBackendLimit("bm_yara: regex_lexer_limit")
+    return "/" + content + ("/s" if dotall else "/")
+
+
+def _flat_hex_tokens_to_regex(
+    tokens: list[str], *, lowercase_pairs: bool = False
+) -> str:
+    """Lower the flat byte/class/jump grammar with YARA verification budgets.
+
+    Lazy dot ranges become RE_NODE_RANGE_ANY. libyara splits a root concat at
+    such a node only when both neighbors exist and either bound exceeds 200
+    (re.c:yr_re_ast_split_at_chaining_point). A class covering all bytes does
+    not receive this treatment. Track each resulting verification segment.
+    """
+    parts = []
+    maximum_bytes = 0
+    segment_start = 0
+    dotall = False
+    for index, token in enumerate(tokens):
+        if token.startswith("["):
+            bounds = [int(value) for value in token[1:-1].split("-")]
+            maximum = bounds[-1]
+            if maximum > 32767:
+                raise _BmRegexBackendLimit("bm_yara: regex_interval_limit")
+            if maximum > 200 and index > segment_start and index + 1 < len(tokens):
+                _check_regex_segment(maximum_bytes)
+                maximum_bytes = 0
+                segment_start = index + 1
+            else:
+                maximum_bytes += maximum
+            parts.append(".{" + ",".join(map(str, bounds)) + "}?")
+            dotall = True
+        elif token.startswith("("):
+            values = sorted({int(value, 16) for value in token[2:-2].split(" | ")})
+            if lowercase_pairs:
+                if not (
+                    len(values) == 2
+                    and 0x41 <= values[0] <= 0x5A
+                    and values[1] == values[0] + 0x20
+                ):
+                    raise ValueError("bm_yara: invalid ASCII lowercase choice")
+                parts.append(f"[{chr(values[0])}{chr(values[1])}]")
+            else:
+                ranges = []
+                start = end = values[0]
+                for value in values[1:]:
+                    if value == end + 1:
+                        end = value
+                    else:
+                        ranges.append((start, end))
+                        start = end = value
+                ranges.append((start, end))
+                parts.append(
+                    "["
+                    + "".join(
+                        f"\\x{start:02X}" + (f"-\\x{end:02X}" if start != end else "")
+                        for start, end in ranges
+                    )
+                    + "]"
+                )
+            maximum_bytes += 1
+        else:
+            parts.append(f"\\x{token}")
+            maximum_bytes += 1
+    _check_regex_segment(maximum_bytes)
+    return _regex_rhs(parts, dotall=dotall)
+
+
 def _lowercase_hex_to_regex(body: str) -> str:
     """Compact only the EXACT lowercase literal/jump hex grammar into byte regex."""
     if not body.startswith("{ ") or not body.endswith(" }"):
@@ -59,24 +143,12 @@ def _lowercase_hex_to_regex(body: str) -> str:
     tokens = _LOWERCASE_HEX_TOKEN.findall(inner)
     if " ".join(tokens) != inner:
         raise ValueError("bm_yara: unrecognized lowercase hex token")
-    parts = []
-    for token in tokens:
-        if token.startswith("("):
-            upper, lower = (int(value, 16) for value in (token[2:4], token[7:9]))
-            if not (0x41 <= upper <= 0x5A and lower == upper + 0x20):
-                raise ValueError("bm_yara: invalid ASCII lowercase choice")
-            parts.append(f"[{chr(upper)}{chr(lower)}]")
-        elif token.startswith("["):
-            bounds = token[1:-1].split("-")
-            repeat = ",".join(bounds) if len(bounds) == 2 else bounds[0]
-            parts.append(r"[\x00-\xff]{" + repeat + "}")
-        else:
-            parts.append(f"\\x{token}")
-    return "/" + "".join(parts) + "/"
+    return _flat_hex_tokens_to_regex(tokens, lowercase_pairs=True)
 
 
 def _ascii_fold_literal_regex(data: bytes) -> str:
     """Match a fixed byte sequence after ASCII A-Z folding on both sides."""
+    _check_regex_segment(len(data))
     parts = []
     for byte in data:
         if 0x41 <= byte <= 0x5A or 0x61 <= byte <= 0x7A:
@@ -84,7 +156,7 @@ def _ascii_fold_literal_regex(data: bytes) -> str:
             parts.append(f"[{chr(upper)}{chr(upper + 0x20)}]")
         else:
             parts.append(f"\\x{byte:02X}")
-    return "/" + "".join(parts) + "/"
+    return _regex_rhs(parts)
 
 
 def _compact_byte_alternatives(body: str) -> str:
@@ -99,32 +171,7 @@ def _compact_byte_alternatives(body: str) -> str:
     tokens = _BYTE_ALTERNATIVE_HEX_TOKEN.findall(inner)
     if " ".join(tokens) != inner or not any(t.startswith("(") for t in tokens):
         return body
-    parts = []
-    for token in tokens:
-        if token.startswith("("):
-            values = sorted({int(value, 16) for value in token[2:-2].split(" | ")})
-            ranges = []
-            start = end = values[0]
-            for value in values[1:]:
-                if value == end + 1:
-                    end = value
-                else:
-                    ranges.append((start, end))
-                    start = end = value
-            ranges.append((start, end))
-            parts.append(
-                "["
-                + "".join(
-                    f"\\x{start:02X}" + (f"-\\x{end:02X}" if start != end else "")
-                    for start, end in ranges
-                )
-                + "]"
-            )
-        elif token.startswith("["):
-            parts.append(r"[\x00-\xff]{" + token[1:-1].replace("-", ",") + "}")
-        else:
-            parts.append(f"\\x{token}")
-    return "/" + "".join(parts) + "/"
+    return _flat_hex_tokens_to_regex(tokens)
 
 
 def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, dict]:
@@ -163,9 +210,16 @@ def _matcher_rhs(subsig: HstrSubsignature, type_byte: int) -> tuple[str, str, di
         if context["translation"] == "ascii_lowercase":
             try:
                 body = _lowercase_hex_to_regex(body)
+            except _BmRegexBackendLimit:
+                raise
             except ValueError:
                 pass  # An unrecognized EXACT body keeps the original BM lowering.
         body = _compact_byte_alternatives(body)
+        # Generated hex literals spell byte 0x7C as "7C"; every remaining
+        # vertical bar is an ALT split. Preserve unfamiliar hex grammars only
+        # within libyara's known split-ID limit.
+        if body.startswith("{ ") and body.count("|") > 128:
+            raise _BmRegexBackendLimit("bm_yara: regex_complexity_limit")
         return body, "bm_exact_selected_subject", context
 
     if subsig.flags.value == 0:
