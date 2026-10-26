@@ -1,9 +1,13 @@
 """Lossless receiver-framing view for VFILE (0x83) and VFILEEX (0xB2)."""
 
+import json
 from dataclasses import dataclass
 from typing import Final
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
+    ArtifactWarning,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -27,6 +31,8 @@ _MAX_ENTRY_COUNT: Final = 0x6EB3E4
 _PATH_PREVIEW_CHARS: Final = 80
 _RAW_PREVIEW_BYTES: Final = 24
 _TAIL_PREVIEW_BYTES: Final = 16
+_INITIAL_DATA_ARTIFACT: Final = "initial_data.bin"
+_INPUT_METADATA_ARTIFACT: Final = "virtual_file_input.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +67,36 @@ class VFilePayload:
         """Decode effective runtime name content, including any lone surrogate."""
         raw = self.runtime_path_raw
         return None if raw is None else raw.decode("utf-16le", errors="surrogatepass")
+
+
+@dataclass(frozen=True, slots=True)
+class _EntryNameProjection:
+    wire_field: bytes
+    wire_content: bytes
+    wire_terminator_offset: int | None
+    runtime_content: bytes
+    portable_text: str | None
+
+
+def _project_entry_name(entry: bytes) -> _EntryNameProjection:
+    field = entry[_ENTRY_PREFIX_SIZE : _ENTRY_PREFIX_SIZE + _ENTRY_PATH_FIELD_SIZE]
+    terminator_at = next(
+        (
+            offset
+            for offset in range(0, _ENTRY_PATH_FIELD_SIZE, 2)
+            if field[offset : offset + 2] == b"\0\0"
+        ),
+        None,
+    )
+    wire_content = field if terminator_at is None else field[:terminator_at]
+    runtime_content = wire_content[:_RUNTIME_PATH_CONTENT_SIZE]
+    try:
+        portable_text = runtime_content.decode("utf-16le")
+    except UnicodeDecodeError:
+        portable_text = None
+    return _EntryNameProjection(
+        field, wire_content, terminator_at, runtime_content, portable_text
+    )
 
 
 def _parse(payload: bytes, signature_type: int) -> VFilePayload:
@@ -103,25 +139,9 @@ def _parse(payload: bytes, signature_type: int) -> VFilePayload:
     else:
         entry_prefix_raw = first_entry[:_ENTRY_PREFIX_SIZE]
         path_offset = prefix_size + _ENTRY_PREFIX_SIZE
-        terminator_at = next(
-            (
-                offset
-                for offset in range(0, _ENTRY_PATH_FIELD_SIZE, 2)
-                if first_entry[
-                    _ENTRY_PREFIX_SIZE + offset : _ENTRY_PREFIX_SIZE + offset + 2
-                ]
-                == b"\0\0"
-            ),
-            None,
-        )
-        path_terminated = terminator_at is not None
-        path_raw = (
-            first_entry[_ENTRY_PREFIX_SIZE : _ENTRY_PREFIX_SIZE + terminator_at]
-            if path_terminated
-            else first_entry[
-                _ENTRY_PREFIX_SIZE : _ENTRY_PREFIX_SIZE + _ENTRY_PATH_FIELD_SIZE
-            ]
-        )
+        name = _project_entry_name(first_entry)
+        path_terminated = name.wire_terminator_offset is not None
+        path_raw = name.wire_content
         path_terminator = b"\0\0" if path_terminated else b""
     tail_raw = payload[tail_offset:]
 
@@ -233,25 +253,13 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
     for index in range(parsed.entry_count):
         entry_offset = prefix_size + index * _ENTRY_STRIDE
         entry = parsed.entries_raw[index * _ENTRY_STRIDE : (index + 1) * _ENTRY_STRIDE]
-        path_field = entry[
-            _ENTRY_PREFIX_SIZE : _ENTRY_PREFIX_SIZE + _ENTRY_PATH_FIELD_SIZE
-        ]
-        terminator_at = next(
-            (
-                offset
-                for offset in range(0, _ENTRY_PATH_FIELD_SIZE, 2)
-                if path_field[offset : offset + 2] == b"\0\0"
-            ),
-            None,
-        )
-        path_candidate = (
-            path_field if terminator_at is None else path_field[:terminator_at]
-        )
-        runtime_content = path_candidate[:_RUNTIME_PATH_CONTENT_SIZE]
-        try:
-            runtime_text = runtime_content.decode("utf-16le")
-        except UnicodeDecodeError:
-            runtime_text = None
+        name = _project_entry_name(entry)
+        path_field = name.wire_field
+        terminator_at = name.wire_terminator_offset
+        path_candidate = name.wire_content
+        runtime_content = name.runtime_content
+        runtime_text = name.portable_text
+        if runtime_text is None:
             text_issues.append(
                 SemanticIssue(
                     "runtime_path_utf16_not_well_formed",
@@ -700,11 +708,108 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
     )
 
 
+def export_vfile_artifacts(parsed: VFilePayload) -> ArtifactExport:
+    """Export initial shared input and conditional names, never host-path files."""
+    if len(parsed.raw) > 0xFFFFFFFF:
+        return ArtifactExport(
+            "unsupported",
+            reason="VFILE initial-data export requires a u32-bounded source VDM payload",
+        )
+
+    prefix_size = 4 if parsed.signature_type == VFILEEX_TYPE else 0
+    candidates: list[dict[str, object]] = []
+    warnings = [
+        ArtifactWarning(
+            "virtual_file_input_scope",
+            "Initial emulation input only. Name candidates are conditional on "
+            "new retention; global name priority, cross-record storage identity, later writes, "
+            "OS-file equivalence and detection policy are not modeled.",
+        )
+    ]
+    for index in range(parsed.entry_count):
+        entry = parsed.entries_raw[index * _ENTRY_STRIDE : (index + 1) * _ENTRY_STRIDE]
+        name = _project_entry_name(entry)
+        candidates.append(
+            {
+                "entry_index": index,
+                "entry_raw_offset": prefix_size + index * _ENTRY_STRIDE,
+                "runtime_name_utf16le_hex": name.runtime_content.hex(),
+                "portable_text": name.portable_text,
+                "runtime_utf16_well_formed": name.portable_text is not None,
+                "data_artifact_if_newly_retained": _INITIAL_DATA_ARTIFACT,
+            }
+        )
+        if name.portable_text is None:
+            warnings.append(
+                ArtifactWarning(
+                    "runtime_path_utf16_not_well_formed",
+                    "Raw runtime name units are retained in metadata, but no "
+                    "Unicode text projection is emitted; this is not engine rejection.",
+                    (("entry_index", index),),
+                )
+            )
+    if not candidates:
+        warnings.append(
+            ArtifactWarning(
+                "virtual_file_data_unassigned",
+                "The record has no name candidates; exported bytes are unassigned "
+                "data, not evidence that a runtime file was retained.",
+            )
+        )
+
+    metadata = {
+        "schema": "vfile.initial_shared_input.v1",
+        "role": "emulation_input_not_detector",
+        "source_type": parsed.signature_type,
+        "source_type_name": "VFILEEX"
+        if parsed.signature_type == VFILEEX_TYPE
+        else "VFILE",
+        "engine_profile": "mpengine-1.443.903.0",
+        "source_payload_length": len(parsed.raw),
+        "source_entry_count": parsed.entry_count,
+        "profile_requirement": (
+            "u32-bounded source VDM payload and successful fresh offline "
+            "load with non-null kstoreex(flags=4) result"
+        ),
+        "initial_data": {
+            "artifact": _INITIAL_DATA_ARTIFACT,
+            "length": len(parsed.tail_raw),
+            "record_relative_offset": prefix_size + len(parsed.entries_raw),
+            "role": "initial_shared_virtual_file_data",
+            "sharing": "one blob for all conditionally newly retained candidates",
+        },
+        "data_assignment": (
+            "conditional_newly_retained_candidates" if candidates else "unassigned_data"
+        ),
+        "wire_name_candidates": candidates,
+        "unknowns": [
+            "global name retention and prior-entry priority",
+            "cross-record storage identity and deduplication",
+            "later writes, cached/global load lifecycle and OS-file equivalence",
+            "scan-time matcher, report policy and final verdict",
+        ],
+    }
+    encoded = (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode(
+        "utf-8"
+    )
+    return ArtifactExport(
+        "ready",
+        artifacts=(
+            Artifact(
+                _INITIAL_DATA_ARTIFACT, "emulation_input_not_detector", parsed.tail_raw
+            ),
+            Artifact(_INPUT_METADATA_ARTIFACT, "virtual_file_input_manifest", encoded),
+        ),
+        warnings=tuple(warnings),
+    )
+
+
 VFILE_SPEC = FamilySpec(
     VFILE_TYPE,
     "VFILE",
     parse_vfile,
     render_vfile,
+    exporter=export_vfile_artifacts,
     semantic_exporter=export_vfile_semantics,
 )
 VFILEEX_SPEC = FamilySpec(
@@ -712,6 +817,7 @@ VFILEEX_SPEC = FamilySpec(
     "VFILEEX",
     parse_vfileex,
     render_vfile,
+    exporter=export_vfile_artifacts,
     semantic_exporter=export_vfile_semantics,
 )
 
@@ -721,6 +827,7 @@ __all__ = [
     "VFILE_SPEC",
     "VFILE_TYPE",
     "VFilePayload",
+    "export_vfile_artifacts",
     "export_vfile_semantics",
     "parse_vfile",
     "parse_vfileex",
