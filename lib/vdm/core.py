@@ -404,6 +404,12 @@ def _to_semantic_json_value(value: SemanticJSONValue) -> object:
     return value
 
 
+def semantic_json_to_data(value: SemanticJSONValue) -> object:
+    """Convert validated immutable semantic JSON data to plain JSON data."""
+    _validate_semantic_json_value(value)
+    return _to_semantic_json_value(value)
+
+
 def _validate_json_value(value: JSONValue) -> None:
     if value is None or isinstance(value, (bool, int, str)):
         return
