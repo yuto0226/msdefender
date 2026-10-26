@@ -17,7 +17,9 @@ from ..core import (
     SemanticClaim,
     SemanticEvidence,
     SemanticIssue,
+    SemanticJSONValue,
     SemanticUnknown,
+    semantic_json_to_data,
 )
 from ..recid import RecIdTail, parse_recid_tail
 
@@ -210,6 +212,176 @@ def render_static(parsed: StaticPayload) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
+def _stage_profile(parsed: StaticPayload) -> JSONObject:
+    """Describe the record-local STATIC stages without evaluating runtime inputs."""
+
+    def obj(**values: SemanticJSONValue) -> JSONObject:
+        return JSONObject(tuple(values.items()))
+
+    def expr(operation: str, *operands: SemanticJSONValue) -> JSONObject:
+        return obj(operation=operation, operands=JSONArray(operands))
+
+    mode = parsed.mode
+    hash_algorithm = (
+        {
+            StaticHashMode.MD5: "MD5",
+            StaticHashMode.SHA1: "SHA1",
+            StaticHashMode.CRC_0: "CRC_0",
+            StaticHashMode.SHA1_PREFIX4: "SHA1",
+            StaticHashMode.SHA256: "SHA256",
+        }[mode]
+        if mode is not None
+        else None
+    )
+    compared_bytes = len(parsed.hash_raw) if mode is not None else None
+    size_gate = obj(
+        minimum=expr("greater_or_equal", "provider_size", "record_file_size"),
+        exact_when_allow_larger_false=expr(
+            "equal", "provider_size", "record_file_size"
+        ),
+        allow_larger=parsed.allow_larger,
+    )
+    return obj(
+        format="static.stage_profile.v1",
+        engine_profile="mpengine-1.443.903.0",
+        comparison_supported=mode is not None,
+        pipeline_result="requires_runtime_context"
+        if mode is not None
+        else "rejected_mode",
+        mode=parsed.mode_value,
+        mode_corpus_status=(
+            "unobserved"
+            if mode in {StaticHashMode.SHA1_PREFIX4, StaticHashMode.SHA256}
+            else "unsupported"
+            if mode is None
+            else "observed"
+        ),
+        input=obj(
+            source="provider_selected_scan_range",
+            offset_source="runtime_provider_unknown_from_record",
+            provider_size_source="runtime_provider_unknown_from_record",
+            record_file_size=parsed.file_size,
+            runtime_context_required=JSONArray(
+                (
+                    "provider_offset",
+                    "provider_size",
+                    "selected_file_bytes",
+                    "scan_reply_first_page_buffer_when_offset_zero",
+                )
+            ),
+        ),
+        crc=obj(**CRC_PARAMETERS),
+        stages=JSONArray(
+            (
+                obj(
+                    index=0,
+                    name="first_page_crc_candidate_key",
+                    caller="store_lookup_provider_operator",
+                    expected_crc=parsed.first_page_crc,
+                    offset_zero=obj(
+                        source="SCAN_REPLY+0xC0",
+                        byte_count=4096,
+                        source_file_equivalence="unknown",
+                        zero_padding="not_established",
+                    ),
+                    nonzero_offset=obj(
+                        source="provider_selected_scan_range",
+                        start="provider_offset",
+                        byte_count=expr("min", "provider_size", 4096),
+                        zero_padding=obj(side="append", total_byte_count=4096),
+                    ),
+                ),
+                obj(
+                    index=1,
+                    name="prefix_crc",
+                    caller="CompareValues",
+                    size_gate=size_gate,
+                    source="provider_selected_scan_range",
+                    start="provider_offset",
+                    byte_count=expr("min", "record_file_size", 65536),
+                    zero_padding=None,
+                    expected_crc=parsed.prefix_crc,
+                ),
+                obj(
+                    index=2,
+                    name="tail_page_crc",
+                    caller="CompareValues",
+                    size_gate=size_gate,
+                    primary=obj(
+                        source="provider_selected_scan_range",
+                        start=expr(
+                            "add",
+                            "provider_offset",
+                            expr(
+                                "max",
+                                expr("subtract", "record_file_size", 4096),
+                                0,
+                            ),
+                        ),
+                        byte_count=expr("min", "record_file_size", 4096),
+                        zero_padding=obj(side="prepend", total_byte_count=4096),
+                    ),
+                    alternative=obj(
+                        enabled=parsed.allow_larger,
+                        when=expr("not", "primary_crc_equal"),
+                        source="provider_selected_scan_range",
+                        start=expr(
+                            "add",
+                            "provider_offset",
+                            expr("max", expr("subtract", "provider_size", 4096), 0),
+                        ),
+                        byte_count=expr("min", "provider_size", 4096),
+                        zero_padding="unknown_when_provider_shorter_than_4096",
+                    ),
+                    expected_crc=parsed.tail_page_crc,
+                ),
+                obj(
+                    index=3,
+                    name="mode_hash",
+                    caller="CompareValues",
+                    comparison_supported=mode is not None,
+                    size_gate=size_gate,
+                    source="provider_selected_scan_range",
+                    start="provider_offset",
+                    byte_count=parsed.file_size,
+                    algorithm=hash_algorithm,
+                    computed_digest_bytes=(
+                        20 if mode is StaticHashMode.SHA1_PREFIX4 else compared_bytes
+                    ),
+                    compared_bytes=compared_bytes,
+                    compared_part=(
+                        "digest_prefix"
+                        if mode is StaticHashMode.SHA1_PREFIX4
+                        else "complete_output"
+                        if mode is not None
+                        else None
+                    ),
+                    expected_hash_hex=parsed.hash_raw.hex()
+                    if mode is not None
+                    else None,
+                    long_target_post_hash_gate=obj(
+                        when=expr("greater_than", "provider_size", "record_file_size"),
+                        predicate=expr(
+                            "or", "threat_exception_name", expr("not", "valid_signed")
+                        ),
+                        runtime_context_required=JSONArray(
+                            ("threat_exception_name", "valid_signed_status")
+                        ),
+                    ),
+                ),
+            )
+        ),
+        record_local_match=None,
+        recid_attribution=obj(
+            tail_present=parsed.recid_tail is not None,
+            may_replace_threat_association=parsed.recid_tail is not None,
+            producer_meaning="unknown" if parsed.recid_tail is not None else None,
+            part_of_byte_predicate=False,
+        ),
+        final_verdict=None,
+    )
+
+
 def export_static(parsed: StaticPayload) -> ArtifactExport:
     """Export a lossless inventory manifest, never a standalone matcher."""
     mode = parsed.mode
@@ -289,6 +461,7 @@ def export_static(parsed: StaticPayload) -> ArtifactExport:
 
     manifest = {
         "format": "vdm.static.record.v2",
+        "stage_profile": semantic_json_to_data(_stage_profile(parsed)),
         "record": {
             "type": STATIC_TYPE,
             "type_hex": f"0x{STATIC_TYPE:02X}",
@@ -538,6 +711,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                         else None,
                     ),
                     ("comparison_supported", False),
+                    ("stage_profile", _stage_profile(parsed)),
                     ("hash", None),
                     (
                         "opaque_after_header",
@@ -931,6 +1105,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                     ),
                 ),
                 ("hash", hash_data),
+                ("stage_profile", _stage_profile(parsed)),
                 (
                     "match_pipeline",
                     JSONArray(
