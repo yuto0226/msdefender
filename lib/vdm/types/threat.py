@@ -458,6 +458,27 @@ def export_threat_begin_semantics(threat: ThreatBegin) -> RuleSemantics:
                 ),
             ),
             SemanticClaim(
+                id="threat_begin_report_mapping",
+                scope="report_mapping",
+                statement=(
+                    "The receiver-built threat index and metadata are consumed by "
+                    "the runtime resource-report chain, which remaps selectors, "
+                    "updates resource state, constructs a threat callback record, "
+                    "and forwards its SCANSTRUCT pointer through the callback pair "
+                    "preserved in the current thread's scan request."
+                ),
+                coverage="subset",
+                evidence_refs=("threat_begin_report_chain",),
+                unknowns=(
+                    SemanticUnknown(
+                        "report_mapping",
+                        "The concrete callback target for each runtime scan, complete "
+                        "action/severity policy, and externally visible outcome are "
+                        "not established.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
                 id="threat_begin_final_verdict",
                 scope="final_verdict",
                 statement="THREAT_BEGIN does not establish a final verdict.",
@@ -465,7 +486,8 @@ def export_threat_begin_semantics(threat: ThreatBegin) -> RuleSemantics:
                 unknowns=(
                     SemanticUnknown(
                         "final_verdict",
-                        "No association-to-final-report dataflow is established.",
+                        "The report chain reaches FireProgressCallback, but its host "
+                        "consumer and final malicious/benign disposition are unknown.",
                     ),
                 ),
             ),
@@ -480,6 +502,22 @@ def export_threat_begin_semantics(threat: ThreatBegin) -> RuleSemantics:
                     "threat_info_receiver @ 0x1809EB590; DispatchRecords @ 0x1800F99A8"
                 ),
                 supports=("threat_begin_association",),
+            ),
+            SemanticEvidence(
+                id="threat_begin_report_chain",
+                axis="report",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "report_threat_component @ 0x18012FA84; "
+                    "get_threat_index_ex @ 0x18012FF74; "
+                    "store_object_name @ 0x18012EE94; "
+                    "FireThreatReportCallback @ 0x18012E24C; "
+                    "FireProgressCallback @ 0x180226020; "
+                    "ScanOpenWithContext @ 0x180214764; "
+                    "CResmgrPlugin::CResmgrPlugin @ 0x18004C850"
+                ),
+                supports=("threat_begin_report_mapping",),
             ),
         ),
     )

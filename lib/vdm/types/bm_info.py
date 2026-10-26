@@ -634,6 +634,19 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
                 ),
             ),
             SemanticClaim(
+                "bm-info-report-admission",
+                "report_mapping",
+                "Friendly-filter bit 0x0200 can suppress queue admission near the pending-item limit and can reject DetectionItem::Send before dispatcher reporting for selected action flags.",
+                "subset",
+                ("bm-info-report-admission-evidence",),
+                (
+                    SemanticUnknown(
+                        "report_mapping",
+                        "The remaining mask bits, concrete registered handler outcome, and host-visible result are not closed.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
                 "bm-info-verdict",
                 "final_verdict",
                 "BM_INFO alone does not establish a final verdict.",
@@ -661,6 +674,14 @@ def export_bm_info_semantics(info: BMInfo) -> RuleSemantics:
                 "engine_static",
                 "ProcessFriendlyFiltering; ReportDetection; IsExpensiveOperationAllowed",
                 ("bm-info-policy",),
+            ),
+            SemanticEvidence(
+                "bm-info-report-admission-evidence",
+                "report",
+                "engine_static",
+                "mpengine 1.443.903.0",
+                ("bm-info-report-admission",),
+                "DetectionQueue::QueueDetection @ 0x1803911F4; DetectionItem::Send @ 0x18057BB7C",
             ),
         ),
     )
