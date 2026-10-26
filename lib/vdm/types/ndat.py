@@ -31,6 +31,120 @@ class NdatPayload:
     trailing_raw: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class NdatProcessPrefix:
+    """A prefix stage result, not an accepted or matched NDAT rule."""
+
+    suffix_prepared_process: str
+    prefix: str
+    consumed_utf16_units: int
+    process: str
+    process_flags: int
+
+
+def parse_ndat_process_prefix(suffix_prepared_process: str) -> NdatProcessPrefix:
+    """Decode a process field after successful GetEFlagsFromPath preparation.
+
+    The caller supplies UTF-16 text content before its terminating NUL, before
+    path/environment expansion. Embedded NUL is outside this API's input domain;
+    rejecting it does not assert that the engine rejects an equivalent wire blob.
+    This helper performs no wire decoding, field splitting, or suffix conversion.
+    """
+    if "\0" in suffix_prepared_process:
+        raise ValueError("prefix stage requires text content without a NUL terminator")
+    bits = {">": 1, "<": 2, "!": 4, "?": 8}
+    flags = 0
+    consumed = 0
+    for character in suffix_prepared_process:
+        bit = bits.get(character)
+        if bit is None:
+            break
+        flags |= bit
+        consumed += 1
+    # Every consumed prefix character is one UTF-16 code unit.
+    return NdatProcessPrefix(
+        suffix_prepared_process,
+        suffix_prepared_process[:consumed],
+        consumed,
+        suffix_prepared_process[consumed:],
+        flags,
+    )
+
+
+def evaluate_ndat_stream_gate(
+    process_flags: int,
+    *,
+    stream_present: bool,
+    stream_mode: int,
+    stream_event: int,
+) -> bool:
+    """Evaluate only ConfirmMatch's mode/event gate in a valid caller context.
+
+    A true result, including a null-stream bypass, does not establish a rule match.
+    Valid PID/context, earlier checks, process comparison and interface effects
+    remain the caller's responsibility. Arguments are required unsigned DWORDs;
+    no mode/event names or defaults are inferred.
+    """
+    for name, value in (
+        ("process_flags", process_flags),
+        ("stream_mode", stream_mode),
+        ("stream_event", stream_event),
+    ):
+        if type(value) is not int or not 0 <= value <= 0xFFFFFFFF:
+            raise ValueError(f"{name} must be an unsigned DWORD")
+    if type(stream_present) is not bool:
+        raise ValueError("stream_present must be a bool")
+    if not stream_present:
+        return True
+    modes = process_flags & 3
+    if modes and not (
+        (stream_mode == 0 and modes & 1) or (stream_mode == 1 and modes & 2)
+    ):
+        return False
+    return not process_flags & 8 or stream_event == 5
+
+
+def _process_stage_contract() -> JSONObject:
+    return JSONObject(
+        (
+            ("field_index", 1),
+            ("input_stage", "GetEFlagsFromPath-successful UTF-16 process content"),
+            (
+                "input_requirement",
+                "before terminating NUL and path/environment expansion",
+            ),
+            ("wire_projection", None),
+            ("whole_rule_evaluator", False),
+            ("prefix_bits", JSONObject(((">", 1), ("<", 2), ("!", 4), ("?", 8)))),
+            ("prefix_consumption", "leading run only; OR repeats; no whitespace trim"),
+            ("process_flags_entry_offset", 0x60),
+            (
+                "stream_gate",
+                "null stream bypasses; otherwise mask 0x03 selects mode 0/1 by masks 0x01/0x02 and mask 0x08 requires event 5",
+            ),
+            (
+                "stream_gate_requirement",
+                "valid caller/PID context; other checks remain",
+            ),
+            ("process_dispatch_order", "after the mode/event gate"),
+            (
+                "process_early_success",
+                "first character '*' with any tail, or empty process with PID 4",
+            ),
+            (
+                "early_success_effect",
+                "skips interface override and out_record_id write",
+            ),
+            (
+                "mask_0x04_effect",
+                "selects ComparePartialProcessName 0x1803CF7C4; not negation",
+            ),
+            ("without_mask_0x04", "selects CompareIgnoringDeviceVolume 0x1803CF85C"),
+            ("interface_effect", "may overwrite the process comparison result"),
+        )
+    )
+
+
 def parse_ndat(payload: bytes) -> NdatPayload:
     """Parse the counted data, callback index, and optional record-ID suffix."""
     if len(payload) < 4:
@@ -179,7 +293,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status=status,
-        representation="ndat.counted_data_callback_suffix.v3",
+        representation="ndat.counted_data_callback_suffix.v4",
         data=JSONObject(
             (
                 ("type", "NDAT"),
@@ -212,6 +326,10 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     else None,
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                (
+                    "process_stage_contract",
+                    _process_stage_contract() if has_logskip_consumer else None,
+                ),
                 (
                     "loader_handoff",
                     JSONObject(
@@ -352,6 +470,56 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     ),
                 ),
             ),
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-process-stage",
+                        "runtime_consumer",
+                        "For callback 5/22, the suffix-prepared process field's "
+                        "leading '>', '<', '!', '?' characters OR bits 1/2/4/8 without "
+                        "whitespace trimming. After the stream gate, a leading "
+                        "'*' or empty process with PID 4 selects early success, "
+                        "skipping interface/output writes; otherwise mask 0x04 "
+                        "selects the ComparePartialProcessName callee, not "
+                        "negation. A later "
+                        "interface may overwrite the comparison result.",
+                        "subset",
+                        ("ndat-process-stage-static", "ndat-process-stage-native"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Wire UTF-8/NUL ingestion, field splitting, "
+                                "GetEFlags suffix conversion, expansion, "
+                                "comparison callees and interface behavior are "
+                                "outside the portable prefix stage.",
+                            ),
+                        ),
+                    ),
+                    SemanticClaim(
+                        "ndat-stream-gate",
+                        "detection_predicate",
+                        "Only ConfirmMatch's mode/event subpredicate is modeled: "
+                        "null stream bypasses it; otherwise mask 0x03 equal to zero "
+                        "allows any mode, or mask 0x01 permits mode 0 and mask "
+                        "0x02 mode 1 (union). Mask 0x08 additionally requires event 5. Other "
+                        "DWORD bits do not participate in this gate.",
+                        "subset",
+                        ("ndat-stream-gate-static", "ndat-stream-gate-native"),
+                        (
+                            SemanticUnknown(
+                                "detection_predicate",
+                                "A valid caller/PID context and other rule "
+                                "checks are required; gate success is not a "
+                                "complete match. Native cases cover flags "
+                                "0..15, not every DWORD; ignoring higher bits "
+                                "follows the static masks.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_logskip_consumer
+                else ()
+            ),
             SemanticClaim(
                 "ndat-verdict",
                 "final_verdict",
@@ -408,6 +576,57 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                         "Check 0x180287DE0/0x1104 sigseqfromrecid WPP use "
                         "0x1802881C4; process flags remain separate at +0x60",
                         ("ndat-callback-schema",),
+                    ),
+                    SemanticEvidence(
+                        "ndat-process-stage-static",
+                        "consumer",
+                        "engine_static",
+                        "LogSkip::AddString 0x18005C630/0xE66 process field "
+                        "after GetEFlagsFromPath and before expansion; "
+                        "ConfirmMatch 0x180288EE4/0x470 process dispatch and "
+                        "interface CFG call 0x1802892D9 (pseudocode anchor "
+                        "0x1802892DF, result overwrite)",
+                        ("ndat-process-stage",),
+                        "prefix 0x18005C819..0x18005C85A and remote loop blocks; "
+                        "process branch 0x180289119..0x180289189",
+                    ),
+                    SemanticEvidence(
+                        "ndat-process-stage-native",
+                        "engine_equivalent_test",
+                        "engine_equivalent_test",
+                        "Pinned mpengine SHA256 "
+                        "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                        "NDAT_process_prefix_differential_probe: 1372 "
+                        "suffix-prepared prefix cases and 128 process branch "
+                        "selections; original instruction slices with guarded "
+                        "synthetic interior contexts; no comparator execution "
+                        "or whole AddString ingestion",
+                        ("ndat-process-stage",),
+                        "prefix 0x18005C819..0x18005C85A plus remote blocks; "
+                        "process selector 0x180289119..0x180289189",
+                    ),
+                    SemanticEvidence(
+                        "ndat-stream-gate-static",
+                        "consumer",
+                        "engine_static",
+                        "LogSkip::ConfirmMatch 0x180288EE4/0x470: DWORD masks "
+                        "0x03 and 0x08 select the mode/event gate",
+                        ("ndat-stream-gate",),
+                        "0x180288FCD..0x180289119; reject 0x180288FC1",
+                    ),
+                    SemanticEvidence(
+                        "ndat-stream-gate-native",
+                        "engine_equivalent_test",
+                        "engine_equivalent_test",
+                        "Pinned mpengine SHA256 "
+                        "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                        "NDAT_process_prefix_differential_probe: 640 original "
+                        "stream-gate slice cases, flags 0..15, modes "
+                        "0/1/2/3/0xFFFFFFFF, events 0/2/5/0xFFFFFFFF, stream "
+                        "present/null with a valid synthetic PID context; "
+                        "not a complete ConfirmMatch execution",
+                        ("ndat-stream-gate",),
+                        "0x180288FCD..0x180289119; reject 0x180288FC1",
                     ),
                 )
                 if has_logskip_consumer
