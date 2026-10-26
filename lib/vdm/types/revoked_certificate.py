@@ -629,6 +629,7 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
     """Export a lossless policy observation without X.509 field guesses."""
     key_end = 2 + parsed.key_len
     trailer_end = key_end + POLICY_TRAILER_SIZE
+    binary_getkey_profile = _binary_getkey_profile(parsed)
     manifest = {
         "schema": "vdm.revoked_certificate.artifact.v1",
         "record_type": {
@@ -648,6 +649,7 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
             "text_raw_hex": parsed.text_raw.hex(),
             "terminator_raw_hex": parsed.terminator_raw.hex(),
             "trailing_raw_hex": parsed.string_trailing_raw.hex(),
+            "normalization_profile": binary_getkey_profile,
         },
         "policy": {
             "filetime": parsed.filetime,
@@ -669,7 +671,87 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
             "match": "certificate_key_lookup_subject_to_filetime_and_signed_file_gates",
             "x509_field_mapping": "unknown",
             "final_trust_or_scan_verdict": "unknown",
-            "recid_tail_effect": "unknown",
+            "recid_tail_effect": (
+                "loader_validates_tail_and_may_replace_stored_threat_id; "
+                "portable_attribution_and_other_consumers_unknown"
+            ),
+            "reuse_profile": {
+                "profile": "mpengine-1.443.903.0",
+                "status": "bounded_engine_behavior_profile",
+                "query_key_inputs": [
+                    {
+                        "consumer": "IsRevokedCert",
+                        "key_types": [3, 2, 1, 5],
+                        "input_shapes": {
+                            "3": "optional wchar_t* to_name passed to wide GetKey",
+                            "2": "optional wchar_t* by_name passed to wide GetKey",
+                            "1": "optional wchar_t* hash passed to wide GetKey",
+                            "5": "optional wchar_t* team_id passed to wide GetKey",
+                        },
+                    },
+                    {
+                        "consumer": "ScanCertificate",
+                        "key_types": [1, 2, 3],
+                        "input_shapes": {
+                            "1": "binary identity/hash byte span",
+                            "2": "wide string from certificate DN GetString(type=5)",
+                            "3": "wide string from certificate DN GetString(type=5)",
+                        },
+                    },
+                ],
+                "binary_getkey": {
+                    "fast_path_types": [1, 4],
+                    "applies_to_query_path": "ScanCertificate type 1 binary identity/hash span only",
+                    "fast_path_input_shape": "exactly 20 binary bytes",
+                    "fast_path": "copy 20 bytes; add type modulo 256 to byte 0",
+                    "other_input_shape": "type_byte concatenated with binary bytes",
+                    "other_normalization": "SHA1(type_byte || data)",
+                    "normalized_key_hex": _binary_getkey_normalize(
+                        parsed.key_type, parsed.key_material_raw
+                    ).hex()
+                    if parsed.mode == "binary"
+                    else None,
+                    "query_identity_mapping": "not_fully_established",
+                },
+                "wide_getkey": {
+                    "algorithm_known": True,
+                    "summary": (
+                        "types 1/4 hex-decode, with the 20-byte fast path; "
+                        "other types hash type plus UTF-8, falling back to "
+                        "UTF-16 raw bytes on conversion failure"
+                    ),
+                    "implementation": "not_implemented",
+                    "identity_mapping": "unknown",
+                },
+                "policy_paths": [
+                    {
+                        "consumer": "IsRevokedCert",
+                        "policy": 0,
+                        "query_time_source": "IsRevokedCert caller argument",
+                        "record_filetime_lower_bound": parsed.filetime,
+                        "time_gate": "query_filetime >= record_filetime",
+                        "signed_file_gate": "not_called",
+                    },
+                    {
+                        "consumer": "ScanCertificate",
+                        "policy": 1,
+                        "query_time_source": "signer-info +0x80 SYSTEMTIME converted to FILETIME; missing/failed conversion leaves zero",
+                        "record_filetime_lower_bound": parsed.filetime,
+                        "time_gate": "query_filetime >= record_filetime",
+                        "signed_file_gate": (
+                            "skipped_when_flag_bit0_set; otherwise_IsSignedFile"
+                        ),
+                        "skip_signed_file_gate_flag_bit0": parsed.skips_signed_file_gate,
+                    },
+                ],
+                "unknowns": [
+                    "wide_key_identity_mapping",
+                    "portable_RecID_attribution_and_other_consumers",
+                    "unknown_revoke_flag_bits",
+                    "final_trust_or_scan_verdict",
+                ],
+                "portable_revocation_rule": "not_established",
+            },
         },
     }
     data = (
@@ -683,6 +765,41 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
             Artifact(f"6c-{digest}.json", "revoked_certificate_json_manifest", data),
         ),
     )
+
+
+def _binary_getkey_profile(parsed: RevokedCertificate) -> dict[str, object]:
+    is_binary = parsed.mode == "binary"
+    fast_path_eligible = (
+        is_binary and parsed.key_type in {1, 4} and len(parsed.key_material_raw) == 20
+    )
+    return {
+        "status": "normalized" if is_binary else "not_modeled",
+        "input_shape": "binary" if is_binary else "wide UTF-16LE string",
+        "key_type": parsed.key_type,
+        "fast_path_eligible": fast_path_eligible,
+        "fast_path": (
+            "copy 20 bytes; add type modulo 256 to byte 0" if is_binary else None
+        ),
+        "fallback": "SHA1(type_byte || data)" if is_binary else None,
+        "normalization": "not_modeled" if not is_binary else "GetKey_binary",
+        "applicable_to_confirmed_query_path": (
+            "ScanCertificate.type1" if is_binary and parsed.key_type == 1 else None
+        ),
+        "normalized_key_hex": (
+            _binary_getkey_normalize(parsed.key_type, parsed.key_material_raw).hex()
+            if is_binary
+            else None
+        ),
+    }
+
+
+def _binary_getkey_normalize(key_type: int, data: bytes) -> bytes:
+    """Apply the confirmed binary GetKey transform without matching records."""
+    if not 0 <= key_type <= 0xFF:
+        raise ValueError(f"binary GetKey type must fit in one byte: {key_type}")
+    if key_type in {1, 4} and len(data) == 20:
+        return bytes(((data[0] + key_type) & 0xFF,)) + data[1:]
+    return hashlib.sha1(bytes((key_type,)) + data).digest()
 
 
 SPEC = FamilySpec(
