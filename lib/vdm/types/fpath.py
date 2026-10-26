@@ -13,11 +13,13 @@ from ..core import (
     DisplaySection,
     FamilySpec,
     FormatResult,
+    JSONArray,
     JSONObject,
     RuleSemantics,
     SemanticClaim,
     SemanticEvidence,
     SemanticIssue,
+    SemanticJSONValue,
     SemanticUnknown,
 )
 
@@ -106,6 +108,120 @@ def _parse_size_constraint(raw: bytes) -> JSONObject:
             ("bounds_inclusive", True if modeled else None),
         )
     )
+
+
+def _fpath_match_profile(parsed: FpathPayload) -> dict[str, object]:
+    """Return the engine-confirmed bounded path candidate contract."""
+    is_asep = parsed.type_byte in {0x71, 0x75}
+    is_file = parsed.path_kind == "filepath"
+    return {
+        "kind": "engine_confirmed_bounded_path_candidate",
+        "storage_family": "asep" if is_asep else "standard",
+        "resource_kind": parsed.path_kind,
+        "path_input": (
+            "csidl_expanded_prefix_plus_runtime_path"
+            if is_asep
+            else "resource_path_with_csidl"
+        ),
+        "runtime_path_bytes_are_fully_expanded": False,
+        "csidl": {
+            "required": True,
+            "mapping": "CSIDL_2_ix_sorted_table_lookup",
+            "entry_count": 49,
+            "entry_stride": 0x28,
+            "miss_sentinel": 0x7FFFFFFF,
+            "selected_index": None,
+            "expansion_prefix": "runtime_only_unresolved",
+        },
+        "path_matching": {
+            "exact": {
+                "consumer": ("filesystem_path_check" if is_asep else "fcmp_file_path"),
+                "case": None if is_asep else "ascii_case_insensitive",
+                "slash_equivalence_applies": None if is_asep else True,
+                "slash_equivalence": None
+                if is_asep
+                else "forward_slash_equals_backslash",
+                "terminal_separator": (
+                    "runtime_filesystem_semantics_unresolved"
+                    if is_asep
+                    else "one_trailing_backslash_equals_end"
+                ),
+            },
+            "wildcard": {
+                "consumer": (
+                    "fpath_on_disk_filesystem_enumeration"
+                    if is_asep
+                    else "MatchWildCardHelper_char_"
+                ),
+                "enabled_when": (
+                    "runtime_filesystem_enumeration"
+                    if is_asep
+                    else "ResutilsStrHasWildcards(runtime_path_bytes)"
+                ),
+                "dialect": None if is_asep else "question_and_star",
+                "question_mark": None if is_asep else "matches_one_character",
+                "star": (
+                    "runtime_filesystem_enumeration_semantics_unresolved"
+                    if is_asep
+                    else "matches_zero_or_more_characters_by_recursive_search"
+                ),
+                "case": None if is_asep else "ascii_case_insensitive",
+                "terminal_separator": (
+                    "runtime_filesystem_semantics_unresolved"
+                    if is_asep
+                    else "one_trailing_backslash_equals_end"
+                ),
+                "regex_or_yara_equivalence": None,
+            },
+            "wildcard_record_flag": "bit_31_of_csidl_index",
+        },
+        "size_constraint": {
+            "source": "first_pipe_suffix" if is_file else "none",
+            "runtime_check": "inclusive_u32_bounds",
+            "unbounded_sentinel": {
+                "minimum": 0,
+                "maximum": 0xFFFFFFFF,
+                "effect": "accept_without_filesystem_size_query",
+            },
+            "modeled_constraint": (
+                None
+                if not is_file or parsed.pipe_offset is None
+                else dict(
+                    _parse_size_constraint(
+                        parsed.path_region_raw[parsed.pipe_offset + 1 :]
+                    ).items
+                )
+            ),
+        },
+        "candidate_gates": [
+            "csidl_match",
+            "path_match_and_filesystem_resource_type",
+            "size_constraint_if_present",
+            "expiry_and_disabled_signature_or_threat_gates",
+        ],
+        "polarity": None,
+        "final_verdict": None,
+        "limitations": [
+            "csidl_table_contents_and_expansion_prefix_are_runtime_only",
+            "resource_candidate_is_not_a_user_visible_report_or_final_verdict",
+            "optional_recid_tail_semantics_are_unresolved",
+        ],
+    }
+
+
+def _semantic_json(value: object) -> SemanticJSONValue:
+    """Convert the shared JSON profile to the immutable semantic JSON types."""
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("semantic profile object keys must be strings")
+        return JSONObject(
+            tuple((key, _semantic_json(item)) for key, item in value.items())
+        )
+    if isinstance(value, list):
+        return JSONArray(tuple(_semantic_json(item) for item in value))
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    raise TypeError(f"unsupported semantic profile value: {type(value).__name__}")
 
 
 def parse_fpath(payload: bytes, *, type_byte: int) -> FpathPayload:
@@ -236,6 +352,7 @@ def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
         "record_type": {"byte": parsed.type_byte, "name": type_name},
         "family": "asep" if is_asep else "standard",
         "raw_hex": parsed.raw.hex(),
+        "match_profile": _fpath_match_profile(parsed),
         "csidl": {
             "value": parsed.csidl_value,
             "raw_hex": parsed.raw[:HEADER_SIZE].hex(),
@@ -323,6 +440,7 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
     size_constraint = (
         None if size_dsl_raw is None else _parse_size_constraint(size_dsl_raw)
     )
+    match_profile = _fpath_match_profile(parsed)
     issues = [
         SemanticIssue(
             "final_verdict_unknown",
@@ -380,6 +498,7 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
             (
                 ("type", type_name),
                 ("raw_hex", parsed.raw.hex()),
+                ("match_profile", _semantic_json(match_profile)),
                 ("storage_family", "asep" if is_asep else "standard"),
                 (
                     "csidl",
