@@ -16,6 +16,7 @@ from .bm import (
     BmScan,
     BmSemanticOperation,
     interpret_bm_pattern,
+    raw_04_byte_set,
 )
 from .core import JSONArray, JSONObject, SemanticIssue
 
@@ -56,24 +57,6 @@ def _pattern_preparation_is_exact(context: BmSemanticContext) -> bool:
         context.translation == "ascii_lowercase"
         and context.pattern_preparation == "ascii_lowercase"
     )
-
-
-def _raw_04_byte_set(spec: bytes, *, lowercase_pattern: bool) -> bytes:
-    """Derive a bitmap from the wire spec plus caller-proven ingestion prep."""
-    if lowercase_pattern:
-        spec = bytes(byte + 0x20 if 0x41 <= byte <= 0x5A else byte for byte in spec)
-    accepted = bytearray(256)
-    cursor = 0
-    while cursor < len(spec):
-        if cursor + 2 < len(spec) and spec[cursor + 1] == 0x2D:
-            low, high = spec[cursor], spec[cursor + 2]
-            if low <= high:
-                accepted[low : high + 1] = b"\x01" * (high - low + 1)
-            cursor += 3
-        else:
-            accepted[spec[cursor]] = 1
-            cursor += 1
-    return bytes(index for index, present in enumerate(accepted) if present)
 
 
 def _raw_04_context_is_exact(
@@ -153,9 +136,13 @@ def _operation_ir(
             and _raw_04_context_is_exact(context, pattern)
         ):
             assert context is not None
-            accepted = _raw_04_byte_set(
+            accepted = raw_04_byte_set(
                 operation.spec,
-                lowercase_pattern=context.translation == "ascii_lowercase",
+                pattern_preparation=(
+                    "ascii_lowercase"
+                    if context.translation == "ascii_lowercase"
+                    else "identity"
+                ),
             )
             decoded["engine_predicate"] = {
                 "kind": "fixed_count_byte_class",

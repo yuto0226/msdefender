@@ -17,6 +17,7 @@ from .bm import (
     BmScan,
     BmSemanticOperation,
     interpret_bm_pattern,
+    raw_04_byte_set,
     render_bm_printable_preview,
 )
 
@@ -128,11 +129,11 @@ def _uses_ascii_lowercase_profile(context: BmMatchContext | None) -> bool:
 def _context_requirements(
     context: BmMatchContext | None,
     *,
-    range_search: bool = False,
+    strict_mode: bool = False,
 ) -> tuple[tuple[str, ...], tuple[BmRenderIssue, ...]]:
     requirements = (
         (*_REQUIREMENTS[:2], "worker mode 1", _REQUIREMENTS[3])
-        if range_search
+        if strict_mode
         else _REQUIREMENTS
     )
     if _uses_ascii_lowercase_profile(context):
@@ -163,7 +164,7 @@ def _context_requirements(
             and 0 <= context.worker_mode <= 0xFFFFFFFF
             and (
                 context.worker_mode == 1
-                if range_search
+                if strict_mode
                 else bool(context.worker_mode & 1)
             ),
         ),
@@ -254,6 +255,8 @@ _SEARCH_RANGE_BYTES = {
 
 def _simplify_search_operations(
     operations: tuple[BmSemanticOperation, ...],
+    *,
+    raw04_pattern_closed: bool = False,
 ) -> tuple[BmSemanticOperation, ...]:
     """Boolean-only simplification; the original decoded/semantic IR stays intact."""
     nonempty = []
@@ -270,6 +273,13 @@ def _simplify_search_operations(
                 isinstance(operation, BmExtension)
                 and operation.name == "RANGE_SEARCH"
                 and operation.value == 0
+            )
+            or (
+                raw04_pattern_closed
+                and isinstance(operation, BmClass)
+                and operation.token.raw_id == operation.token.dispatch_id == 0x04
+                and operation.token.descriptor_flags == 0x02
+                and operation.count == 0
             )
         ):
             continue
@@ -311,17 +321,32 @@ def render_bm_yara(
     requirements as gaps. Zero jumps vanish before checking YARA's grammar.
     RANGE_SEARCH composes a bounded byte class with the complete continuation
     in a regex, restricted to BUFFER/mode 1/no captures and backend budgets.
+    Primary raw04 uses the same backend with an exact fixed count and the
+    translation preimage of its prepared spec; aliases remain unsupported.
     """
     operations = interpret_bm_pattern(pattern).operations
-    range_search = any(
+    has_range_search = any(
         isinstance(operation, BmExtension) and operation.name == "RANGE_SEARCH"
         for operation in operations
     )
-    requirements, context_issues = _context_requirements(
-        context, range_search=range_search
+    has_raw04 = any(
+        isinstance(operation, BmClass) and operation.token.raw_id == 0x04
+        for operation in operations
     )
-    if range_search:
-        operations = _simplify_search_operations(operations)
+    regex_backend = has_range_search or has_raw04
+    raw04_pattern_closed = (
+        pattern.issue is None
+        and pattern.ended
+        and not pattern.remaining_raw
+        and b"\x90\x1b" not in pattern.raw
+    )
+    requirements, context_issues = _context_requirements(
+        context, strict_mode=regex_backend
+    )
+    if has_range_search:
+        operations = _simplify_search_operations(
+            operations, raw04_pattern_closed=raw04_pattern_closed
+        )
     issues = list(context_issues)
     printable_preview = render_bm_printable_preview(pattern)
     if pattern.issue is not None:
@@ -342,7 +367,7 @@ def render_bm_yara(
             if operation.value:
                 has_required_bytes = True
                 maximum_match_bytes += len(operation.value)
-                if range_search:
+                if regex_backend:
                     estimated = sum(
                         10
                         if lowercase_map
@@ -402,7 +427,7 @@ def render_bm_yara(
                     _regex_repeat(
                         r"[\x00-\xFF]", operation.maximum, bounded=operation.bounded
                     )
-                    if range_search
+                    if regex_backend
                     else (
                         f"[0-{operation.maximum}]"
                         if operation.bounded
@@ -430,7 +455,7 @@ def render_bm_yara(
                         operation.operand,
                         bounded=operation.kind == "forward_search",
                     )
-                    if range_search
+                    if regex_backend
                     else (
                         f"[0-{operation.operand}]"
                         if operation.kind == "forward_search"
@@ -468,7 +493,7 @@ def render_bm_yara(
                 regex_paths = min(
                     MAX_YARA_REGEX_PATHS + 1, regex_paths * len(operation.choices)
                 )
-                if range_search:
+                if regex_backend:
                     choices = "|".join(
                         _regex_literal(choice, False) for choice in operation.choices
                     )
@@ -479,6 +504,45 @@ def render_bm_yara(
                     )
                     alternative = f"( {choices} )"
                 parts.append((alternative, operation.offset, False, None))
+        elif (
+            isinstance(operation, BmClass)
+            and operation.token.raw_id == 0x04
+            and operation.token.dispatch_id == 0x04
+            and operation.token.descriptor_flags == 0x02
+        ):
+            if not raw04_pattern_closed:
+                issues.append(
+                    BmRenderIssue(
+                        "unsupported.raw04_pattern_context", operation.offset, 0x04
+                    )
+                )
+            elif operation.count:
+                # flags=0x02 is not a two-byte alias: count is the wire u8.
+                accepted = raw_04_byte_set(
+                    operation.spec,
+                    pattern_preparation="ascii_lowercase"
+                    if lowercase_map
+                    else "identity",
+                )
+                values = bytes(
+                    byte
+                    for byte in range(256)
+                    if (byte + 0x20 if lowercase_map and 0x41 <= byte <= 0x5A else byte)
+                    in accepted
+                )
+                # A positive count over an empty set is never satisfiable;
+                # a zero count above is epsilon even when the spec is empty.
+                atom = _regex_byte_class(values) if values else r"[^\x00-\xFF]"
+                parts.append(
+                    (
+                        _regex_repeat(atom, operation.count, bounded=False),
+                        operation.offset,
+                        False,
+                        0x04,
+                    )
+                )
+                has_required_bytes = True
+                maximum_match_bytes += operation.count
         elif (
             isinstance(operation, BmExtension)
             and operation.name == "RANGE_SEARCH"
@@ -533,7 +597,7 @@ def render_bm_yara(
                     # each alias unit as one class byte followed by mapped zero.
                     count //= 2
                     atom += " 00"
-                if range_search:
+                if regex_backend:
                     atom = _regex_byte_class(values)
                     if operation.token.descriptor_flags & 1:
                         atom = f"({atom}\\x00)"
@@ -587,11 +651,11 @@ def render_bm_yara(
             issues.append(BmRenderIssue("leading_jump", parts[0][1], parts[0][3]))
         if parts[-1][2]:
             issues.append(BmRenderIssue("trailing_jump", parts[-1][1], parts[-1][3]))
-        if range_search and not has_required_bytes:
+        if regex_backend and not has_required_bytes:
             # YARA never scans a zero-byte subject, even for nullable regexes.
             # The worker can accept there; do not claim Boolean equivalence.
             issues.append(BmRenderIssue("unsupported.empty_match", 0))
-    if range_search:
+    if regex_backend:
         if maximum_match_bytes > MAX_YARA_REGEX_MATCH_BYTES:
             issues.append(BmRenderIssue("unsupported.regex_span_limit", 0))
         if regex_splits > MAX_YARA_REGEX_SPLITS:
@@ -607,7 +671,7 @@ def render_bm_yara(
             printable_preview,
         )
     projected_length = sum(len(part[0]) for part in parts) + (
-        2 if range_search else 4 + max(0, len(parts) - 1)
+        2 if regex_backend else 4 + max(0, len(parts) - 1)
     )
     if projected_length > MAX_YARA_RHS_CHARS:
         return BmYaraRender(
@@ -617,7 +681,7 @@ def render_bm_yara(
             (),
             printable_preview,
         )
-    if range_search and projected_length > MAX_YARA_REGEX_RHS_CHARS:
+    if regex_backend and projected_length > MAX_YARA_REGEX_RHS_CHARS:
         return BmYaraRender(
             None,
             BmYaraFidelity.UNSUPPORTED,
@@ -627,7 +691,7 @@ def render_bm_yara(
         )
     body = (
         "/" + "".join(part for part, _, _, _ in parts) + "/"
-        if range_search
+        if regex_backend
         else "{ " + " ".join(part for part, _, _, _ in parts) + " }"
     )
     fidelity = BmYaraFidelity.CONDITIONAL if requirements else BmYaraFidelity.EXACT

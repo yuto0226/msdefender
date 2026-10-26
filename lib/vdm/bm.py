@@ -154,6 +154,32 @@ class BmClass(BmOperation):
     spec: bytes
 
 
+def raw_04_byte_set(
+    spec: bytes, *, pattern_preparation: Literal["identity", "ascii_lowercase"]
+) -> bytes:
+    """Parse primary raw04's wire spec after its proven ingestion preparation.
+
+    This returns accepted mapped bytes, not the subject translation preimage.
+    Only spec bytes are normalized; count, spec_len and framing stay intact.
+    """
+    if pattern_preparation == "ascii_lowercase":
+        spec = bytes(byte + 0x20 if 0x41 <= byte <= 0x5A else byte for byte in spec)
+    elif pattern_preparation != "identity":
+        raise ValueError("unsupported raw04 pattern preparation")
+    accepted = bytearray(256)
+    cursor = 0
+    while cursor < len(spec):
+        if cursor + 2 < len(spec) and spec[cursor + 1] == 0x2D:
+            low, high = spec[cursor], spec[cursor + 2]
+            if low <= high:
+                accepted[low : high + 1] = b"\x01" * (high - low + 1)
+            cursor += 3
+        else:
+            accepted[spec[cursor]] = 1
+            cursor += 1
+    return bytes(index for index, present in enumerate(accepted) if present)
+
+
 @dataclass(frozen=True, slots=True)
 class BmExtension(BmOperation):
     """An extension operand; bitmap ranges use an effective BYTE budget.
