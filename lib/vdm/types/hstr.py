@@ -2052,7 +2052,9 @@ HSTR_SPECS = tuple(
         name,
         _parser_for(type_byte),
         render_hstr,
-        exporter=_export_selected_hstr_yara if type_byte in (0xC5, 0x8C) else None,
+        exporter=_export_selected_hstr_yara
+        if type_byte in (0xC5, 0x8C, 0x8F)
+        else None,
         semantic_exporter=export_hstr_semantics,
     )
     for type_byte, name in _FAMILY_NAMES.items()

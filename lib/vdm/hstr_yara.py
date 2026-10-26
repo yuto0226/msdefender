@@ -31,6 +31,12 @@ _SUPPORTED_PROFILES = {
         "scanner_contract": "ELF_CALLER_RANGE | ELF_SEGMENT_INTERVAL",
         "input": "caller-selected single ELF subject span",
     },
+    0x8F: {
+        "type_name": "MACROHSTR_EXT",
+        "reader_kinds": ("MACRO_CALLER_BUFFER",),
+        "scanner_contract": "MACRO_CALLER_BUFFER",
+        "input": "caller-selected single actual Macro API buffer",
+    },
 }
 _LOWERCASE_HEX_TOKEN = re.compile(
     r"\( [0-9A-F]{2} \| [0-9A-F]{2} \)|\[[0-9]+(?:-[0-9]+)?\]|[0-9A-F]{2}"
@@ -255,7 +261,13 @@ def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
         f'        profile = "{PROFILE}"\n'
         '        artifact_scope = "selected-subject score eligibility"\n'
         f'        subject_contract = "{profile["scanner_contract"]}: fresh state, exact single span"\n'
-        '        cross_boundary_match = "forbidden"\n'
+        + (
+            '        state_precondition = "externally ensured fresh empty hit container; RPF API does not guarantee per-call reset"\n'
+            '        macro_scope = "single actual caller buffer; preprocessing, selection, offset policy and reporting excluded"\n'
+            if parsed.type_byte == 0x8F
+            else ""
+        )
+        + '        cross_boundary_match = "forbidden"\n'
         '        report_mapping = "unknown"\n'
         f'        source_type = "0x{parsed.type_byte:02X}"\n'
         f'        payload_sha256 = "{digest}"\n'
@@ -306,6 +318,24 @@ def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
                     "cross_chunk_or_interval_aggregation_in_scope": False,
                 }
                 if parsed.type_byte == 0x8C
+                else {}
+            ),
+            **(
+                {
+                    "position_context": "zero-initialized fields in selected API",
+                    "upstream_subject_selection": "runtime_unknown",
+                    "requires_macro_caller_gates": True,
+                    "macro_caller_gates": "actual byte span selection and API applicability",
+                    "state_lifecycle": "caller_owned_unknown",
+                    "fresh_state_is_external_precondition": True,
+                    "rpf_api_guarantees_fresh_hit_container_per_call": False,
+                    "macro_preprocessing_in_scope": False,
+                    "macro_selection_in_scope": False,
+                    "macro_offset_policy_in_scope": False,
+                    "macro_reporting_in_scope": False,
+                    "cross_call_aggregation_in_scope": False,
+                }
+                if parsed.type_byte == 0x8F
                 else {}
             ),
         },
