@@ -648,6 +648,24 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         coverage="complete",
         evidence_refs=("static_corpus",),
     )
+    crc_primitive_claim = SemanticClaim(
+        id="static_crc_primitive",
+        scope="runtime_consumer",
+        statement=(
+            "For the tested DLL's CRC_0 and CRC_1 entry points, both compute "
+            "raw reflected CRC-32 state without final XOR; CRC_0 accepts the "
+            "caller state and CRC_1 starts from 0xFFFFFFFF."
+        ),
+        coverage="subset",
+        evidence_refs=("static_crc_differential",),
+        unknowns=(
+            SemanticUnknown(
+                "runtime_consumer",
+                "STATIC CompareValues/GetHashes, runtime ranges, hash comparison, "
+                "signature matching, and final verdict were not tested.",
+            ),
+        ),
+    )
     common_evidence = (
         SemanticEvidence(
             id="static_dispatch",
@@ -672,6 +690,21 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             source_ref="mpas.sig and mpav.sig exhaustive STATIC census",
             locator="modes 0/1/2 observed; modes 3-7 absent",
             supports=(corpus_claim.id,),
+        ),
+        SemanticEvidence(
+            id="static_crc_differential",
+            axis="engine_equivalent_test",
+            kind="engine_equivalent_test",
+            source_ref=(
+                "mpengine path label 1.443.903.0; PE fixed version 1.1.25110.1; "
+                "SHA-256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3"
+            ),
+            locator=(
+                "tests/local_static_engine_differential.py; "
+                "functions CRC_0 @ 0x180704738 and CRC_1 @ 0x180705184; "
+                "61 vectors (empty through 65536 bytes, alignments/seeds as applicable)"
+            ),
+            supports=(crc_primitive_claim.id,),
         ),
     )
     mode = parsed.mode
@@ -745,6 +778,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             ),
             claims=(
                 corpus_claim,
+                crc_primitive_claim,
                 wire_claim,
                 dispatch_claim,
                 receiver_claim,
@@ -1145,6 +1179,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         issues=tuple(issues),
         claims=(
             corpus_claim,
+            crc_primitive_claim,
             wire_claim,
             dispatch_claim,
             receiver_claim,
