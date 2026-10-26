@@ -129,6 +129,23 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
                 ("raw_hex", parsed.raw.hex()),
                 ("entry_count", parsed.entry_count),
                 ("entry_size", ENTRY_SIZE),
+                (
+                    "corpus_observation",
+                    JSONObject(
+                        (
+                            ("scope", "current mpas.sig and mpav.sig subset"),
+                            ("records", 2),
+                            ("mpas_records", 1),
+                            ("mpav_records", 1),
+                            ("mpas_count", 26),
+                            ("mpav_count", 27),
+                            ("payload_size_rule", "len(payload) == 4 + 4 * count"),
+                            ("position", "penultimate record in each stream"),
+                            ("successor", "one 0x73 record to EOF"),
+                            ("trailer_or_index_inference", False),
+                        )
+                    ),
+                ),
                 ("entries", entries),
                 (
                     "wire_entry_layout",
@@ -153,12 +170,21 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
                             ),
                             (
                                 "mode0_gate_false",
-                                "Falls through to the shared DispatchRecord route.",
+                                (
+                                    "Uses the ordinal/count-only path and does not enter "
+                                    "DispatchRecord."
+                                ),
                             ),
                             (
                                 "mode1",
                                 "Calls DispatchRecord(0x74, payload, size).",
                             ),
+                            (
+                                "template_candidate",
+                                "gktab + 0xCBD0; candidate only, registration not recovered",
+                            ),
+                            ("handler_candidate", "gktab + 0x29B0"),
+                            ("context_candidate", "gktab + 0x29D8"),
                             ("receiver_registration", "unconfirmed"),
                         )
                     ),
@@ -191,8 +217,9 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
                 "framing and mode split"
             ),
             (
-                "mpengine 1.443.903.0 DispatchRecords @ 0x1800F9AEF: "
-                "switch 0x74 empty arm"
+                "getsigtype names 0x74 DELTA_BLOB_RECINFO; mpengine 1.443.903.0 "
+                "DispatchRecords @ 0x1800F9AEF: mode0 gate=true empty break; "
+                "mode0 gate=false ordinal/count-only path; mode1 generic dispatch"
             ),
             ("mpengine 1.443.903.0 DispatchRecords @ 0x1800F9AE5: version-gate switch"),
             (
@@ -201,7 +228,8 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
             ),
             (
                 "mpengine 1.443.903.0 DispatchRecords @ 0x1800FA010: "
-                "mode0 gate-false shared dispatch call"
+                "mode0 dispatch call outside the 0x74 switch arm; it does not "
+                "establish 0x74 dispatch"
             ),
             ("mpengine 1.443.903.0 DispatchRecord @ 0x1800FAF18: runtime gktab slots"),
             (
@@ -212,6 +240,11 @@ def export_delta_blob_recinfo_semantics(parsed: DeltaBlobRecInfo) -> RuleSemanti
                 "mpengine 1.443.903.0 DispatchProxy::ConsumeInputCompressed "
                 "@ 0x1800D9ED0 consumes compressed blocks; no 0x74 entry-field "
                 "dataflow to this function was established"
+            ),
+            (
+                "mpengine 1.443.903.0 static registration census: 171 direct "
+                "registration callsites contain no 0x74; bounded 60-immediate "
+                "search is not a global absence proof"
             ),
         ),
         profile="mpengine-1.443.903.0",
