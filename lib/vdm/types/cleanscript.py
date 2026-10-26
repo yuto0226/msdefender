@@ -8,6 +8,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 _HEADER_SIZE = 32
 _VERSION_MAJOR = 1
@@ -125,6 +126,15 @@ def render_cleanscript(parsed: CleanScriptPayload) -> FormatResult:
 
 def export_cleanscript_semantics(parsed: CleanScriptPayload) -> RuleSemantics:
     """Export confirmed receiver/runtime-selection facts, keeping other fields raw."""
+    claim, claim_evidence = scoped_claim(
+        "cleanscript",
+        "receiver_handoff",
+        "receiver_transform",
+        "The receiver accepts bounded versioned payloads and hands accepted candidates to the interpreter path.",
+        "Opcode interpretation and any final verdict are unknown.",
+        "receiver",
+        "CLEANSCRIPT receiver and pInterpretRoutine handoff",
+    )
     accepted = parsed.receiver_result == "added_candidate"
     status = "confirmed_subset" if accepted else "ignored"
     issues = (
@@ -342,6 +352,8 @@ def export_cleanscript_semantics(parsed: CleanScriptPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=issues,
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
     )
 
 

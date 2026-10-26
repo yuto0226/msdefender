@@ -11,6 +11,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 PEMAIN_LOCATOR_TYPE: Final = 0x86
 PAYLOAD_SIZE: Final = 8
@@ -91,6 +92,15 @@ def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
 
 def export_pemain_locator_semantics(parsed: PeMainLocatorPayload) -> RuleSemantics:
     """Export the confirmed lookup/read subset and retain exact wire spans."""
+    claim, claim_evidence = scoped_claim(
+        "pemain_locator",
+        "lookup_relative_read",
+        "runtime_consumer",
+        "The consumer performs an exact key comparison, then a bounded relative DWORD read when the key matches.",
+        "The relative value is not established as an RVA, and downstream/final meaning remains unknown.",
+        "consumer",
+        "ComparePeMainLocators; scan_compiler_worker; ReceiveNewTemplate",
+    )
     issues = [
         SemanticIssue(
             "final_verdict_unknown",
@@ -175,6 +185,8 @@ def export_pemain_locator_semantics(parsed: PeMainLocatorPayload) -> RuleSemanti
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
     )
 
 

@@ -12,6 +12,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 POLYVIR32_TYPE: Final = 0x21
 POLYVIR32_MIN_SIZE: Final = 34
@@ -122,6 +123,15 @@ def render_polyvir32(parsed: Polyvir32Payload) -> FormatResult:
 
 def export_polyvir32_semantics(parsed: Polyvir32Payload) -> RuleSemantics:
     """Export the engine-confirmed wire-to-row projection."""
+    claim, claim_evidence = scoped_claim(
+        "polyvir32",
+        "template_projection",
+        "receiver_transform",
+        "The registered template projects fixed wire fields and a length-prefixed value into the 0x28-byte runtime row.",
+        "The projected fields' string meaning, runtime matching behavior, and final verdict are unknown.",
+        "receiver",
+        "pattsearch_init @ 0x18056551F; descriptors @ 0x180F670C0",
+    )
     issues = [
         SemanticIssue(
             "consumer_and_final_verdict_unknown",
@@ -199,6 +209,8 @@ def export_polyvir32_semantics(parsed: Polyvir32Payload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
     )
 
 

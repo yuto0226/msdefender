@@ -11,6 +11,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 _NAME_PREVIEW_BYTES = 64
 _NAME_PREVIEW_CHARS = 96
@@ -111,6 +112,15 @@ def export_threat_update_status_semantics(
     parsed: ThreatUpdateStatusPayload,
 ) -> RuleSemantics:
     """Export confirmed framing and receiver storage without guessing policy."""
+    claim, claim_evidence = scoped_claim(
+        "threat_update_status",
+        "bounded_consumer_use",
+        "runtime_consumer",
+        "A bounded consumer uses the first stored DWORD as a mask operand and ORs the second into an output context after its name and regex gate.",
+        "The DWORD bit domains, broader consumer set, product meaning, and final verdict are unknown.",
+        "consumer",
+        "ThreatUpdateStatus @ 0x1809B0FF8; ksignalupper @ 0x180279E98",
+    )
     has_trailing = bool(parsed.trailing_raw)
     issues = [
         SemanticIssue(
@@ -182,6 +192,8 @@ def export_threat_update_status_semantics(
             ),
         ),
         issues=tuple(issues),
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
         data=JSONObject(
             (
                 ("record_type", f"0x{THREAT_UPDATE_STATUS_TYPE:02X}"),

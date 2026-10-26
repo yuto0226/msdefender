@@ -12,6 +12,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 EXPLICITRESOURCE_TYPE: Final = 0xD6
 _PATH_PREVIEW_CHARS: Final = 64
@@ -106,6 +107,15 @@ def export_explicitresource_semantics(
     parsed: ExplicitResourcePayload,
 ) -> RuleSemantics:
     """Export the confirmed path storage and case-insensitive runtime lookup."""
+    claim, claim_evidence = scoped_claim(
+        "explicitresource",
+        "path_lookup_candidate",
+        "runtime_consumer",
+        "The receiver stores a path row and the observed runtime path lookup can produce a match candidate.",
+        "The tail grammar, status/block handling, and final verdict are unknown.",
+        "consumer",
+        "explicitresource receiver and case-insensitive path lookup",
+    )
     try:
         path_text = parsed.path_raw.decode("utf-16le")
     except UnicodeDecodeError:
@@ -153,6 +163,8 @@ def export_explicitresource_semantics(
     return RuleSemantics(
         status="confirmed_subset" if supported else "unsupported",
         representation="explicitresource.path_lookup.ir.v1",
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),

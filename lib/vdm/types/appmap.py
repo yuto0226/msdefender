@@ -13,6 +13,7 @@ from ..core import (
     SemanticIssue,
     SemanticJSONValue,
 )
+from ._semantic_claims import scoped_claim
 
 APPMAP_TYPE: Final = 0xE8
 MAX_SECTIONS: Final = 16
@@ -191,6 +192,15 @@ def _json_object(**values: SemanticJSONValue) -> JSONObject:
 
 def export_appmap_semantics(parsed: AppMapPayload) -> RuleSemantics:
     """Export the confirmed runtime candidate-matching operations."""
+    claim, claim_evidence = scoped_claim(
+        "appmap",
+        "candidate_report_chain",
+        "runtime_consumer",
+        "Observed consumers turn decoded section/opcode rows into match candidates and pass them to later policy processing.",
+        "Namespace/product naming and final verdict semantics are unknown.",
+        "consumer",
+        "PUA app-map candidate consumers and path-key lookup",
+    )
     issues: list[SemanticIssue] = []
     sections: list[JSONObject] = []
     unsupported = bool(parsed.trailing_raw)
@@ -410,6 +420,8 @@ def export_appmap_semantics(parsed: AppMapPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
         representation="pua_appmap.candidate_ir.v4",
         data=_json_object(
             raw_hex=parsed.raw.hex(),

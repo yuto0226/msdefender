@@ -13,6 +13,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 HOSTSENTRY_TYPE: Final = 0x64
 ADDRESS_NULL_SENTINEL: Final = b"NULL"
@@ -142,6 +143,15 @@ def _hosts_domain_suffix(hostname: bytes) -> tuple[int, bytes] | None:
 
 def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
     """Export confirmed insertion/lookup behavior without naming report results."""
+    claim, claim_evidence = scoped_claim(
+        "hostsentry",
+        "callback_candidate",
+        "runtime_consumer",
+        "The runtime callback looks up exact entries by address key and wildcard entries by derived domain key.",
+        "The domain's product meaning, callback result meaning, and final verdict are unknown.",
+        "consumer",
+        "hosts_callback @ 0x1804E9580",
+    )
     address_length = len(parsed.address_raw)
     hostname_length_offset = 1 + address_length
     hostname_offset = hostname_length_offset + 1
@@ -420,6 +430,8 @@ def export_hostsentry_semantics(parsed: HostsentryPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
     )
 
 

@@ -14,6 +14,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 _PREVIEW = 64
 _TEXT_PREVIEW = 512
@@ -133,6 +134,15 @@ def render_brute(parsed: BrutePayload) -> FormatResult:
 
 def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
     """Export the confirmed BM candidate subset without claiming a verdict."""
+    claim, claim_evidence = scoped_claim(
+        "brute",
+        "candidate_bm_subset",
+        "runtime_consumer",
+        "Registration and receiver state feed a candidate subset to the observed Boyer–Moore matcher and validator path.",
+        "Search direction, reported position semantics, and final verdict are unknown.",
+        "consumer",
+        "init_brute @ 0x180AFD578; kcrce_pushBrute @ 0x1800FEE80; Kcrce_SearchBrute",
+    )
     pattern_data, pattern_issues = serialize_bm_pattern(parsed.pattern)
     name_length = len(parsed.name_bytes)
     body_offset = 1 + name_length + 1 + 1 + 4 + 4
@@ -320,6 +330,8 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
             "Kcrce_SearchBrute documents validator result routing without a final-verdict mapping",
         ),
         profile=f"mpengine-{parsed.pattern.profile}",
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
         issues=(
             SemanticIssue(
                 "outer_verdict_unknown",

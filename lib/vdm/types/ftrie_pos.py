@@ -12,6 +12,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 FTRIE_POS_TYPE: Final = 0xCD
 _DWORD_SIZE: Final = 4
@@ -148,6 +149,15 @@ def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
 
 def export_ftrie_pos_semantics(parsed: FTriePosPayload) -> RuleSemantics:
     """Export the six-slot set update and its exact DWORD wire encoding."""
+    claim, claim_evidence = scoped_claim(
+        "ftrie_pos",
+        "best_position_subset",
+        "runtime_consumer",
+        "The runtime consumer performs a DwordsSet-backed best-position lookup over four-byte windows.",
+        "This does not establish a hash-table implementation, enum value meaning, linkage behavior, or final verdict.",
+        "consumer",
+        "FTBestPos::findBestPos data flow",
+    )
     framing = JSONArray(
         (
             _wire_field("set_id", parsed.raw[0:1], 0),
@@ -232,6 +242,8 @@ def export_ftrie_pos_semantics(parsed: FTriePosPayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
     )
 
 

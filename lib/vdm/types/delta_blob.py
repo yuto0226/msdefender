@@ -15,6 +15,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 DELTA_BLOB_TYPE: Final = 0x73
 HEADER_SIZE: Final = 8
@@ -257,6 +258,15 @@ def render_delta_blob(parsed: DeltaBlob) -> FormatResult:
 
 def export_delta_blob_semantics(parsed: DeltaBlob) -> RuleSemantics:
     """Export the complete observed patch program without calling it a rule."""
+    claim, claim_evidence = scoped_claim(
+        "delta_blob",
+        "patch_artifact",
+        "runtime_consumer",
+        "The consumer interprets framed commands as a compressed input patch artifact and exposes expected output size and CRC metadata.",
+        "This does not establish detection semantics, codec semantics beyond observed framing, or a final verdict.",
+        "consumer",
+        "DispatchRecords @ 0x1800F99A8; ConsumeInputCompressed @ 0x1800D9ED0",
+    )
     commands = JSONArray(
         tuple(
             JSONObject(
@@ -355,6 +365,8 @@ def export_delta_blob_semantics(parsed: DeltaBlob) -> RuleSemantics:
                 (("expected_crc32_raw", parsed.expected_output_crc32),),
             ),
         ),
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
     )
 
 

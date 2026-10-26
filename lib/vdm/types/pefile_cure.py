@@ -12,6 +12,7 @@ from ..core import (
     RuleSemantics,
     SemanticIssue,
 )
+from ._semantic_claims import scoped_claim
 
 PEFILE_CURE_TYPE: Final = 0x3D
 BASE_SIZE: Final = 12
@@ -134,6 +135,15 @@ def _selector_dispatch(selector: int) -> JSONObject:
 
 def export_pefile_cure_semantics(parsed: PeFileCure) -> RuleSemantics:
     """Export confirmed lookup/dispatch structure without cure meaning."""
+    claim, claim_evidence = scoped_claim(
+        "pefile_cure",
+        "candidate_selection",
+        "runtime_consumer",
+        "The name-CRC lookup selects a template row and its selector chooses a cure-candidate routine or constant result.",
+        "Method action semantics and any final scan verdict are unknown.",
+        "consumer",
+        "pef_initmodule and pef_cleanfile",
+    )
     issues = [
         SemanticIssue(
             "cure_action_unknown",
@@ -224,6 +234,8 @@ def export_pefile_cure_semantics(parsed: PeFileCure) -> RuleSemantics:
         evidence=("mpengine 1.443.903.0 pef_initmodule and pef_cleanfile",),
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
+        claims=(claim,),
+        claim_evidence=(claim_evidence,),
     )
 
 
