@@ -142,7 +142,8 @@ _CONTEXTUAL_FLAG_EFFECTS = (
     (0x0020, "bm_crc_virtual_type_vector"),
     (0x0040, "validator_gate"),
     (0x0080, "bm_match_option_bit_1"),
-    (0x0200, "full_subject_copy_in_search_mode_1"),
+    # The worker checks HstrContext.family_index (+0x50), not search_mode.
+    (0x0200, "macro_full_subject_copy"),
 )
 _RECEIVER_FLAG_MASK = 0x03FF
 _PE_DYNAMIC_PAGE_HSTR_FAMILIES = frozenset({0x78, 0x85})
