@@ -1024,7 +1024,9 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
     predicate_unknowns = [
         SemanticUnknown(
             "detection_predicate",
-            "Outer exception, signature-validity, and scan arbitration gates are not closed.",
+            "CFG outcomes and long-target gates depend on stubbed services; the "
+            "complete caller, real provider/I/O/hash services, and final verdict "
+            "are not closed.",
         )
     ]
     if parsed.allow_larger:
@@ -1038,15 +1040,17 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         id="static_hash_consumer",
         scope="runtime_consumer",
         statement=(
-            "The analyzed lookup and comparator consume the CRC candidate keys, "
-            "file-size policy, and mode-specific hash over the record-selected file range."
+            "The analyzed lookup and comparator consume CRC candidate keys, size "
+            "gates, prefix/tail CRC checks with larger-file tail fallback, and "
+            "mode-hash comparison over the record-selected range."
         ),
         coverage="subset",
         evidence_refs=("static_consumer",),
         unknowns=(
             SemanticUnknown(
                 "runtime_consumer",
-                "Provider selection and all caller-specific input origins are not closed.",
+                "Provider selection, untested branches, and real I/O/GetHashes "
+                "behavior are not established by this bounded test.",
             ),
         ),
     )
@@ -1054,12 +1058,33 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         id="static_detection_predicate",
         scope="detection_predicate",
         statement=(
-            "At the local STATIC matcher boundary, the staged CRC, size-policy, "
-            "and selected hash comparisons must succeed."
+            "At the local STATIC matcher boundary, size policy, "
+            "prefix/tail CRC, applicable CFG prehash gates, and hash comparison "
+            "must pass; longer targets also depend on exception-name or "
+            "valid-signature checks."
         ),
         coverage="subset",
         evidence_refs=("static_consumer",),
         unknowns=tuple(predicate_unknowns),
+    )
+    control_flow_claim = SemanticClaim(
+        id="static_comparison_control_flow",
+        scope="runtime_consumer",
+        statement=(
+            "In 27 bounded differential cases, real CompareValues control flow "
+            "confirmed the mode filter, size gates, prefix/tail CRC fallback, "
+            "CFG prehash gates, and long-target signed/exception gates."
+        ),
+        coverage="subset",
+        evidence_refs=("static_comparison_control_flow_test",),
+        unknowns=(
+            SemanticUnknown(
+                "runtime_consumer",
+                "UfsSeekRead, get_threat_name, IsExceptionName, CheckConfig, "
+                "GetHashes, and IsValidSigned were stubbed; untested branches, "
+                "real provider/I/O/hash services, and final result remain unknown.",
+            ),
+        ),
     )
     return RuleSemantics(
         status="unsupported" if recid_unsupported else "confirmed_subset",
@@ -1202,7 +1227,9 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                             "prefix_crc_up_to_min(file_size, 65536)",
                             "tail_crc_of_record_tail_up_to_4096_bytes_zero_prefixed_when_short",
                             "file_size_policy",
+                            "applicable_CFG_pre_hash_gate",
                             "mode_specific_hash_validation",
+                            "long_target_exception_or_signature_gate",
                         )
                     ),
                 ),
@@ -1240,6 +1267,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             receiver_claim,
             consumer_claim,
             predicate_claim,
+            control_flow_claim,
             SemanticClaim(
                 id="static_report_mapping",
                 scope="report_mapping",
@@ -1285,6 +1313,25 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                     "StaticHashProvider::CompareValues @ 0x1800F8490"
                 ),
                 supports=(consumer_claim.id, predicate_claim.id),
+            ),
+            SemanticEvidence(
+                id="static_comparison_control_flow_test",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref=(
+                    "mpengine path label 1.443.903.0; PE fixed version "
+                    "1.1.25110.1; SHA-256 "
+                    "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3"
+                ),
+                locator=(
+                    "ignored tests/local_static_engine_differential.py; "
+                    "docs/mpengine.dll/1.443.903.0/STATIC_comparevalues_differential_probe.md; "
+                    "27 new cases (128 total); real CompareValues/GetSize/CRC_0/CRC_1/"
+                    "CRCZeroes/CompareHash/Get/memcmp/strncmp; stubbed UfsSeekRead, "
+                    "get_threat_name, IsExceptionName, CheckConfig, GetHashes, "
+                    "IsValidSigned"
+                ),
+                supports=(control_flow_claim.id,),
             ),
         ),
     )
