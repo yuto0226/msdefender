@@ -129,6 +129,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     }
     callback_target = callback_targets.get(parsed.callback_index)
     business_semantics = callback_semantics.get(parsed.callback_index, "unknown")
+    has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
     if callback_target is None:
         issues.append(
@@ -178,7 +179,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status=status,
-        representation="ndat.counted_data_callback_suffix.v2",
+        representation="ndat.counted_data_callback_suffix.v3",
         data=JSONObject(
             (
                 ("type", "NDAT"),
@@ -211,6 +212,29 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     else None,
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                (
+                    "loader_handoff",
+                    JSONObject(
+                        (
+                            ("entry_stride", 0x18),
+                            ("record_id_entry_offset", 0x04),
+                            ("record_id_descriptor", 0x1017),
+                            ("record_id_is_wire_dword", False),
+                            (
+                                "record_id_source",
+                                "createrecidz"
+                                if parsed.record_id_suffix_raw is not None
+                                else "createrecid",
+                            ),
+                            ("record_id_value", None),
+                            (
+                                "record_id_value_requirement",
+                                "loader context and record-ID creation state",
+                            ),
+                            ("post_callback_record_id_argument", 3),
+                        )
+                    ),
+                ),
                 (
                     "record_name_role",
                     "absent"
@@ -275,15 +299,56 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 ),
             ),
             SemanticClaim(
+                "ndat-record-id-handoff",
+                "receiver_transform",
+                "Descriptor 0x1017 creates the normalized entry +0x04 record ID "
+                "with createrecid or createrecidz; NdatPostCallback passes it as "
+                "callback argument 3. This DWORD is not a wire flags field.",
+                "subset",
+                ("ndat-record-id-receiver-evidence",),
+                (
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "The numeric record ID depends on loader context and "
+                        "record-ID creation state; suffix bytes alone do not "
+                        "establish its value.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
                 "ndat-callback-schema",
                 "runtime_consumer",
-                "NDAT callback input/output semantics are only claimed where that callback has a traced schema; other callback business effects remain unknown.",
-                "unknown",
-                (),
+                (
+                    "For callback 5/22 accepting non-null data (callback 5 "
+                    "outside the sandbox), the loader-created record ID is "
+                    "passed as LogSkip::AddString argument 4. On the ordinary "
+                    "LogSkipEntry path it is stored at +0x6C; the trusted-process "
+                    "branch does not forward that ID. ConfirmMatch's "
+                    "full-success path copies "
+                    "it to out_record_id; Check uses that value for WPP logging. "
+                    "The separate +0x60 process flags derive from rule-string "
+                    "prefixes, not the loader DWORD. This traces ingestion and "
+                    "record-ID provenance, not a complete matching predicate."
+                    if has_logskip_consumer
+                    else "The callback target does not establish a traced "
+                    "callback-specific schema or downstream business effect."
+                ),
+                "subset" if has_logskip_consumer else "unknown",
+                ("ndat-logskip-consumer-evidence",) if has_logskip_consumer else (),
                 (
                     SemanticUnknown(
                         "runtime_consumer",
-                        "Callback-specific schema and effects are unresolved for this record.",
+                        (
+                            "The complete callback-specific rule grammar, "
+                            "matching behavior, and downstream policy are not "
+                            "modeled; alternate AddString storage paths are "
+                            "outside this ordinary-entry claim. ConfirmMatch "
+                            "also has an early-success "
+                            "path that does not write out_record_id."
+                            if has_logskip_consumer
+                            else "Callback-specific schema and effects are "
+                            "unresolved for this record."
+                        ),
                     ),
                 ),
             ),
@@ -315,6 +380,38 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 "engine_static",
                 "ReceiveNewTemplate / NdatPostCallback callback table and registration sites",
                 ("ndat-callback-dispatch",),
+            ),
+            SemanticEvidence(
+                "ndat-record-id-receiver-evidence",
+                "receiver",
+                "engine_static",
+                "ReceiveNewTemplate 0x1803224D0/0xB70: descriptor 0x1017 "
+                "createrecidz call 0x180322983 / createrecid call 0x1803229D5, "
+                "store 0x1803226C7 to entry +4; NdatPostCallback "
+                "0x180464800/0x186 reads +4 at 0x18046488C, dispatches at "
+                "0x180464899 (pseudocode anchor 0x18046489F)",
+                ("ndat-record-id-handoff",),
+            ),
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-logskip-consumer-evidence",
+                        "consumer",
+                        "engine_static",
+                        "LogSkipNdatCallback 0x18005B7C0/0x68 and "
+                        "CAsrNotAllowedNdatCallback 0x1805009C0/0x59 forward "
+                        "record ID to LogSkip::AddString 0x18005C630/0xE66 "
+                        "argument 4 (v77), vector construction 0x18005CBEC; "
+                        "LogSkipEntry constructor 0x180218F7C/0x140 stores "
+                        "+0x6C at 0x180218FF6; ConfirmMatch "
+                        "0x180288EE4/0x470 full-success output 0x18028931E; "
+                        "Check 0x180287DE0/0x1104 sigseqfromrecid WPP use "
+                        "0x1802881C4; process flags remain separate at +0x60",
+                        ("ndat-callback-schema",),
+                    ),
+                )
+                if has_logskip_consumer
+                else ()
             ),
         ),
     )
