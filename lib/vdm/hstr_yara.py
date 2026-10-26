@@ -261,6 +261,7 @@ def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
         f'        profile = "{PROFILE}"\n'
         '        artifact_scope = "selected-subject score eligibility"\n'
         f'        subject_contract = "{profile["scanner_contract"]}: fresh state, exact single span"\n'
+        '        candidate_enumeration = "caller must ensure ordinary trie enumeration; AMS equivalence unproven"\n'
         + (
             '        state_precondition = "externally ensured fresh empty hit container; RPF API does not guarantee per-call reset"\n'
             '        macro_scope = "single actual caller buffer; preprocessing, selection, offset policy and reporting excluded"\n'
@@ -299,6 +300,8 @@ def export_hstr_yara(parsed: HstrPayload) -> ArtifactExport:
             "input": profile["input"],
             "requires_caller_selects_exact_same_subject_span": True,
             "requires_fresh_empty_hit_container": True,
+            "requires_ordinary_trie_candidate_enumeration": True,
+            "ams_candidate_equivalence": "unproven",
             "search_mode": 1,
             "dynamic_mask": 0,
             "static_hit_key_mask": 0,

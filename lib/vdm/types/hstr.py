@@ -615,6 +615,25 @@ def _hstr_scanner_context(type_byte: int) -> JSONObject | None:
                 context.get("cross_boundary_pattern", "unknown"),
             ),
             ("invocation_reset", context.get("invocation_reset", "unknown")),
+            (
+                "candidate_enumeration",
+                JSONObject(
+                    (
+                        ("runtime_selection_dependency", "ordinary_trie_or_AMS"),
+                        ("ams_selection_confirmed", True),
+                        ("search_mode_1_guarantees_ordinary_trie", False),
+                        ("ams_candidate_equivalence", "unproven"),
+                        (
+                            "ordinary_trie_condition",
+                            "trie+0xC0 is null or MatchState+0x08 is UINT64_MAX",
+                        ),
+                        (
+                            "ams_success_exhaustion",
+                            "returns false without continuing ordinary trie",
+                        ),
+                    )
+                ),
+            ),
             ("final_verdict", "unknown"),
         )
     )
@@ -1416,6 +1435,10 @@ def _hstr_typed_semantics(
                             "detection_predicate",
                             "Opaque BM operations, contextual flags, scanner policy, and record-to-threat composition remain outside this subset.",
                         ),
+                        SemanticUnknown(
+                            "detection_predicate",
+                            "AMS can be selected even in search mode 1; equivalence of its candidate set with ordinary trie enumeration is unproven.",
+                        ),
                     ),
                 ),
             )
@@ -1427,7 +1450,11 @@ def _hstr_typed_semantics(
                 kind="engine_static",
                 source_ref="mpengine 1.443.903.0",
                 locator=(
-                    f"{consumer_locator}; hstr_internal_search_worker @ 0x1800E9F70"
+                    f"{consumer_locator}; hstr_internal_search_worker @ 0x1800E9F70; "
+                    "candidate initialization @ 0x1800EA023-0x1800EA0AE and "
+                    "0x1800EB68A; FilteredTrie::match @ 0x1800EB850 "
+                    "selects ordinary trie when this+0xC0 is null or "
+                    "MatchState+0x08 is UINT64_MAX (0x1800EB8C5, 0x1800EBCEB)"
                 ),
                 supports=(
                     f"{prefix}_runtime_consumer",
