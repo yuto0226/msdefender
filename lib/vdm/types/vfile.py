@@ -226,6 +226,8 @@ def _span(offset: int, length: int) -> JSONObject:
 def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
     """Export confirmed receiver framing while preserving opaque entry bytes."""
     prefix_size = 4 if parsed.signature_type == VFILEEX_TYPE else 0
+    supplied_length = len(parsed.tail_raw) & 0xFFFFFFFF
+    source_is_u32_vdm_payload = len(parsed.raw) <= 0xFFFFFFFF
     entries: list[SemanticJSONValue] = []
     text_issues: list[SemanticIssue] = []
     for index in range(parsed.entry_count):
@@ -309,6 +311,7 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                     ("prefix_raw_hex", entry[:_ENTRY_PREFIX_SIZE].hex()),
                     ("receiver_copied_field", copied_field),
                     ("path_candidate", path_object),
+                    ("initial_data_reference_if_newly_retained", "tail"),
                 )
             )
         )
@@ -376,7 +379,10 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                         ),
                         (
                             "content_source",
-                            "MpFileDataEntry ByteStream from kstoreex tail",
+                            (
+                                "initial shared virtual-file data: supplied tail bytes "
+                                "after successful fresh receiver storage"
+                            ),
                         ),
                     )
                 ),
@@ -394,7 +400,31 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                         ),
                         ("raw_hex", parsed.tail_raw.hex()),
                         ("consumer", "kstoreex"),
-                        ("framing_semantics", "unknown"),
+                        ("role", "initial_shared_virtual_file_data"),
+                        ("source_is_u32_vdm_payload", source_is_u32_vdm_payload),
+                        ("storage_flags", 4),
+                        ("receiver_supplied_length", supplied_length),
+                        (
+                            "receiver_length_operation",
+                            "u32(data_size - entry_region_size)",
+                        ),
+                        ("initial_content_length", supplied_length),
+                        (
+                            "full_tail_byte_equivalence",
+                            True if source_is_u32_vdm_payload else None,
+                        ),
+                        (
+                            "profile_requirement",
+                            (
+                                "u32-bounded source VDM payload and successful fresh offline "
+                                "load with non-null kstoreex(flags=4) result"
+                            ),
+                        ),
+                        ("newly_retained_entries_share_pointer_and_length", True),
+                        ("runtime_data_pointer_offset", 0x210),
+                        ("runtime_data_length_offset", 0x218),
+                        ("later_content_immutability", None),
+                        ("os_file_equivalence", None),
                     )
                 ),
             ),
@@ -429,8 +459,8 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
             unknowns=(
                 SemanticUnknown(
                     "wire_layout",
-                    "The internal kstoreex tail framing and the 44-byte entry prefix "
-                    "remain unresolved.",
+                    "The producer interpretation of the ignored 44-byte entry prefix "
+                    "and 28-byte entry suffix remains unresolved.",
                 ),
             ),
         ),
@@ -456,16 +486,25 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
             statement=(
                 "The receiver copies each retained entry's bounded 520-byte UTF-16LE "
                 "name field, overwrites its last code unit with NUL (at most 518 "
-                "content bytes), and pairs it with a ByteStream "
-                "constructed from the kstoreex tail."
+                "content bytes). For a u32-bounded source VDM payload and "
+                "successful fresh offline load, kstoreex "
+                "flags 4 preserves supplied tail bytes and unsigned 32-bit length "
+                "without decoding, headers or added NUL. All newly retained entries "
+                "share that stored pointer and length as initial virtual-file data."
             ),
             coverage="subset",
-            evidence_refs=("vfile_receiver",),
+            evidence_refs=(
+                "vfile_receiver",
+                "vfile_initial_data_static",
+                "vfile_initial_data_native",
+            ),
             unknowns=(
                 SemanticUnknown(
                     "receiver_transform",
-                    "The entry-retention predicate, entry-prefix fields, and kstoreex "
-                    "transform are not projected.",
+                    "Entry retention, prior same-name entries, cross-record storage "
+                    "sharing, later writes and cached/global load lifecycle are not "
+                    "projected. Initial data is not an OS-file identity or "
+                    "maliciousness assertion.",
                 ),
             ),
         ),
@@ -552,6 +591,39 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
             supports=("vfile_wire_layout", "vfile_receiver_projection"),
         ),
         SemanticEvidence(
+            id="vfile_initial_data_static",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "receiver 0x1802C8AA8/0x1802C8AB3 truncates supplied size to u32; "
+                "kstoreex 0x1803AC26C -> kpushobjectex 0x1800FC300 -> "
+                "kstore_copy_buff 0x1800FC594: memmove calls 0x1800FC6AE/"
+                "0x1800FC77E, flags-4 alignment 0x1800FC764; "
+                "kpopobjectex 0x1800F9520 returns block base + handle offset"
+            ),
+            supports=("vfile_receiver_projection",),
+        ),
+        SemanticEvidence(
+            id="vfile_initial_data_native",
+            axis="receiver",
+            kind="engine_equivalent_test",
+            source_ref=(
+                "Pinned DLL SHA256 "
+                "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                "local_kstoreex_vfile_probe executes original store/push/copy/pop, "
+                "XXH, memmove and memcmp with only a VirtualAlloc OS seam and "
+                "artificial initialized store; sizes 1/3/4096/4097/65537/263936 "
+                "preserve exact bytes and lengths, including aligned dedup, "
+                "unaligned copy, no-hash and new-block allocation paths"
+            ),
+            locator=(
+                "kstoreex flags=4 success paths; no allocation-failure, hash-table "
+                "growth, old-block search or full VFS lifecycle execution"
+            ),
+            supports=("vfile_receiver_projection",),
+        ),
+        SemanticEvidence(
             id="vfile_consumer",
             axis="consumer",
             kind="engine_static",
@@ -596,7 +668,7 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
         )
     return RuleSemantics(
         status="confirmed_subset",
-        representation="vfile.receiver_vfs_entry.ir.v4",
+        representation="vfile.receiver_vfs_entry.ir.v5",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 vfileAndVfileexReceiver @ 0x1802C8A58",
@@ -616,9 +688,10 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                 "detection semantics.",
             ),
             SemanticIssue(
-                "tail_framing_unknown",
-                "Bytes after the fixed-stride entry region are retained as raw tail; "
-                "their internal framing is unknown.",
+                "initial_virtual_file_data_scope",
+                "The supplied tail is initial shared virtual-file data on successful "
+                "fresh receiver loads. Later writes, cached/global load lifecycle "
+                "and OS-file identity are outside the byte-preservation proof.",
                 (("length", len(parsed.tail_raw)),),
             ),
         ),
