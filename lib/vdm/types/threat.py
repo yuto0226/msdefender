@@ -598,6 +598,57 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                     ),
                 ),
                 (
+                    "registration_census",
+                    JSONObject(
+                        (
+                            (
+                                "scope",
+                                "direct_and_data_xrefs_to_two_registration_writers",
+                            ),
+                            ("direct_callsites", 171),
+                            ("classified_callsites", 171),
+                            ("unresolved_callsites", 0),
+                            ("unprocessed_direct_callsites", 0),
+                            ("data_xrefs", 2),
+                            ("classified_data_xrefs", 2),
+                            ("to_entry_xrefs", 0),
+                            (
+                                "pdata_metadata_xrefs",
+                                JSONArray(("0x1812B96A0", "0x1812B0958")),
+                            ),
+                            ("unresolved_static_xrefs", 0),
+                            ("recovered_type_0x5d_registrations", 0),
+                            (
+                                "classified_direct_constructor_examples",
+                                JSONArray(
+                                    (
+                                        "0x1802C60F7: kcrce_t, type 0x80",
+                                        "0x1805A23D7: pestaticex_t, type 0xCB",
+                                        "0x1805C10B7: snidex_entry_t, type 0xE5",
+                                        "0x1805DF966: revokedcert_t, type 0x6C",
+                                    )
+                                ),
+                            ),
+                            (
+                                "constructor_examples_exhaustive",
+                                False,
+                            ),
+                            (
+                                "conclusion",
+                                (
+                                    "All 171 direct callsites and both data xrefs were "
+                                    "classified. The data xrefs at 0x1812B96A0 and "
+                                    "0x1812B0958 are PE .pdata RUNTIME_FUNCTION metadata, "
+                                    "not function pointers; to-entry xrefs are zero and "
+                                    "unresolved static xrefs are zero. This static census "
+                                    "does not exclude computed or runtime-dynamic calls, "
+                                    "so it is not a global absence claim."
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                (
                     "error_boundary",
                     (
                         "Malformed framing returns 40964; receiver errors propagate; "
@@ -614,6 +665,12 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
             "mpengine 1.443.903.0 DispatchRecord @ 0x1800FAF18",
             "mpengine 1.443.903.0 threat_mgr_init_module @ 0x1809EBA10",
             "mpengine 1.443.903.0 threat_info_end @ 0x1809EB100",
+            (
+                "mpengine 1.443.903.0 bounded static-xref census: 171 direct callsites "
+                "and 2 data xrefs classified; both data xrefs are PE .pdata "
+                "RUNTIME_FUNCTION metadata, with zero to-entry xrefs and zero "
+                "unresolved static xrefs; computed/runtime dynamic calls are not excluded"
+            ),
         ),
         profile="mpengine-1.443.903.0",
         issues=(
@@ -627,6 +684,23 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                 "No inspected current-binary path establishes type 0x5D as a "
                 "scan-time detection predicate or verdict; a threat-group "
                 "closing role is also not established.",
+            ),
+            SemanticIssue(
+                "threat_end_dynamic_registration_boundary",
+                "The bounded static census classifies all 171 direct callsites and "
+                "both data xrefs; both data xrefs are PE .pdata RUNTIME_FUNCTION "
+                "metadata, not function pointers, and unresolved_static_xrefs is zero. "
+                "Computed or runtime-dynamic calls remain outside this census.",
+                (
+                    ("direct_callsites", 171),
+                    ("classified_callsites", 171),
+                    ("unresolved_callsites", 0),
+                    ("data_xrefs", 2),
+                    ("classified_data_xrefs", 2),
+                    ("to_entry_xrefs", 0),
+                    ("unresolved_static_xrefs", 0),
+                    ("computed_runtime_dynamic_calls_ruled_out", False),
+                ),
             ),
             *(
                 (
@@ -653,7 +727,8 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                 unknowns=(
                     SemanticUnknown(
                         "loader_dispatch",
-                        "The DWORD meaning and any uninspected 0x5D paths are unresolved.",
+                        "The DWORD meaning remains unresolved; computed or runtime-dynamic "
+                        "registration paths are outside the static-xref census.",
                     ),
                 ),
             ),
