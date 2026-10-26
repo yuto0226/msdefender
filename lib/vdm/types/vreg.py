@@ -263,6 +263,47 @@ def _wire_field(kind: str, raw: bytes, offset: int) -> JSONObject:
     )
 
 
+def _semantic_utf16_string(
+    raw: bytes,
+    units: int,
+    offset: int,
+    field: str,
+    issues: list[SemanticIssue],
+) -> JSONObject:
+    terminator_at = next(
+        (index for index in range(0, len(raw), 2) if raw[index : index + 2] == b"\0\0"),
+        len(raw),
+    )
+    effective_raw = raw[:terminator_at]
+    texts: list[str | None] = []
+    for stage, content in (("wire", raw), ("effective_c_string", effective_raw)):
+        try:
+            text = content.decode("utf-16le")
+        except UnicodeDecodeError:
+            text = None
+            issues.append(
+                SemanticIssue(
+                    "utf16_text_projection_unavailable",
+                    "Raw UTF-16 units are retained, but this string has no "
+                    "well-formed Unicode text projection; this is not engine rejection.",
+                    (("field", field), ("stage", stage)),
+                )
+            )
+        texts.append(text)
+    wire_text, effective_text = texts
+    return JSONObject(
+        (
+            ("wire", _wire_field("utf16le_code_units", raw, offset)),
+            ("unit_count", units),
+            ("wire_text", wire_text),
+            ("wire_utf16_well_formed", wire_text is not None),
+            ("effective_c_string", effective_text),
+            ("effective_c_string_raw_hex", effective_raw.hex()),
+            ("effective_utf16_well_formed", effective_text is not None),
+        )
+    )
+
+
 def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
     """Export only VREG behavior confirmed in the selected engine profile."""
     key_end = 3 + len(parsed.key_raw)
@@ -303,10 +344,16 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
                 (("length", len(parsed.trailing_raw)),),
             )
         )
+    key_projection = _semantic_utf16_string(
+        parsed.key_raw, parsed.key_units, 3, "key", issues
+    )
+    name_projection = _semantic_utf16_string(
+        parsed.name_raw, parsed.name_units, name_offset, "value_name", issues
+    )
 
     return RuleSemantics(
         status="confirmed_subset",
-        representation="vreg.virtual_registry_write.ir.v4",
+        representation="vreg.virtual_registry_write.ir.v5",
         data=JSONObject(
             (
                 ("type", "VREG"),
@@ -327,36 +374,8 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
                         )
                     ),
                 ),
-                (
-                    "key",
-                    JSONObject(
-                        (
-                            (
-                                "wire",
-                                _wire_field("utf16le_code_units", parsed.key_raw, 3),
-                            ),
-                            ("unit_count", parsed.key_units),
-                            ("wire_text", parsed.key_wire),
-                            ("effective_c_string", parsed.key),
-                        )
-                    ),
-                ),
-                (
-                    "value_name",
-                    JSONObject(
-                        (
-                            (
-                                "wire",
-                                _wire_field(
-                                    "utf16le_code_units", parsed.name_raw, name_offset
-                                ),
-                            ),
-                            ("unit_count", parsed.name_units),
-                            ("wire_text", parsed.name_wire),
-                            ("effective_c_string", parsed.name),
-                        )
-                    ),
-                ),
+                ("key", key_projection),
+                ("value_name", name_projection),
                 (
                     "write",
                     JSONObject(
