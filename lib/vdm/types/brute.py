@@ -138,10 +138,17 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
         "brute",
         "candidate_bm_subset",
         "runtime_consumer",
-        "Registration and receiver state feed a candidate subset to the observed Boyer–Moore matcher and validator path.",
-        "Search direction, reported position semantics, and final verdict are unknown.",
+        "The two passes select current UFS object edge caches and call a forward "
+        "buffer BM matcher with an identity map and a loaded-entry-derived pattern suffix.",
+        "FTBestPos and trie-prefix/suffix predicate equivalence, escaped-90 "
+        "coordinates, first-pass position/counter semantics, and final verdict "
+        "remain unresolved; object-byte projection requires fresh, consistent, full reads.",
         "consumer",
-        "init_brute @ 0x180AFD578; kcrce_pushBrute @ 0x1800FEE80; Kcrce_SearchBrute",
+        "init_brute @ 0x180AFD578; kcrce_pushBrute @ 0x1800FEE80; "
+        "kcrce_pushBrute_end @ 0x1804B9890 writes +0x0C/+0x0E at "
+        "0x1804B99F7..0x1804B9A0B; Kcrce_SearchBrute suffix args "
+        "0x180131C79..0x180131CCA; LoadHeader @ 0x1801D7F10; "
+        "LoadFooter @ 0x180463EE4; BM_MAP_ALL 256 identity bytes @ 0x180DBB7C0",
     )
     pattern_data, pattern_issues = serialize_bm_pattern(parsed.pattern)
     name_length = len(parsed.name_bytes)
@@ -192,26 +199,107 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
                         ),
                         ("match_function", "BMMatchEx2"),
                         ("subject_reader", "BMSBufferReader"),
-                        ("subject_base_argument", "subject buffer base"),
-                        ("subject_size_argument", "subject buffer size"),
+                        ("subject_base_argument", "current pass window base"),
+                        ("subject_size_argument", "W = min(reply[+0x50], 4096)"),
                         (
                             "start_argument",
-                            "subject base + KCRCE loop candidate offset",
+                            "subject base + K",
                         ),
                         (
                             "remaining_size_argument",
-                            "subject size - KCRCE loop candidate offset",
+                            "W - K",
                         ),
-                        ("pattern_argument", "KCRCE entry +0x00 BM object"),
-                        ("pattern_size_argument", "KCRCE entry +0x12 body length"),
+                        ("pattern_argument", "loaded entry.pattern + C"),
+                        ("pattern_size_argument", "loaded u16(entry +0x12) - C"),
+                        ("reader_cursor", "K"),
+                        ("reader_limit", "W; both caller extent terms equal W"),
+                        ("reader_direction", "forward in both passes"),
                         ("translation_symbol", "BM_MAP_ALL"),
                         (
                             "translation_semantics",
-                            "caller-selected table; exact byte mapping not reconstructed",
+                            "identity; all 256 BM_MAP_ALL bytes verified in the pinned DLL",
                         ),
                         ("flags_argument", "KCRCE entry +0x16 runtime control flags"),
                         ("capture_output", "caller_supplied_match_end_slot"),
                         ("offsets_vector_supplied", False),
+                        (
+                            "loaded_entry",
+                            JSONObject(
+                                (
+                                    ("trie_segment_offset_entry_offset", 0x0C),
+                                    ("trie_segment_length_entry_offset", 0x0E),
+                                    ("trie_segment_offset_value", None),
+                                    ("trie_segment_length_value", None),
+                                    (
+                                        "source",
+                                        (
+                                            "receiver initializes zero; successful trie insertion "
+                                            "in kcrce_pushBrute_end overwrites both u16 fields"
+                                        ),
+                                    ),
+                                    (
+                                        "A",
+                                        "u16(loaded entry +0x0C) + u16(loaded entry +0x0E)",
+                                    ),
+                                    ("C", "min(A, 10)"),
+                                    ("consumed_prefix_value", None),
+                                    (
+                                        "coordinate_requirement",
+                                        (
+                                            "trie segment uses a literal prefix with escaped 90 90 "
+                                            "deduplicated; equivalence to wire-body coordinates is unproven"
+                                        ),
+                                    ),
+                                )
+                            ),
+                        ),
+                        (
+                            "scan_context",
+                            JSONObject(
+                                (
+                                    ("domain", "current UFS scan object"),
+                                    ("object_size_symbol", "S = current UfsFile size"),
+                                    ("window_size", "W = min(reply[+0x50], 4096)"),
+                                    (
+                                        "direction_domain",
+                                        "both_object_edges"
+                                        if parsed.direction_raw == 0
+                                        else "object_prefix_only"
+                                        if parsed.direction_raw == 1
+                                        else "object_suffix_only"
+                                        if parsed.direction_raw == 2
+                                        else None,
+                                    ),
+                                    (
+                                        "object_byte_projection_requirement",
+                                        (
+                                            "fresh caches, reply size consistent with UfsFile size S, "
+                                            "and complete successful reads"
+                                        ),
+                                    ),
+                                    (
+                                        "cache_caveats",
+                                        (
+                                            "cache reuse, skipped/failed loads and successful short-read "
+                                            "zero padding are not modeled as original object bytes"
+                                        ),
+                                    ),
+                                    ("outer_disk_file_equivalence", None),
+                                    ("middle_object_chunk_scan", False),
+                                    ("trie_offset_symbol", "T"),
+                                    ("candidate_K_when_A_le_10", "T + 1"),
+                                    ("candidate_K_when_A_gt_10", "T - (A - 11)"),
+                                    (
+                                        "call_preconditions",
+                                        (
+                                            "runtime candidate checks: when A > 10, skip if T < A - 11; "
+                                            "assert and skip candidate if C > body_length or K > W; "
+                                            "other prefix/position gates may reject the candidate"
+                                        ),
+                                    ),
+                                )
+                            ),
+                        ),
                         (
                             "candidate_passes",
                             JSONArray(
@@ -220,6 +308,10 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
                                         (
                                             ("pass_flag", 1),
                                             ("subject_base", "reply + 0xC0"),
+                                            (
+                                                "object_interval_if_projectable",
+                                                "[0, W)",
+                                            ),
                                             (
                                                 "direction_filter",
                                                 "skip raw direction 2",
@@ -240,6 +332,10 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
                                             (
                                                 "subject_base",
                                                 "reply + 0x20C0 - window_size",
+                                            ),
+                                            (
+                                                "object_interval_if_projectable",
+                                                "[S - W, S)",
                                             ),
                                             (
                                                 "direction_filter",
@@ -305,8 +401,9 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
                             "unresolved",
                             JSONArray(
                                 (
-                                    "business names for raw direction values and the exact relation between the two reply windows and file/stream direction",
-                                    "business meaning of the position mode and its first-pass state gate",
+                                    "other raw direction values and projection from current UFS objects to outer disk files, streams or caller buffers",
+                                    "FTBestPos-selected trie prefix and BM suffix equivalence, including escaped 90 90 coordinate conversion",
+                                    "business meaning of the position mode and its first-pass nonzero-byte counter/loaded-entry state gate",
                                     "complete mapping from validator result and SCAN_REPLY policy to externally visible threat verdict",
                                 )
                             ),
@@ -319,13 +416,15 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
     data = JSONObject(pattern_data.items + (("outer", outer),))
     return RuleSemantics(
         status="confirmed_subset",
-        representation="brute.bm_candidate.ir.v3",
+        representation="brute.bm_candidate.ir.v4",
         data=data,
         evidence=(
             "BM wire framing and decoded fields for mpengine 1.443.903.0",
             "init_brute @ 0x180AFD578 and kcrce_pushBrute @ 0x1800FEE80",
             "Kcrce_SearchBrute @ 0x180131A38 calls BMMatchEx2 @ 0x1800EC420",
             "Kcrce_SearchBrute applies the documented two-pass filters and match-end gate",
+            "LoadHeader/LoadFooter provide current UFS object edge caches subject to cache/read consistency",
+            "kcrce_pushBrute_end overwrites trie segment fields; BMMatchEx2 receives pattern+C and body_length-C",
             "BM candidate success is followed by ValidateSignatureWithPcode @ 0x180135494",
             "Kcrce_SearchBrute documents validator result routing without a final-verdict mapping",
         ),
@@ -336,7 +435,7 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
             SemanticIssue(
                 "outer_verdict_unknown",
                 "This export confirms only the modeled BM candidate subset. Raw "
-                "direction values have no domain names here, position's business "
+                "direction values outside 0/1/2 remain unmodeled, position's business "
                 "meaning remains unresolved despite its confirmed gates, and validator/report "
                 "branches do not establish an externally visible final verdict.",
                 (
