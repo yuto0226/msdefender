@@ -22,6 +22,7 @@ VFILEEX_TYPE: Final = 0xB2
 _ENTRY_STRIDE: Final = 592
 _ENTRY_PREFIX_SIZE: Final = 44
 _ENTRY_PATH_FIELD_SIZE: Final = 0x208
+_RUNTIME_PATH_CONTENT_SIZE: Final = _ENTRY_PATH_FIELD_SIZE - 2
 _MAX_ENTRY_COUNT: Final = 0x6EB3E4
 _PATH_PREVIEW_CHARS: Final = 80
 _RAW_PREVIEW_BYTES: Final = 24
@@ -44,16 +45,22 @@ class VFilePayload:
     tail_raw: bytes
 
     @property
-    def path(self) -> str | None:
-        """Decode the runtime VFS name after its bounded copy and terminator."""
+    def runtime_path_raw(self) -> bytes | None:
+        """Return content before the receiver's forced NUL, preserving wire fields.
+
+        ``path_raw`` and ``path_terminator`` describe the wire field. The receiver
+        copies 520 bytes to runtime +8, then overwrites runtime +526..527 with NUL.
+        Consequently only the first 518 copied bytes can contribute name content.
+        """
         if self.path_raw is None:
             return None
-        # vfileAndVfileexReceiver copies exactly 0x208 bytes, then writes a
-        # UTF-16 NUL immediately after that field. A full-width field therefore
-        # still forms a terminated runtime name without an in-field NUL.
-        if not self.path_terminated and len(self.path_raw) != _ENTRY_PATH_FIELD_SIZE:
-            return None
-        return self.path_raw.decode("utf-16le", errors="surrogatepass")
+        return self.path_raw[:_RUNTIME_PATH_CONTENT_SIZE]
+
+    @property
+    def path(self) -> str | None:
+        """Decode effective runtime name content, including any lone surrogate."""
+        raw = self.runtime_path_raw
+        return None if raw is None else raw.decode("utf-16le", errors="surrogatepass")
 
 
 def _parse(payload: bytes, signature_type: int) -> VFilePayload:
@@ -155,7 +162,7 @@ def render_vfile(parsed: VFilePayload) -> FormatResult:
     path_preview = (
         "(no entries)"
         if parsed.entry_count == 0
-        else "(no aligned NUL within bounded 520-byte field)"
+        else "(runtime path unavailable)"
         if path is None
         else ascii(path[:_PATH_PREVIEW_CHARS])
     )
@@ -177,8 +184,9 @@ def render_vfile(parsed: VFilePayload) -> FormatResult:
                 ("path_candidate_offset", f"0x{parsed.path_offset:X}"),
                 ("path_chars", str(len(path)) if path is not None else "unknown"),
                 ("path_raw_size", f"{len(parsed.path_raw)} B"),
+                ("runtime_path_raw_size", f"{len(parsed.runtime_path_raw)} B"),
                 (
-                    "path_terminated_within_520B",
+                    "wire_path_terminated_within_520B",
                     str(parsed.path_terminated),
                 ),
             )
@@ -188,7 +196,7 @@ def render_vfile(parsed: VFilePayload) -> FormatResult:
                 ("path_candidate", path_preview),
                 ("path_raw_preview", _hex_preview(parsed.path_raw, _RAW_PREVIEW_BYTES)),
                 (
-                    "path_terminator_candidate",
+                    "wire_path_terminator_candidate",
                     parsed.path_terminator.hex(" ").upper()
                     if parsed.path_terminator is not None
                     else "",
@@ -219,6 +227,7 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
     """Export confirmed receiver framing while preserving opaque entry bytes."""
     prefix_size = 4 if parsed.signature_type == VFILEEX_TYPE else 0
     entries: list[SemanticJSONValue] = []
+    text_issues: list[SemanticIssue] = []
     for index in range(parsed.entry_count):
         entry_offset = prefix_size + index * _ENTRY_STRIDE
         entry = parsed.entries_raw[index * _ENTRY_STRIDE : (index + 1) * _ENTRY_STRIDE]
@@ -236,6 +245,20 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
         path_candidate = (
             path_field if terminator_at is None else path_field[:terminator_at]
         )
+        runtime_content = path_candidate[:_RUNTIME_PATH_CONTENT_SIZE]
+        try:
+            runtime_text = runtime_content.decode("utf-16le")
+        except UnicodeDecodeError:
+            runtime_text = None
+            text_issues.append(
+                SemanticIssue(
+                    "runtime_path_utf16_not_well_formed",
+                    "The receiver's effective name contains unpaired UTF-16 code "
+                    "units. Raw runtime bytes are retained, but no Unicode text "
+                    "projection is emitted; this does not mean engine rejection.",
+                    (("entry_index", index),),
+                )
+            )
         copied_field = JSONObject(
             (
                 (
@@ -253,15 +276,21 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                     _span(entry_offset + _ENTRY_PREFIX_SIZE, len(path_candidate)),
                 ),
                 ("raw_hex", path_candidate.hex()),
-                ("nul_terminated_within_520_bytes", terminator_at is not None),
+                ("wire_nul_terminated_within_520_bytes", terminator_at is not None),
+                ("runtime_content_raw_hex", runtime_content.hex()),
+                ("runtime_utf16_well_formed", runtime_text is not None),
+                (
+                    "runtime_content_wire_span",
+                    _span(entry_offset + _ENTRY_PREFIX_SIZE, len(runtime_content)),
+                ),
                 (
                     "text_candidate",
-                    path_candidate.decode("utf-16le", errors="surrogatepass")
-                    if terminator_at is not None
-                    or len(path_candidate) == _ENTRY_PATH_FIELD_SIZE
-                    else None,
+                    runtime_text,
                 ),
-                ("runtime_terminator_appended", True),
+                (
+                    "runtime_forced_nul_offset_in_copied_field",
+                    _RUNTIME_PATH_CONTENT_SIZE,
+                ),
                 (
                     "runtime_use",
                     (
@@ -329,10 +358,14 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
                     (
                         ("name_field_offset_within_entry", _ENTRY_PREFIX_SIZE),
                         ("name_field_size", _ENTRY_PATH_FIELD_SIZE),
+                        ("runtime_name_content_limit", _RUNTIME_PATH_CONTENT_SIZE),
                         ("encoding", "UTF-16LE"),
                         (
                             "runtime_terminator",
-                            "receiver appends UTF-16 NUL after copied field",
+                            (
+                                "receiver overwrites the final copied UTF-16 code unit "
+                                "at field offset 518 with NUL"
+                            ),
                         ),
                         (
                             "consumer",
@@ -422,7 +455,8 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
             scope="receiver_transform",
             statement=(
                 "The receiver copies each retained entry's bounded 520-byte UTF-16LE "
-                "name field, appends a UTF-16 NUL, and pairs it with a ByteStream "
+                "name field, overwrites its last code unit with NUL (at most 518 "
+                "content bytes), and pairs it with a ByteStream "
                 "constructed from the kstoreex tail."
             ),
             coverage="subset",
@@ -510,7 +544,11 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
             axis="receiver",
             kind="engine_static",
             source_ref="mpengine 1.443.903.0",
-            locator="vfileAndVfileexReceiver @ 0x1802C8A58",
+            locator=(
+                "vfileAndVfileexReceiver @ 0x1802C8A58; memmove 520 bytes "
+                "to runtime +8 at 0x1802C8B2C; forced WORD NUL at runtime "
+                "+526 at 0x1802C8B31"
+            ),
             supports=("vfile_wire_layout", "vfile_receiver_projection"),
         ),
         SemanticEvidence(
@@ -558,7 +596,7 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
         )
     return RuleSemantics(
         status="confirmed_subset",
-        representation="vfile.receiver_vfs_entry.ir.v3",
+        representation="vfile.receiver_vfs_entry.ir.v4",
         data=data,
         evidence=(
             "mpengine 1.443.903.0 vfileAndVfileexReceiver @ 0x1802C8A58",
@@ -569,6 +607,7 @@ def export_vfile_semantics(parsed: VFilePayload) -> RuleSemantics:
         ),
         profile="mpengine-1.443.903.0",
         issues=(
+            *text_issues,
             SemanticIssue(
                 "scan_time_matcher_report_unlocated",
                 "The runtime VFS file-construction consumer is located, but the "
