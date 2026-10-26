@@ -629,7 +629,14 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
     """Export a lossless policy observation without X.509 field guesses."""
     key_end = 2 + parsed.key_len
     trailer_end = key_end + POLICY_TRAILER_SIZE
-    binary_getkey_profile = _binary_getkey_profile(parsed)
+    normalization_profile = (
+        _binary_getkey_profile(parsed)
+        if parsed.mode == "binary"
+        else {
+            **_wide_hex_getkey_profile(parsed),
+            "normalization": "GetKey_wide_hex_subset",
+        }
+    )
     manifest = {
         "schema": "vdm.revoked_certificate.artifact.v1",
         "record_type": {
@@ -649,7 +656,7 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
             "text_raw_hex": parsed.text_raw.hex(),
             "terminator_raw_hex": parsed.terminator_raw.hex(),
             "trailing_raw_hex": parsed.string_trailing_raw.hex(),
-            "normalization_profile": binary_getkey_profile,
+            "normalization_profile": normalization_profile,
         },
         "policy": {
             "filetime": parsed.filetime,
@@ -720,7 +727,8 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
                         "other types hash type plus UTF-8, falling back to "
                         "UTF-16 raw bytes on conversion failure"
                     ),
-                    "implementation": "not_implemented",
+                    "implementation": "confirmed_hex_subset",
+                    "hex_subset": _wide_hex_getkey_profile(parsed),
                     "identity_mapping": "unknown",
                 },
                 "policy_paths": [
@@ -791,6 +799,54 @@ def _binary_getkey_profile(parsed: RevokedCertificate) -> dict[str, object]:
             else None
         ),
     }
+
+
+def _wide_hex_getkey_profile(parsed: RevokedCertificate) -> dict[str, object]:
+    """Model only terminated HASH/BADHASH strings containing ASCII hex."""
+    result: dict[str, object] = {
+        "status": "not_modeled",
+        "normalized_key_hex": None,
+        "unsupported_reason": None,
+    }
+    reason = None
+    if parsed.mode != "string":
+        reason = "key_mode_is_not_string"
+    elif parsed.key_type not in {1, 4}:
+        reason = "key_type_is_not_HASH_or_BADHASH"
+    elif not parsed.terminator_raw:
+        reason = "explicit_utf16le_nul_terminator_required"
+    elif parsed.decode_error is not None:
+        reason = "string_decode_error"
+    else:
+        expected_prefix = {1: "HASH:", 4: "BADHASH:"}[parsed.key_type]
+        expected_raw = expected_prefix.encode("utf-16le")
+        if (
+            parsed.prefix_raw.upper() != expected_raw.upper()
+            or parsed.text_raw[: len(parsed.prefix_raw)] != parsed.prefix_raw
+        ):
+            reason = "confirmed_HASH_or_BADHASH_prefix_required"
+        else:
+            material_raw = parsed.text_raw[len(parsed.prefix_raw) :]
+            try:
+                material = material_raw.decode("utf-16le")
+            except UnicodeDecodeError:
+                reason = "hex_material_decode_error"
+            else:
+                if not material:
+                    reason = "empty_hex_material_is_not_modeled"
+                elif len(material) % 2:
+                    reason = "hex_material_must_have_even_length"
+                elif any(char not in "0123456789abcdefABCDEF" for char in material):
+                    reason = "hex_material_must_contain_only_ASCII_hex_digits"
+                else:
+                    normalized = _binary_getkey_normalize(
+                        parsed.key_type, bytes.fromhex(material)
+                    )
+                    result["status"] = "normalized"
+                    result["normalized_key_hex"] = normalized.hex()
+    if reason is not None:
+        result["unsupported_reason"] = reason
+    return result
 
 
 def _binary_getkey_normalize(key_type: int, data: bytes) -> bytes:
