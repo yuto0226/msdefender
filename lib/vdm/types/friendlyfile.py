@@ -108,9 +108,9 @@ def export_friendlyfile_sha256(parsed: FriendlyFileSha256) -> ArtifactExport:
             "observed_digest_profile": {
                 "producer": "troj_scan @ 0x180B03685..0x180B036D6",
                 "hash": "SHA-256",
-                "input": "current UFS scan object bytes [0, SCAN_REPLY+0x50)",
+                "input": "complete current UFS scan object bytes [0, SCAN_REPLY+0x50) when GetHashes succeeds",
                 "normalization": "none_observed_in_analyzed_chain",
-                "length_producer": None,
+                "length_producer": "UfsFile::GetSize via UfsClientRequest::SyncScanReplyFileSize; writes reply+0x50",
                 "disk_file_identity": None,
                 "lookup_gate": {
                     "store_exists": True,
@@ -301,10 +301,16 @@ def export_friendlyfile_sha256_semantics(
                 JSONObject(
                     (
                         ("algorithm", "sha256"),
-                        ("input", "current_ufs_scan_object"),
+                        (
+                            "input",
+                            "complete_current_ufs_scan_object_when_GetHashes_succeeds",
+                        ),
                         ("raw_span", "[0, SCAN_REPLY+0x50)"),
                         ("normalization", "none_observed_in_analyzed_chain"),
-                        ("length_producer", None),
+                        (
+                            "length_producer",
+                            "UfsFile::GetSize via UfsClientRequest::SyncScanReplyFileSize; writes reply+0x50",
+                        ),
                         ("disk_file_identity", None),
                         (
                             "lookup_gate",
@@ -440,16 +446,21 @@ def export_friendlyfile_sha256_semantics(
                 id="friendlyfile_sha256_caller_digest_profile",
                 scope="runtime_consumer",
                 statement=(
-                    "In the analyzed troj_scan caller slice, SHA-256 is computed "
-                    "over the current UFS scan object bytes [0, SCAN_REPLY+0x50); "
-                    "no normalization is observed in this chain."
+                    "In the analyzed troj_scan caller slice, when GetHashes succeeds, "
+                    "SHA-256 is computed over the complete current UFS scan object "
+                    "bytes [0, SCAN_REPLY+0x50); UfsFile::GetSize supplies the length "
+                    "through UfsClientRequest::SyncScanReplyFileSize, and no "
+                    "normalization is observed in this chain."
                 ),
                 coverage="subset",
-                evidence_refs=("friendlyfile_sha256_caller",),
+                evidence_refs=(
+                    "friendlyfile_sha256_caller",
+                    "friendlyfile_sha256_length_producer",
+                ),
                 unknowns=(
                     SemanticUnknown(
                         "runtime_consumer",
-                        "The length producer and identity with the on-disk file are unresolved.",
+                        "Other provider callers are not globally closed, and the current UFS object is not established as the on-disk file.",
                     ),
                 ),
             ),
@@ -496,6 +507,19 @@ def export_friendlyfile_sha256_semantics(
                     "friendlyfile_sha256_caller_digest_profile",
                     "friendlyfile_sha256_caller_match_effect",
                 ),
+            ),
+            SemanticEvidence(
+                id="friendlyfile_sha256_length_producer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "UfsClientRequest::SyncScanReplyFileSize @ 0x1801D7B14 "
+                    "writes UfsFile::GetSize to reply+0x50; "
+                    "UfsNode::Open @ 0x18011A71C opens via plugin before "
+                    "the size sync"
+                ),
+                supports=("friendlyfile_sha256_caller_digest_profile",),
             ),
             SemanticEvidence(
                 id="friendlyfile_sha256_dispatch",
