@@ -292,7 +292,7 @@ def _precedence(expr: Expr) -> int:
     )
 
 
-def _cardinality_parts(expr: AtLeast) -> tuple[str, str]:
+def _cardinality_parts(expr: AtLeast, *, strict_yara: bool = False) -> tuple[str, str]:
     quantifier = (
         "all"
         if expr.count == len(expr.atoms)
@@ -301,32 +301,43 @@ def _cardinality_parts(expr: AtLeast) -> tuple[str, str]:
         else str(expr.count)
     )
     selector = expr.selector or f"({', '.join(atom.identifier for atom in expr.atoms)})"
+    if strict_yara and selector != "them" and not selector.startswith("("):
+        selector = f"({selector})"
     return quantifier, selector
 
 
-def render_yara_like(expr: Expr) -> str:
-    """Render not > and > or, adding only parentheses that change precedence."""
+def _render(expr: Expr, *, strict_yara: bool) -> str:
     if isinstance(expr, Const):
         return "true" if expr.value else "false"
     if isinstance(expr, Atom):
         return expr.identifier
     if isinstance(expr, AtLeast):
-        quantifier, selector = _cardinality_parts(expr)
+        quantifier, selector = _cardinality_parts(expr, strict_yara=strict_yara)
         return f"{quantifier} of {selector}"
     if isinstance(expr, Not):
-        text = render_yara_like(expr.term)
+        text = _render(expr.term, strict_yara=strict_yara)
         return f"not ({text})" if _precedence(expr.term) < 3 else f"not {text}"
     if isinstance(expr, (And, Or)):
         if not expr.terms:
             return "true" if isinstance(expr, And) else "false"
         separator = " and " if isinstance(expr, And) else " or "
         return separator.join(
-            f"({render_yara_like(term)})"
+            f"({_render(term, strict_yara=strict_yara)})"
             if _precedence(term) < _precedence(expr)
-            else render_yara_like(term)
+            else _render(term, strict_yara=strict_yara)
             for term in expr.terms
         )
     raise TypeError(f"unsupported expression {type(expr).__name__}")
+
+
+def render_yara_like(expr: Expr) -> str:
+    """Render the compact diagnostic presentation, not strict YARA syntax."""
+    return _render(expr, strict_yara=False)
+
+
+def render_yara(expr: Expr) -> str:
+    """Render a condition accepted by YARA's cardinality selector grammar."""
+    return _render(expr, strict_yara=True)
 
 
 def rendered_length(expr: Expr) -> int:
