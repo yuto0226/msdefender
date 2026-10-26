@@ -649,6 +649,29 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                     ),
                 ),
                 (
+                    "corpus_invariant",
+                    JSONObject(
+                        (
+                            ("scope", "current_mpas_mpav_corpus"),
+                            ("evidence_tier", "corpus_invariant"),
+                            ("coverage", "subset"),
+                            ("mpas_begin_end", JSONArray((17989, 17989))),
+                            ("mpav_begin_end", JSONArray((342609, 342609))),
+                            ("all_end_payloads_length", 4),
+                            ("end_value_matches_paired_begin_threat_id", True),
+                            ("nested", 0),
+                            ("orphan", 0),
+                            ("unmatched", 0),
+                            ("dangling", 0),
+                            ("end_value_matches_inner_record_count_count", 0),
+                            (
+                                "value_interpretation",
+                                "unassigned; not identified as checksum",
+                            ),
+                        )
+                    ),
+                ),
+                (
                     "error_boundary",
                     (
                         "Malformed framing returns 40964; receiver errors propagate; "
@@ -670,6 +693,13 @@ def export_threat_end_semantics(threat: ThreatEnd) -> RuleSemantics:
                 "and 2 data xrefs classified; both data xrefs are PE .pdata "
                 "RUNTIME_FUNCTION metadata, with zero to-entry xrefs and zero "
                 "unresolved static xrefs; computed/runtime dynamic calls are not excluded"
+            ),
+            (
+                "Current mpas/mpav corpus invariant (subset): mpas BEGIN/END "
+                "17989/17989; mpav 342609/342609; every END has a four-byte payload "
+                "matching its paired BEGIN threat_id; nested/orphan/unmatched/dangling "
+                "counts are zero; END values do not equal inner-record counts. This "
+                "does not identify a checksum or establish engine semantics."
             ),
         ),
         profile="mpengine-1.443.903.0",
