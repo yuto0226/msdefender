@@ -304,6 +304,104 @@ def _semantic_utf16_string(
     )
 
 
+def _key_info_contract() -> JSONObject:
+    fields = (
+        ("subkey_count", 0x200, "count", 4),
+        ("max_subkey_name", 0x208, "UTF-16 code units excluding NUL", 5),
+        ("value_count", 0x210, "count", 7),
+        ("max_value_name", 0x218, "UTF-16 code units excluding NUL", 8),
+        ("max_value_data", 0x220, "bytes", 9),
+    )
+    return JSONObject(
+        (
+            ("missing_key_error", 2),
+            (
+                "layout",
+                JSONObject(
+                    (
+                        ("name", "VREG_KeyInfo"),
+                        ("size_bytes", 0x228),
+                        (
+                            "name_buffer",
+                            JSONObject(
+                                (
+                                    ("offset", 0),
+                                    ("capacity_utf16_units", 256),
+                                    ("code_unit_bytes", 2),
+                                    ("unused_capacity_initialized", False),
+                                )
+                            ),
+                        ),
+                        (
+                            "statistics",
+                            JSONArray(
+                                tuple(
+                                    JSONObject(
+                                        (
+                                            ("name", name),
+                                            ("offset", offset),
+                                            ("storage_bytes", 8),
+                                            ("unsigned", True),
+                                            ("unit", unit),
+                                            ("guest_output_argument_index", argument),
+                                        )
+                                    )
+                                    for name, offset, unit, argument in fields
+                                )
+                            ),
+                        ),
+                    )
+                ),
+            ),
+            (
+                "count_scope",
+                "direct children only; no recursive or synthesized default-value count",
+            ),
+            (
+                "name_length_rule",
+                "UTF-16 code units excluding NUL; a non-BMP surrogate pair counts as two",
+            ),
+            (
+                "data_length_rule",
+                "raw value-vector bytes, including any stored NUL; independent of value_type",
+            ),
+            ("empty_statistics", "zero when no applicable children exist"),
+            (
+                "guest_output_patch",
+                JSONObject(
+                    (
+                        ("argument_index_base", 0),
+                        ("argument_slot_bytes", 8),
+                        ("output_bytes", 4),
+                        ("value_projection", "low DWORD of each uint64 statistic"),
+                        ("null_output_pointer", "skip that write"),
+                        ("write_helper_boolean_checked", False),
+                        (
+                            "untouched_pointed_buffer_arguments",
+                            JSONArray((1, 2, 3, 6, 10, 11)),
+                        ),
+                        ("argument_slots_still_fetched", True),
+                        ("memory_helper_fault_effect", None),
+                    )
+                ),
+            ),
+            (
+                "wrapper_return",
+                JSONObject(
+                    (
+                        ("hkey_projection", "low DWORD, zero-extended"),
+                        ("zero_hkey_error", 6),
+                        ("query_failure_error", 2),
+                        ("success", 0),
+                        ("delivery", "pe_set_return_value; host wrapper returns void"),
+                    )
+                ),
+            ),
+            ("full_windows_api_equivalence", None),
+        )
+    )
+
+
 def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
     """Export only VREG behavior confirmed in the selected engine profile."""
     key_end = 3 + len(parsed.key_raw)
@@ -353,7 +451,7 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="confirmed_subset",
-        representation="vreg.virtual_registry_write.ir.v5",
+        representation="vreg.virtual_registry_write.ir.v6",
         data=JSONObject(
             (
                 ("type", "VREG"),
@@ -478,18 +576,7 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
                                     )
                                 ),
                             ),
-                            (
-                                "key_info",
-                                JSONObject(
-                                    (
-                                        ("missing_key_error", 2),
-                                        (
-                                            "outputs",
-                                            "subkey/value counts and maximum name/data sizes from current virtual tree",
-                                        ),
-                                    )
-                                ),
-                            ),
+                            ("key_info", _key_info_contract()),
                             (
                                 "boundary",
                                 "These are emulated PE Win32 registry API results, not direct threat reports or final scan verdicts.",
@@ -593,6 +680,33 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
                 ),
             ),
             SemanticClaim(
+                id="vreg_key_info_contract",
+                scope="runtime_consumer",
+                statement=(
+                    "VREG_KeyInfo has a 0x200-byte UTF-16 name buffer followed by "
+                    "five uint64 statistics at 0x200/0x208/0x210/0x218/0x220. "
+                    "Counts cover direct children, name maxima count UTF-16 code "
+                    "units without NUL, and data maxima count raw bytes. QueryInfoW "
+                    "writes low DWORDs to optional zero-based guest arguments "
+                    "4/5/7/8/9, skips null pointers and ignores the write helper's "
+                    "bool. Handle projection, error returns and untouched buffers "
+                    "are the bounded static wrapper contract, not Windows equivalence."
+                ),
+                coverage="subset",
+                evidence_refs=("vreg_key_info_static", "vreg_key_info_native"),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "PE memory-helper fault effects, complete Windows API "
+                        "compatibility and PE/P-code caller interpretation remain "
+                        "unmodeled. Native coverage is limited to the declared "
+                        "producer loops, queryKey/Tree::info with synthetic providers "
+                        "and success output block; full wrapper/Parameters/handle "
+                        "validation and error paths are static-only evidence.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
                 id="vreg_detection_predicate",
                 scope="detection_predicate",
                 statement=(
@@ -654,6 +768,43 @@ def export_vreg_semantics(parsed: VregPayload) -> RuleSemantics:
                 source_ref="mpengine 1.443.903.0",
                 locator="vemulib_init_module @ 0x18048B450",
                 supports=("vreg_dispatch_path",),
+            ),
+            SemanticEvidence(
+                id="vreg_key_info_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "VirtualReg::queryKey 0x18019E03C/0x319 full 0x228-byte copy "
+                    "0x18019E23A..0x18019E293; Tree::info 0x18019E358/0x115; "
+                    "name length loops 0x18019DE1F..0x18019DE3A and "
+                    "0x180270368..0x180270372; QueryInfoW 0x180568760/0x1AB "
+                    "output calls 0x18056884F/0x18056886A/0x180568885/"
+                    "0x1805688A0/0x1805688BB; handle-validation overload "
+                    "0x18019F29C/0x9C"
+                ),
+                supports=("vreg_key_info_contract",),
+            ),
+            SemanticEvidence(
+                id="vreg_key_info_native",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref=(
+                    "Pinned DLL SHA256 "
+                    "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                    "local_vreg_keyinfo_differential: 15 cases, comprising 4 original "
+                    "setValue WORD-loop slices, 6 createKey component-loop slices, "
+                    "2 complete queryKey/Tree::info executions with synthetic node/"
+                    "iterator/value-storage providers and 3 original success output "
+                    "blocks with a PE DWORD-write seam returning false; no complete "
+                    "wrapper, handle-validation/error-path or PE memory mapper execution"
+                ),
+                locator=(
+                    "0x180270368..0x180270372; 0x18019DE1F..0x18019DE3A; "
+                    "0x18019E03C/0x319 and 0x18019E358/0x115; "
+                    "success output block 0x180568839..0x1805688C2"
+                ),
+                supports=("vreg_key_info_contract",),
             ),
             SemanticEvidence(
                 id="vreg_query_consumer",
