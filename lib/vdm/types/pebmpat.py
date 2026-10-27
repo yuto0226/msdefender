@@ -419,7 +419,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                                     ),
                                     (
                                         "returned_file_position_formula",
-                                        "memory_offset + *(uint32_t *)(row+0x10) - *(uint32_t *)(row+0x08)",
+                                        "u32(memory_offset + *(uint32_t *)(row+0x08) - *(uint32_t *)(row+0x00))",
                                     ),
                                     ("read_position_consumer", "UfsSeekRead"),
                                     ("read_destination", "VMM page buffer"),
@@ -797,7 +797,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
 
     return RuleSemantics(
         status=status,
-        representation="pebmpat.pattern.ir.v9",
+        representation="pebmpat.pattern.ir.v10",
         data=data,
         evidence=(
             (
@@ -812,6 +812,11 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             "__mmap_ex @ 0x180035ED0",
             "VMM_x32_context::load_page @ 0x180040DD0",
             "pe_mofs_to_fofs_ex @ 0x1800E9DA0",
+            (
+                "pe_mofs_to_fofs_ex original-function probe: two synthetic selected-row "
+                "cases return 0x634 and u32-wrap 0x134; no callee/provider stubs; "
+                "does not verify caller mapping, metadata production, other branches or x64"
+            ),
             "UfsSeekRead @ 0x18014A724",
             "VMM_x64_context::load_page @ 0x1800424D0 (x64 file-backed interval formula)",
         ),
