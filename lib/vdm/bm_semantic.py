@@ -1,5 +1,6 @@
 """Portable, renderer-independent serialization of the decoded BM view."""
 
+from bisect import bisect_right
 from dataclasses import dataclass
 from typing import Literal
 
@@ -16,6 +17,7 @@ from .bm import (
     BmScan,
     BmSemanticOperation,
     interpret_bm_pattern,
+    parse_bm_alternative_program,
     raw_04_05_byte_set,
 )
 from .core import JSONArray, JSONObject, SemanticIssue
@@ -107,8 +109,6 @@ def _operation_ir(
     *,
     context: BmSemanticContext | None = None,
     pattern: BmPattern | None = None,
-    explain_sequential_alternatives: bool = False,
-    sequential_alternative_offsets: frozenset[int] = frozenset(),
 ) -> dict[str, object]:
     raw = operation.raw
     fidelity: OperationFidelity = "exact"
@@ -340,37 +340,6 @@ def _operation_ir(
         result["fidelity"] = "unsupported"
         result["requirements"] = []
         result["issues"] = ["opcode semantics are unknown or unsupported"]
-        if (
-            explain_sequential_alternatives
-            and pattern is not None
-            and token is not None
-            and token.raw_id == 0x03
-            and operation.offset in sequential_alternative_offsets
-        ):
-            widths = tuple(token.operands)
-            shared_start = operation.offset + len(operation.raw)
-            shared_length = sum(widths)
-            shared_end = shared_start + shared_length
-            if widths and all(widths) and shared_end <= len(pattern.raw):
-                shared = pattern.raw[shared_start:shared_end]
-                choices = []
-                cursor = 0
-                for width in widths:
-                    choices.append(shared[cursor : cursor + width].hex())
-                    cursor += width
-                decoded["engine_choice_model"] = {
-                    "kind": "sequential_nonoverlapping_chunks",
-                    "widths": list(widths),
-                    "shared_raw_hex": shared.hex(),
-                    "choices_hex": choices,
-                    "suffix_offset": shared_end,
-                    "suffix_lowering": "not_attempted",
-                }
-                result["requirements"] = [
-                    "choices are attempted in order and each uses the same recursively matched suffix",
-                    "YARA equivalence of suffix, reader state and output effects is unproven",
-                ]
-                result["issues"] = ["matcher_dependent_sequential_alternatives"]
     elif isinstance(operation, BmEnd):
         result["raw_id"] = 0
         decoded["terminator"] = True
@@ -383,37 +352,131 @@ def _operation_ir(
     return result
 
 
+def _program_structure(pattern: BmPattern) -> dict[str, object]:
+    """Discover local rewrites in source order without building an execution AST."""
+    source = pattern.raw
+    nodes: list[dict[str, object]] = []
+    stop: dict[str, object] | None = None
+    cursor = 0
+    first_end = pattern.consumed - 2 if pattern.ended else None
+    token_offsets = [token.offset for token in pattern.tokens]
+
+    def span(offset: int, length: int) -> dict[str, int]:
+        return {"offset": offset, "length": length}
+
+    for token in pattern.tokens:
+        if token.offset < cursor:
+            continue
+        if token.kind == "END":
+            break
+        if token.kind != "OPCODE" or token.raw_id not in (0x03, 0x17):
+            continue
+        try:
+            plan = parse_bm_alternative_program(source, token.offset)
+        except ValueError as error:
+            stop = {
+                "offset": token.offset,
+                "reason": "invalid_local_alternatives_bounds",
+                "detail": str(error),
+                "redecode_required": False,
+            }
+            break
+        shared_start, shared_length = plan.shared_block_span
+        suffix = span(plan.suffix_offset, len(source) - plan.suffix_offset)
+        nodes.append(
+            {
+                "kind": "raw_alternatives_rewrite",
+                "offset": plan.offset,
+                "raw_id": plan.raw_id,
+                "widths": list(plan.widths),
+                "descriptor_span": span(plan.offset, plan.descriptor_length),
+                "shared_block_span": span(shared_start, shared_length),
+                "suffix_span": suffix,
+                "choices": [
+                    {
+                        "index": index,
+                        "width": length,
+                        "choice_span": span(offset, length),
+                        "parts": [span(offset, length), suffix],
+                    }
+                    for index, (offset, length) in enumerate(plan.choice_spans)
+                ],
+                "concatenate_before_decode": True,
+                "descriptor_reachability": "unproven",
+            }
+        )
+        cursor = plan.suffix_offset
+        if first_end is not None and cursor > first_end:
+            stop = {
+                "offset": cursor,
+                "reason": "shared_block_crosses_first_decoded_end",
+                "redecode_required": True,
+            }
+            break
+        containing_index = bisect_right(token_offsets, cursor) - 1
+        containing = pattern.tokens[containing_index] if containing_index >= 0 else None
+        if containing is not None and not (
+            containing.offset < cursor < containing.offset + len(containing.raw)
+        ):
+            containing = None
+        if containing is not None and not (
+            containing.kind == "LITERAL" and containing.raw == containing.literal
+        ):
+            stop = {
+                "offset": cursor,
+                "reason": "suffix_starts_inside_opcode_or_escape",
+                "redecode_required": True,
+            }
+            break
+        if cursor > pattern.consumed:
+            stop = {
+                "offset": cursor,
+                "reason": "suffix_beyond_decoder_view",
+                "redecode_required": True,
+            }
+            break
+    return {
+        "view": "local_raw_rewrite",
+        "source": {"field": "raw_hex", "view": "decoder_input_bytes"},
+        "source_preparation_applied": None,
+        "source_preparation_responsibility": "caller supplies wire or prepared bytes; no preparation is performed or inferred here",
+        "execution_graph_complete": False,
+        "descriptor_reachability": "unproven",
+        "discovery": "source_order; shared blocks are not searched for top-level descriptors",
+        "nodes": nodes,
+        "discovery_stop": stop,
+    }
+
+
 def serialize_bm_pattern(
     pattern: BmPattern,
     *,
     context: BmSemanticContext | None = None,
-    explain_sequential_alternatives: bool = False,
 ) -> tuple[JSONObject, tuple[SemanticIssue, ...]]:
     """Serialize one decoder view, including its exact unparsed remainder."""
     semantic_pattern = interpret_bm_pattern(pattern)
-    sequential_alternative_offsets: set[int] = set()
-    consumed_until = 0
-    for token in pattern.tokens:
-        if token.offset < consumed_until:
-            continue
-        if token.kind == "OPCODE" and token.raw_id == 0x03:
-            shared_start = token.offset + len(token.raw)
-            shared_end = shared_start + sum(token.operands)
-            if shared_end <= len(pattern.raw):
-                sequential_alternative_offsets.add(token.offset)
-                consumed_until = shared_end
-                continue
-        consumed_until = token.offset + len(token.raw)
     operations = [
         _operation_ir(
             operation,
             context=context,
             pattern=pattern,
-            explain_sequential_alternatives=explain_sequential_alternatives,
-            sequential_alternative_offsets=frozenset(sequential_alternative_offsets),
         )
         for operation in semantic_pattern.operations
     ]
+    program_structure = _program_structure(pattern)
+    structural_offsets = {node["offset"] for node in program_structure["nodes"]}
+    for operation in operations:
+        if (
+            operation["kind"] == "opaque"
+            and operation["raw_id"] in (0x03, 0x17)
+            and operation["raw_span"]["offset"] in structural_offsets
+        ):
+            operation["issues"] = [
+                "raw_alternatives_structure_known_execution_unmodeled"
+            ]
+            operation["decoded"]["program_structure_node"] = {
+                "offset": operation["raw_span"]["offset"]
+            }
     issues: list[dict[str, object]] = []
     semantic_issues: list[SemanticIssue] = []
     if pattern.issue is not None:
@@ -461,6 +524,7 @@ def serialize_bm_pattern(
             "consumed": pattern.consumed,
             "ended": pattern.ended,
             "operations": operations,
+            "program_structure": program_structure,
             "remaining_raw": remaining,
             "issues": issues,
         }

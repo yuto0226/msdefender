@@ -1663,7 +1663,6 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             pattern_data, pattern_issues = serialize_bm_pattern(
                 pattern,
                 context=semantic_context,
-                explain_sequential_alternatives=True,
             )
             bm_yara_data = JSONObject(
                 (
@@ -1927,7 +1926,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v12",
+        representation="hstr.matcher-subset.ir.v13",
         data=data,
         evidence=tuple(legacy_evidence),
         profile="mpengine-1.443.903.0",

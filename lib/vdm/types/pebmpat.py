@@ -934,7 +934,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
 
     return RuleSemantics(
         status=status,
-        representation="pebmpat.pattern.ir.v13",
+        representation="pebmpat.pattern.ir.v14",
         data=data,
         evidence=(
             (

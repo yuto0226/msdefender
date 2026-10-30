@@ -1137,7 +1137,7 @@ def export_nscript_brute_semantics(parsed: NScriptBrutePayload) -> RuleSemantics
         consumer_evidence = ()
     return RuleSemantics(
         status="confirmed_subset",
-        representation="nscript.brute.receiver_runtime_candidates.v2",
+        representation="nscript.brute.receiver_runtime_candidates.v3",
         data=JSONObject(pattern_data.items + (("outer", outer),)),
         evidence=(
             (
@@ -1505,7 +1505,7 @@ def export_nscript_cure_semantics(parsed: NScriptCurePayload) -> RuleSemantics:
             if tail or parsed.kind not in (1, 2, 3, 4, 5)
             else "confirmed_subset"
         ),
-        representation="nscript.cure.receiver_runtime_candidates.v3",
+        representation="nscript.cure.receiver_runtime_candidates.v4",
         data=_outer(
             parsed.raw, _raw_framing(parsed.raw, tuple(fields)), **dict(details)
         ),

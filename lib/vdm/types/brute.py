@@ -416,7 +416,7 @@ def export_brute_semantics(parsed: BrutePayload) -> RuleSemantics:
     data = JSONObject(pattern_data.items + (("outer", outer),))
     return RuleSemantics(
         status="confirmed_subset",
-        representation="brute.bm_candidate.ir.v4",
+        representation="brute.bm_candidate.ir.v5",
         data=data,
         evidence=(
             "BM wire framing and decoded fields for mpengine 1.443.903.0",
