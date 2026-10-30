@@ -5,10 +5,8 @@ from types import MappingProxyType
 from typing import Literal
 
 from ..bm import (
-    BmControlFlow,
     BmOpaque,
     BmPattern,
-    BmScan,
     decode_bm_pattern,
     interpret_bm_pattern,
     render_printable_bytes_preview,
@@ -775,89 +773,6 @@ def _hstr_contextual_disposition(
     )
 
 
-def _hstr_bm_buffer_reader_disposition(
-    type_byte: int,
-    pattern: BmPattern,
-) -> tuple[JSONArray, JSONObject | None]:
-    """Project dispatch 0x09 failure without treating it as a final verdict."""
-    if type_byte not in _CONFIRMED_MATCHER_FAMILIES:
-        return JSONArray(()), None
-
-    operations = interpret_bm_pattern(pattern).operations
-    rejecting = tuple(
-        JSONObject(
-            (
-                ("offset", operation.offset),
-                ("raw_id", operation.token.raw_id),
-                ("dispatch", operation.token.dispatch_id),
-                ("effect", "default_false_when_reached"),
-                (
-                    "reason",
-                    "BMSBufferReader dispatch 0x09 reaches the worker default false branch",
-                ),
-            )
-        )
-        for operation in operations
-        if isinstance(operation, BmScan) and operation.token.dispatch_id == 0x09
-    )
-    if not rejecting:
-        return JSONArray(()), None
-
-    uncertain_operation = any(
-        isinstance(operation, (BmOpaque, BmControlFlow)) for operation in operations
-    )
-    exact_projection = (
-        pattern.issue is None
-        and pattern.ended
-        and not pattern.remaining_raw
-        and not uncertain_operation
-    )
-    if not exact_projection:
-        return JSONArray(rejecting), JSONObject(
-            (
-                ("status", "bounded_unknown"),
-                ("stage", "matcher"),
-                (
-                    "reason",
-                    "dispatch_0x09_is_rejecting_when_reached_but_framing_or_pattern_control_flow_is_not_fully_closed",
-                ),
-                ("subsignature_scope_only", True),
-            )
-        )
-
-    # A 0x03 choice recursively tries each raw chunk against one shared suffix;
-    # all successful paths must still consume the suffix containing dispatch 0x09.
-    return JSONArray(rejecting), JSONObject(
-        (
-            ("status", "exact_no_candidate"),
-            ("stage", "matcher"),
-            (
-                "reason",
-                "every_decoded_BM_path_must_match_the_suffix_and_buffer_dispatch_0x09_returns_false",
-            ),
-            ("scope", "this_HSTR_BM_subsignature_candidate"),
-            ("downstream_validator_reachable", False),
-            ("subsignature_scope_only", True),
-        )
-    )
-
-
-def _compose_candidate_disposition(
-    validator: JSONObject | None,
-    matcher: JSONObject | None,
-) -> JSONObject | None:
-    """Compose matcher and post-match validator stages conservatively."""
-    matcher_status = None if matcher is None else dict(matcher.items)["status"]
-    validator_status = None if validator is None else dict(validator.items)["status"]
-    if matcher_status == "exact_no_candidate":
-        return matcher
-    if validator_status == "exact_no_candidate":
-        return validator
-    if matcher is not None:
-        return matcher
-    return validator
-
-
 def _read_u16(payload: bytes, cursor: int, label: str) -> tuple[int, int]:
     end = cursor + 2
     if end > len(payload):
@@ -1145,11 +1060,6 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
         display, pattern, bm_yara, printable_preview, yara_unsupported = (
             _render_hstr_subsignature_display(subsig, meaning)
         )
-        bm_candidate = (
-            _hstr_bm_buffer_reader_disposition(parsed.type_byte, pattern)[1]
-            if pattern is not None
-            else None
-        )
         rows: list[Field] = [
             ("identifier", scores.identifiers[index]),
             ("tag", f"0x{subsig.tag:04X} ({tag_note})"),
@@ -1161,17 +1071,11 @@ def render_hstr(parsed: HstrPayload) -> FormatResult:
         if candidate is not None and dict(candidate.items)["status"] == (
             "conditional_location_candidate"
         ):
-            bm_rejects = (
-                bm_candidate is not None
-                and dict(bm_candidate.items)["status"] == "exact_no_candidate"
-            )
             rows.append(
                 (
                     "candidate validator",
                     (
-                        "unreachable: BM dispatch 0x09 rejects at matcher stage"
-                        if bm_rejects
-                        else "mmap_is_dynamic_page(pe_vars, base + match_offset); "
+                        "mmap_is_dynamic_page(pe_vars, base + match_offset); "
                         "requires successful match and nonzero matched span; "
                         "offset may be 0; subsignature scope only"
                     ),
@@ -1661,8 +1565,6 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         pattern_data = None
         bm_runtime_context = None
         bm_yara_data = None
-        bm_buffer_reader_rejecting_operations = None
-        bm_candidate_disposition = None
         candidate_disposition = _hstr_contextual_disposition(
             parsed.type_byte, subsig, meaning
         )
@@ -1763,34 +1665,6 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                 context=semantic_context,
                 explain_sequential_alternatives=True,
             )
-            (
-                bm_buffer_reader_rejecting_operations,
-                bm_candidate_disposition,
-            ) = _hstr_bm_buffer_reader_disposition(parsed.type_byte, pattern)
-            pattern_fields = dict(pattern_data.items)
-            pattern_fields["buffer_reader_rejecting_operations"] = (
-                bm_buffer_reader_rejecting_operations
-            )
-            pattern_data = JSONObject(tuple(pattern_fields.items()))
-            if bm_candidate_disposition is not None:
-                bm_status = dict(bm_candidate_disposition.items)["status"]
-                issues.append(
-                    SemanticIssue(
-                        "bm_buffer_reader_candidate_disposition",
-                        (
-                            "BMSBufferReader dispatch 0x09 fails at the matcher stage; "
-                            "downstream validators are unreachable for this pattern."
-                            if bm_status == "exact_no_candidate"
-                            else "Dispatch 0x09 is rejecting when reached, but framing "
-                            "or pattern control flow prevents an exact candidate conclusion."
-                        ),
-                        (
-                            ("subsignature_index", index),
-                            ("status", bm_status),
-                        ),
-                    )
-                )
-                unsupported |= bm_status == "bounded_unknown"
             bm_yara_data = JSONObject(
                 (
                     ("fidelity", bm_render.fidelity.value),
@@ -1823,46 +1697,10 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     )
                 )
 
-            rejecting_scans = tuple(
-                operation
+            if any(
+                isinstance(operation, BmOpaque)
                 for operation in interpret_bm_pattern(pattern).operations
-                if isinstance(operation, BmScan)
-                and operation.token.raw_id == 0x09
-                and operation.token.dispatch_id == 0x09
-            )
-            rejection_dominates_render_diagnostics = (
-                bm_candidate_disposition is not None
-                and dict(bm_candidate_disposition.items)["status"]
-                == "exact_no_candidate"
-                and dict(bm_candidate_disposition.items)["stage"] == "matcher"
-                and bool(bm_render.diagnostics)
-                and not pattern_issues
-                and not bm_render.requirements
-                and all(
-                    diagnostic.code == "unsupported.backward_scan"
-                    and diagnostic.raw_id == 0x09
-                    for diagnostic in bm_render.diagnostics
-                )
-                and {
-                    (diagnostic.offset, diagnostic.raw_id)
-                    for diagnostic in bm_render.diagnostics
-                }
-                == {
-                    (operation.offset, operation.token.raw_id)
-                    for operation in rejecting_scans
-                }
-            )
-            unsupported_render_diagnostic = (
-                bool(bm_render.diagnostics)
-                and not rejection_dominates_render_diagnostics
-            )
-            if (
-                any(
-                    isinstance(operation, BmOpaque)
-                    for operation in interpret_bm_pattern(pattern).operations
-                )
-                or unsupported_render_diagnostic
-            ):
+            ) or bool(bm_render.diagnostics):
                 unsupported = True
                 issues.append(
                     SemanticIssue(
@@ -1881,10 +1719,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     )
                 )
 
-        effective_candidate_disposition = _compose_candidate_disposition(
-            candidate_disposition,
-            bm_candidate_disposition,
-        )
+        effective_candidate_disposition = candidate_disposition
 
         flags_data = (
             None
@@ -1974,11 +1809,6 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     ("matching", meaning.matching),
                     ("data_shape", meaning.display_encoding),
                     ("bm_pattern", pattern_data),
-                    (
-                        "bm_buffer_reader_rejecting_operations",
-                        bm_buffer_reader_rejecting_operations,
-                    ),
-                    ("bm_candidate_disposition", bm_candidate_disposition),
                     ("bm_runtime_context", bm_runtime_context),
                     ("candidate_disposition", candidate_disposition),
                     (
@@ -2070,12 +1900,6 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                     "non-overlapping chunks with a recursively matched shared "
                     "suffix (0x1800EE4A1-0x1800EE55F)"
                 ),
-                (
-                    "mpengine 1.443.903.0 BMMatchWorker_BMSBufferReader_ "
-                    "@ 0x1800EDB60: dispatch 0x09 is absent from the handler "
-                    "cases and reaches default false at 0x1800EDECB; HSTR "
-                    "BMMatchEx2 at 0x1800EA2F9 uses this worker"
-                ),
                 "mpengine 1.443.903.0 BMPatternToLower @ 0x1800FECFC",
                 (
                     "mpengine 1.443.903.0 BM_MAP_LOWCASE selected when HSTR "
@@ -2103,7 +1927,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v10",
+        representation="hstr.matcher-subset.ir.v11",
         data=data,
         evidence=tuple(legacy_evidence),
         profile="mpengine-1.443.903.0",

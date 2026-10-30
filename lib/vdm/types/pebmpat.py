@@ -30,7 +30,7 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
                 ("status", "no_candidate"),
                 ("reader", "BMSBufferReader"),
                 ("operation_fidelity_counts", JSONObject(())),
-                ("buffer_reader_rejecting_operations", JSONArray(())),
+                ("buffer_backward_scan_operations", JSONArray(())),
             )
         )
 
@@ -45,15 +45,20 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
         fidelity: sum(operation["fidelity"] == fidelity for operation in operations)
         for fidelity in ("exact", "conditional", "unsupported")
     }
-    buffer_reader_rejecting_operations = [
+    buffer_backward_scan_operations = [
         JSONObject(
             (
                 ("offset", fields(operation["raw_span"])["offset"]),
                 ("raw_id", operation["raw_id"]),
                 ("dispatch", 0x09),
                 (
+                    "handler_address",
+                    "0x1800EEA02",
+                ),
+                ("unconditional_rejection", False),
+                (
                     "reason",
-                    "BMMatchWorker_BMSBufferReader_ routes dispatch 0x09 to its default failure branch",
+                    "BUFFER restores the preceding literal-run snapshot; count, cursor and bounds can produce success or failure",
                 ),
             )
         )
@@ -90,8 +95,8 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
             ("matches_vector_supplied", False),
             ("operation_fidelity_counts", JSONObject(tuple(fidelity_counts.items()))),
             (
-                "buffer_reader_rejecting_operations",
-                JSONArray(tuple(buffer_reader_rejecting_operations)),
+                "buffer_backward_scan_operations",
+                JSONArray(tuple(buffer_backward_scan_operations)),
             ),
             (
                 "requirements",
@@ -765,14 +770,29 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     if 0x09 in operation_raw_ids:
         claims.append(
             SemanticClaim(
-                id="pebmpat_buffer_dispatch_09",
+                id="pebmpat_buffer_backward_scan",
                 scope="runtime_consumer",
                 statement=(
-                    "When a decoded dispatch 0x09 operation executes in "
-                    "BMSBufferReader, it reaches the worker default-false branch."
+                    "Decoded dispatch 0x09 selects the BUFFER backward-scan "
+                    "handler at 0x1800EEA02. It restores the literal-run snapshot "
+                    "and applies count/cursor/bounds logic; successful cases "
+                    "disprove unconditional rejection. Full acceptance and "
+                    "suffix behavior remain reader-specific and are not lowered."
                 ),
-                coverage="complete",
-                evidence_refs=("pebmpat_dispatch_09_consumer",),
+                coverage="subset",
+                evidence_refs=(
+                    "pebmpat_backward_scan_consumer",
+                    "pebmpat_backward_scan_counterexamples",
+                ),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Complete snapshot/count/mapped-zero acceptance, suffix "
+                        "and capture behavior across caller profiles remain "
+                        "unmodeled; successful bounded cases only refute "
+                        "unconditional rejection.",
+                    ),
+                ),
             )
         )
 
@@ -852,18 +872,41 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     if 0x09 in operation_raw_ids:
         claim_evidence.append(
             SemanticEvidence(
-                id="pebmpat_dispatch_09_consumer",
+                id="pebmpat_backward_scan_consumer",
                 axis="consumer",
                 kind="engine_static",
                 source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "g_bmOpcodeTable raw09 = 09 04 00; switch table @ "
+                    "0x1800F0040 index 8 = RVA 0xEEA02; dedicated BUFFER "
+                    "handler @ 0x1800EEA02, common failure exit @ 0x1800EDECB"
+                ),
+                supports=("pebmpat_buffer_backward_scan",),
+            )
+        )
+        claim_evidence.append(
+            SemanticEvidence(
+                id="pebmpat_backward_scan_counterexamples",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref=(
+                    "Pinned DLL SHA256 "
+                    "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                    "local_bm_alternatives_raw_engine::test_raw09_fresh_switch: "
+                    "16 original BUFFER-worker cases, modes1/3, nonnull "
+                    "internal scratch. Pattern 900900009000, subject 50, "
+                    "cursor0 returns true; count1/cursor1 also returns true. "
+                    "Switch index8 targets 0x1800EEA02. These are bounded "
+                    "counterexamples, not a complete matcher or PE model"
+                ),
                 locator="BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60",
-                supports=("pebmpat_buffer_dispatch_09",),
+                supports=("pebmpat_buffer_backward_scan",),
             )
         )
 
     return RuleSemantics(
         status=status,
-        representation="pebmpat.pattern.ir.v11",
+        representation="pebmpat.pattern.ir.v12",
         data=data,
         evidence=(
             (

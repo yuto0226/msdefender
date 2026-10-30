@@ -367,7 +367,7 @@ _SCAN_OPERATIONS = {
     ),
     0x09: (
         "backward_scan",
-        "File reader counts mapped-nonzero bytes; buffer reader rejects this family.",
+        "Reader-specific backward scan; BUFFER has a dedicated snapshot/count handler, not unconditional rejection.",
     ),
     0x0A: (
         "backward_search",
