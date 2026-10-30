@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from ..bm import BmPattern, validate_bm_framing
-from ..bm_semantic import serialize_bm_pattern
+from ..bm_semantic import BmSemanticContext, serialize_bm_pattern
 from ..bm_yara import render_bm_yara
 from ..core import (
     DisplaySection,
@@ -84,6 +84,10 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
             ("framing_complete", framing_complete),
             ("byte_translation", "BM_MAP_ALL"),
             ("worker_flags", "(2 * !trie_flags_bit1) | 1"),
+            ("worker_modes", JSONArray((1, 3))),
+            ("pattern_preparation", "identity; original wire bytes"),
+            ("match_offset_output_supplied", False),
+            ("matches_vector_supplied", False),
             ("operation_fidelity_counts", JSONObject(tuple(fidelity_counts.items()))),
             (
                 "buffer_reader_rejecting_operations",
@@ -94,7 +98,7 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
                 JSONArray(
                     (
                         "caller supplies the mapped subject window and start cursor",
-                        "caller supplies BM_MAP_ALL and the BMMatchPEMapper worker flags",
+                        "mode1/3 equivalence requires complete single-segment framing and no raw 90 1B bytes in the full physical pattern",
                         "conditional operations retain their serialized per-operation requirements",
                     )
                 ),
@@ -224,7 +228,18 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     pattern_data = None
     candidate_matcher = _candidate_matcher_projection(None)
     if parsed.pattern is not None:
-        pattern_data, pattern_issues = serialize_bm_pattern(parsed.pattern)
+        pattern_data, pattern_issues = serialize_bm_pattern(
+            parsed.pattern,
+            context=BmSemanticContext(
+                "BUFFER",
+                "identity",
+                (1, 3),
+                False,
+                "identity",
+                match_offset_output_supplied=False,
+                matches_vector_supplied=False,
+            ),
+        )
         issues.extend(pattern_issues)
         candidate_matcher = _candidate_matcher_projection(pattern_data)
         matcher_status = dict(candidate_matcher.items)["status"]
@@ -643,13 +658,6 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                 ),
             )
         )
-        if 0x04 in operation_raw_ids:
-            runtime_unknowns.append(
-                SemanticUnknown(
-                    "runtime_consumer",
-                    "Raw operation 0x04 remains conditional on reader, translation, worker-mode, and pattern context.",
-                )
-            )
         if 0x13 in operation_raw_ids:
             runtime_unknowns.append(
                 SemanticUnknown(
@@ -665,6 +673,18 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                 )
             )
 
+    mode_profile_applies = bool(
+        parsed.pattern is not None
+        and parsed.pattern.issue is None
+        and parsed.pattern.ended
+        and not parsed.pattern.remaining_raw
+        and b"\x90\x1b" not in parsed.pattern.raw
+    )
+    mode_evidence_refs = (
+        ("pebmpat_mode_equivalence_static", "pebmpat_mode_equivalence_native")
+        if mode_profile_applies
+        else ()
+    )
     claims: list[SemanticClaim] = [
         SemanticClaim(
             id="pebmpat_wire_layout",
@@ -697,7 +717,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                 else "unknown"
             ),
             evidence_refs=(
-                ("pebmpat_buffer_consumer",)
+                ("pebmpat_buffer_consumer", *mode_evidence_refs)
                 if parsed.pattern is not None and matcher_status == "confirmed_subset"
                 else ()
             ),
@@ -783,6 +803,52 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                 supports=("pebmpat_candidate_runtime",),
             )
         )
+    if (
+        parsed.pattern is not None
+        and matcher_status == "confirmed_subset"
+        and mode_profile_applies
+    ):
+        claim_evidence.append(
+            SemanticEvidence(
+                id="pebmpat_mode_equivalence_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "BMMatchEx2 @ 0x1800EC420; "
+                    "BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60 "
+                    "(2256 instructions) and range helper @ 0x1800F04C0 "
+                    "(244 instructions): complete mode dataflow; initializer @ "
+                    "0x1800F0DC0 scans physical bytes for 90 1B. Mode1/3 "
+                    "Boolean neutrality requires BUFFER, identity map and raw "
+                    "preparation, null match outputs, no physical 90 1B, and "
+                    "fixed valid memory/resources; no other modes or captures"
+                ),
+                supports=("pebmpat_candidate_runtime",),
+            )
+        )
+        claim_evidence.append(
+            SemanticEvidence(
+                id="pebmpat_mode_equivalence_native",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref=(
+                    "Pinned DLL SHA256 "
+                    "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                    "local_pebmpat_mode_extended_native: 3580 mode1/3 pairs "
+                    "(7160 original worker executions), 14 actual libyara "
+                    "compiles and 3580 matches; identity/raw preparation, null "
+                    "backrefs, no physical 90 1B. Direct worker/helper only; "
+                    "not BMMatchEx2 initialization, PE mapping, trie, validator "
+                    "or final detection equivalence"
+                ),
+                locator=(
+                    "worker @ 0x1800EDB60; range helper @ 0x1800F04C0; "
+                    "fixed BUFFER/modes1,3 Boolean acceptance and reader-state comparison"
+                ),
+                supports=("pebmpat_candidate_runtime",),
+            )
+        )
     if 0x09 in operation_raw_ids:
         claim_evidence.append(
             SemanticEvidence(
@@ -797,7 +863,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
 
     return RuleSemantics(
         status=status,
-        representation="pebmpat.pattern.ir.v10",
+        representation="pebmpat.pattern.ir.v11",
         data=data,
         evidence=(
             (

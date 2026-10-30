@@ -47,6 +47,8 @@ class BmSemanticContext:
     worker_modes: tuple[int, ...] | None = None
     capture_enabled: bool | None = None
     pattern_preparation: Literal["identity", "ascii_lowercase"] | None = None
+    match_offset_output_supplied: bool | None = None
+    matches_vector_supplied: bool | None = None
 
 
 def _pattern_preparation_is_exact(context: BmSemanticContext) -> bool:
@@ -56,6 +58,29 @@ def _pattern_preparation_is_exact(context: BmSemanticContext) -> bool:
     ) or (
         context.translation == "ascii_lowercase"
         and context.pattern_preparation == "ascii_lowercase"
+    )
+
+
+def _worker_modes_are_mode1_equivalent(
+    context: BmSemanticContext, pattern: BmPattern | None
+) -> bool:
+    """Keep mode1; admit only the proven identity/null-output mode1/3 domain."""
+    if context.worker_modes == (1,):
+        return True
+    return bool(
+        context.worker_modes == (1, 3)
+        and context.reader_kind == "BUFFER"
+        and context.translation == "identity"
+        and context.pattern_preparation == "identity"
+        and context.capture_enabled is False
+        and context.match_offset_output_supplied is False
+        and context.matches_vector_supplied is False
+        and pattern is not None
+        and pattern.issue is None
+        and pattern.ended
+        and not pattern.remaining_raw
+        # BMInitBackrefs scans physical bytes, including operands and chunks.
+        and b"\x90\x1b" not in pattern.raw
     )
 
 
@@ -72,7 +97,7 @@ def _primary_class_context_is_exact(
         and context.reader_kind == "BUFFER"
         and context.translation in ("identity", "ascii_lowercase")
         and _pattern_preparation_is_exact(context)
-        and context.worker_modes == (1,)
+        and _worker_modes_are_mode1_equivalent(context, pattern)
         and context.capture_enabled is False
     )
 
@@ -172,15 +197,23 @@ def _operation_ir(
                     continuation="retry the complete remaining pattern at each candidate",
                     suffix_before_membership=True,
                     failed_suffix_reader_committed=False,
-                    scope="BUFFER/mode1/capture disabled Boolean acceptance; offsets excluded",
+                    scope=(
+                        "guarded BUFFER/identity mode1/3 Boolean acceptance; outputs excluded"
+                        if context.worker_modes == (1, 3)
+                        else "BUFFER/mode1/capture disabled Boolean acceptance; offsets excluded"
+                    ),
                     caller_address="0x1800EE352",
                     helper_address="0x1800F04C0",
-                    engine_evidence="primary raw05 caller and complete original-worker differential",
+                    engine_evidence=(
+                        "primary raw05 caller; complete worker/helper mode dataflow and 3580 identity/null-output mode1/3 differential pairs"
+                        if context.worker_modes == (1, 3)
+                        else "primary raw05 caller and complete original-worker differential"
+                    ),
                 )
         else:
             result["fidelity"] = "conditional"
             result["requirements"] = [
-                "requires BUFFER reader, known translation, worker mode 1, and no raw 90 1B byte sequence in the full pattern",
+                "requires BUFFER reader, known translation, worker mode 1 or the guarded identity mode1/3 profile, and no raw 90 1B byte sequence in the full pattern",
                 "primary raw opcodes 0x04/0x05 only; other class opcodes and aliases remain reader-specific",
                 "ASCII-lowercase requires caller-proven pattern_preparation='ascii_lowercase'; BMPatternToLower normalizes literal/spec bytes, not count/framing",
             ]
@@ -201,7 +234,7 @@ def _operation_ir(
                 and context.reader_kind == "BUFFER"
                 and context.translation in ("identity", "ascii_lowercase")
                 and _pattern_preparation_is_exact(context)
-                and context.worker_modes == (1,)
+                and _worker_modes_are_mode1_equivalent(context, pattern)
                 and context.capture_enabled is False
             )
             decoded["buffer_mode1_predicate"] = {
@@ -217,12 +250,17 @@ def _operation_ir(
                     context.pattern_preparation if context is not None else None
                 ),
             }
+            if exact_context and context is not None and context.worker_modes == (1, 3):
+                decoded["buffer_mode1_predicate"]["worker_modes"] = [1, 3]
+                decoded["buffer_mode1_predicate"]["mode_equivalence_scope"] = (
+                    "guarded identity/raw-identity/null-output complete-pattern profile"
+                )
             result["fidelity"] = "exact" if exact_context else "conditional"
             result["requirements"] = (
                 []
                 if exact_context
                 else [
-                    "BUFFER reader, identity or ASCII-lowercase translation, worker mode exactly 1, capture disabled",
+                    "BUFFER reader, mode1 with known translation or guarded identity mode1/3 profile, capture disabled",
                     "ASCII-lowercase requires caller-proven pattern_preparation='ascii_lowercase'; BMPatternToLower normalizes literal/spec bytes, not count/framing",
                 ]
             )
