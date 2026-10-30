@@ -140,6 +140,76 @@ class BmAlternatives(BmOperation):
 
 
 @dataclass(frozen=True, slots=True)
+class BmAlternativeProgram:
+    """A local raw-byte rewrite plan, without reachability or matcher claims.
+
+    Offsets address the complete immutable source supplied to the parser.
+    Source preparation (wire or prepared bytes) is the caller's responsibility.
+    """
+
+    source: bytes
+    offset: int
+    raw_id: int
+    widths: tuple[int, ...]
+    descriptor_length: int
+    choice_spans: tuple[tuple[int, int], ...]
+    suffix_offset: int
+
+    @property
+    def shared_block_span(self) -> tuple[int, int]:
+        start = self.offset + self.descriptor_length
+        return start, self.suffix_offset - start
+
+    def compose_choice(self, index: int) -> bytes:
+        """Join the raw chunk and suffix before any subsequent BM decoding."""
+        if type(index) is not int or not 0 <= index < len(self.choice_spans):
+            raise IndexError("BM alternative choice index out of range")
+        start, length = self.choice_spans[index]
+        return self.source[start : start + length] + self.source[self.suffix_offset :]
+
+
+def parse_bm_alternative_program(raw: bytes, offset: int = 0) -> BmAlternativeProgram:
+    """Parse a bounded raw03/raw17 rewrite plan in the supplied byte buffer.
+
+    Widths count raw bytes, including bytes that another framing pass might
+    treat as opcodes or END. Zero choices, zero widths and an empty suffix are
+    valid local plans. This does not validate candidate framing or execution.
+    """
+    source = bytes(raw)
+    if type(offset) is not int or not 0 <= offset < len(source):
+        raise ValueError("BM alternatives offset is outside the source")
+    if offset + 2 > len(source) or source[offset] != 0x90:
+        raise ValueError("BM alternatives require a 90 03 or 90 17 header")
+    raw_id = source[offset + 1]
+    if raw_id == 0x03:
+        descriptor_length = 4
+        widths_offset, count = offset + 2, 2
+    elif raw_id == 0x17:
+        if offset + 3 > len(source):
+            raise ValueError("truncated BM alternatives count")
+        count = source[offset + 2]
+        descriptor_length = 3 + count
+        widths_offset = offset + 3
+    else:
+        raise ValueError("BM alternatives require raw03 or raw17")
+    shared_start = offset + descriptor_length
+    if shared_start > len(source):
+        raise ValueError("truncated BM alternatives widths")
+    widths = tuple(source[widths_offset : widths_offset + count])
+    suffix_offset = shared_start + sum(widths)
+    if suffix_offset > len(source):
+        raise ValueError("BM alternatives shared block exceeds the source")
+    spans: list[tuple[int, int]] = []
+    cursor = shared_start
+    for width in widths:
+        spans.append((cursor, width))
+        cursor += width
+    return BmAlternativeProgram(
+        source, offset, raw_id, widths, descriptor_length, tuple(spans), suffix_offset
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class BmScan(BmOperation):
     token: BmToken
     kind: Literal["fixed_skip", "forward_search", "backward_scan", "backward_search"]
