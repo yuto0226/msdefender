@@ -58,7 +58,7 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
                 ("unconditional_rejection", False),
                 (
                     "reason",
-                    "BUFFER restores the preceding literal-run snapshot; count, cursor and bounds can produce success or failure",
+                    "BUFFER modes1/3 restore the worker-invocation entry snapshot; count, cursor and bounds can produce success or failure",
                 ),
             )
         )
@@ -774,8 +774,8 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                 scope="runtime_consumer",
                 statement=(
                     "Decoded dispatch 0x09 selects the BUFFER backward-scan "
-                    "handler at 0x1800EEA02. It restores the literal-run snapshot "
-                    "and applies count/cursor/bounds logic; successful cases "
+                    "handler at 0x1800EEA02. Modes1/3 restore the worker-entry "
+                    "snapshot and apply byte-count/cursor/bounds logic; successful cases "
                     "disprove unconditional rejection. Full acceptance and "
                     "suffix behavior remain reader-specific and are not lowered."
                 ),
@@ -783,14 +783,14 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                 evidence_refs=(
                     "pebmpat_backward_scan_consumer",
                     "pebmpat_backward_scan_counterexamples",
+                    "pebmpat_backward_scan_transition_model",
                 ),
                 unknowns=(
                     SemanticUnknown(
                         "runtime_consumer",
-                        "Complete snapshot/count/mapped-zero acceptance, suffix "
-                        "and capture behavior across caller profiles remain "
-                        "unmodeled; successful bounded cases only refute "
-                        "unconditional rejection.",
+                        "Suffix/capture composition, mode0/2 mapped-zero behavior "
+                        "and outer candidate selection remain unmodeled; the "
+                        "mode1/3 cursor transition alone is not full acceptance.",
                     ),
                 ),
             )
@@ -879,7 +879,35 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                 locator=(
                     "g_bmOpcodeTable raw09 = 09 04 00; switch table @ "
                     "0x1800F0040 index 8 = RVA 0xEEA02; dedicated BUFFER "
-                    "handler @ 0x1800EEA02, common failure exit @ 0x1800EDECB"
+                    "handler @ 0x1800EEA02, common failure exit @ 0x1800EDECB; "
+                    "entry snapshot saves @ 0x1800EDBBB/0x1800EDBCA/0x1800EDBD9; "
+                    "mode&4 snapshot update is excluded by modes1/3"
+                ),
+                supports=("pebmpat_buffer_backward_scan",),
+            )
+        )
+        claim_evidence.append(
+            SemanticEvidence(
+                id="pebmpat_backward_scan_transition_model",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref=(
+                    "Pinned DLL SHA256 "
+                    "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                    "local_bm_raw09_model_engine: 2924 mode1/3 original-worker "
+                    "comparisons for the literal/9090/raw01/raw09/END grammar, "
+                    "with entry-snapshot register, Boolean, cursor and internal "
+                    "scratch checks. Another 224 mode0/2 isolated transitions "
+                    "do not extend the production byte-count model. "
+                    "local_bm_raw09_u64_slice_engine adds 250 original-handler "
+                    "arithmetic comparisons against the primitive and an "
+                    "independent loop, including u64 wrap and initial bounds; "
+                    "it stops before suffix execution. No general "
+                    "BM program, FILE reader, capture or final-verdict equivalence"
+                ),
+                locator=(
+                    "raw09 @ 0x1800EEA02..0x1800EEA7B; "
+                    "mode1/3 suffix continuation @ 0x1800EE685"
                 ),
                 supports=("pebmpat_buffer_backward_scan",),
             )
@@ -906,7 +934,7 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
 
     return RuleSemantics(
         status=status,
-        representation="pebmpat.pattern.ir.v12",
+        representation="pebmpat.pattern.ir.v13",
         data=data,
         evidence=(
             (

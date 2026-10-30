@@ -1927,7 +1927,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v11",
+        representation="hstr.matcher-subset.ir.v12",
         data=data,
         evidence=tuple(legacy_evidence),
         profile="mpengine-1.443.903.0",

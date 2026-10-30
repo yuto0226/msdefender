@@ -148,6 +148,44 @@ class BmScan(BmOperation):
 
 
 @dataclass(frozen=True, slots=True)
+class BmBackwardScanTransition:
+    """A raw09 cursor transition; reachable does not mean the suffix matches."""
+
+    suffix_reachable: bool
+    cursor: int
+
+
+def buffer_backward_scan_transition(
+    snapshot_cursor: int, limit: int, count: int
+) -> BmBackwardScanTransition:
+    """Model BUFFER raw09 with mode bit0 set, excluding suffix/capture effects.
+
+    For modes1/3 the caller supplies the worker-invocation entry snapshot,
+    not the cursor after a preceding literal. The native pre-decrement check
+    uses >limit, while the final continuation check uses <limit.
+    """
+    mask = (1 << 64) - 1
+    if (
+        type(snapshot_cursor) is not int
+        or type(limit) is not int
+        or type(count) is not int
+        or not 0 <= snapshot_cursor <= mask
+        or not 0 <= limit <= mask
+        or not 0 <= count <= 0xFFFF
+    ):
+        raise ValueError("raw09 requires u64 snapshot cursor/limit and a u16 count")
+    if not count:
+        return BmBackwardScanTransition(snapshot_cursor < limit, snapshot_cursor)
+    if snapshot_cursor > limit:
+        return BmBackwardScanTransition(False, snapshot_cursor)
+    if limit < mask and count > snapshot_cursor:
+        # The first unsigned underflow is rejected before further decrements.
+        return BmBackwardScanTransition(False, mask)
+    cursor = (snapshot_cursor - count) & mask
+    return BmBackwardScanTransition(cursor < limit, cursor)
+
+
+@dataclass(frozen=True, slots=True)
 class BmClass(BmOperation):
     token: BmToken
     count: int

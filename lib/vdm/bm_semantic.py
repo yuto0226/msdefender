@@ -151,6 +151,34 @@ def _operation_ir(
         decoded.update(kind=operation.kind, operand=operation.operand)
         result["fidelity"] = "conditional"
         result["requirements"] = [operation.support_note]
+        if (
+            operation.kind == "backward_scan"
+            and context is not None
+            and context.reader_kind == "BUFFER"
+            and context.worker_modes
+            and all(mode in (1, 3) for mode in context.worker_modes)
+        ):
+            decoded["engine_transition"] = {
+                "reader": "BUFFER",
+                "worker_modes": list(context.worker_modes),
+                "snapshot_anchor": "worker_invocation_entry",
+                "restore": ["base", "limit", "cursor"],
+                "count_source": "LE16 token operands",
+                "count_unit": "byte",
+                "cursor_width_bits": 64,
+                "pre_decrement_failure": "cursor > snapshot.limit",
+                "decrement": "cursor = (cursor - 1) modulo 2^64",
+                "post_count_continuation": "cursor < snapshot.limit",
+                "failure_preserves_mutated_cursor": True,
+                "primitive": "buffer_backward_scan_transition",
+                "engine_evidence": "BUFFER handler 0x1800EEA02..0x1800EEA7B; worker-entry snapshot 0x1800EDBBB/0x1800EDBCA/0x1800EDBD9",
+                "success_means": "suffix is reachable; it must still match",
+                "suffix_and_capture_effects_modeled": False,
+            }
+            result["requirements"] = [
+                "requires the worker-invocation entry snapshot, not the current cursor",
+                "only the mode1/3 byte-count transition is modeled; suffix acceptance and capture effects remain separate",
+            ]
     elif isinstance(operation, BmClass):
         decoded.update(count=operation.count, spec_hex=operation.spec.hex())
         if (
