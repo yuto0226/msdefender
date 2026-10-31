@@ -20,6 +20,7 @@ from ..core import (
     SemanticEvidence,
     SemanticIssue,
     SemanticUnknown,
+    semantic_json_to_data,
 )
 from ..recid import RecIdTail, parse_recid_tail
 from ._certificate_key import parse_certificate_key
@@ -220,6 +221,96 @@ def render_revoked_certificate(parsed: RevokedCertificate) -> FormatResult:
     return FormatResult(sections=tuple(sections))
 
 
+def _receiver_attribution(parsed: RevokedCertificate) -> JSONObject:
+    """Describe the proven receiver branches without generating runtime IDs."""
+    tail = parsed.recid_tail
+    offset = 2 + parsed.key_len + POLICY_TRAILER_SIZE
+    if tail is None:
+        return JSONObject(
+            (
+                ("profile", "revoked_certificate.receiver_attribution.v1"),
+                ("tail_present", False),
+                ("stored_threat_id_source", "caller_threat_id"),
+                ("recid_construction", "not_called"),
+            )
+        )
+    try:
+        ascii_preview = tail.object_raw.decode("ascii")
+    except UnicodeDecodeError:
+        ascii_preview = None
+    return JSONObject(
+        (
+            ("profile", "revoked_certificate.receiver_attribution.v1"),
+            ("tail_present", True),
+            ("tail_span", JSONObject((("offset", offset), ("length", len(tail.raw))))),
+            ("length_limit", tail.length_limit),
+            (
+                "bounded_name_input",
+                JSONObject(
+                    (
+                        ("offset", offset + 1),
+                        ("length", len(tail.object_raw)),
+                        ("raw_hex", tail.object_raw.hex()),
+                        ("ascii_preview", ascii_preview),
+                        (
+                            "preview_contract",
+                            "strict ASCII display only; engine encoding is not established",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "surplus_span",
+                JSONObject(
+                    (
+                        ("offset", offset + 1 + len(tail.object_raw)),
+                        ("length", len(tail.trailing_raw)),
+                    )
+                ),
+            ),
+            ("surplus_effect", "not passed to the name object"),
+            ("name_object_push_attempted", tail.has_object),
+            ("name_object_class", 1),
+            (
+                "name_object_condition",
+                "effective length > 0 and first byte != 0; no C-string truncation",
+            ),
+            ("name_id_when_not_pushed", "0xFFFFFFFF"),
+            ("name_push_failure", "return 0xFFFFFFFF without calling createrecid"),
+            (
+                "recid_construction",
+                "createrecidp -> createrecid; no-name sentinel still constructs metadata",
+            ),
+            (
+                "construction_preconditions",
+                JSONArray(
+                    (
+                        "caller namespace/flags fits 20 bits",
+                        "name push succeeds when attempted",
+                        "when a name ID exists, GenerateInternalId returns normally and any required add_mini_threat returns 0",
+                        "class2 metadata object push returns a non-sentinel RecID",
+                    )
+                ),
+            ),
+            (
+                "helper_sentinel_effect",
+                "RecID == 0xFFFFFFFF makes Load return false; resolver is not called",
+            ),
+            ("stored_threat_id_source", "threatidfromrecid(successful_recid)"),
+            ("stored_threat_id_offset", 0x38),
+            ("resolver_result_checked_by_load", False),
+            (
+                "runtime_id_values",
+                "depend on object tables/registration; not computed from wire bytes",
+            ),
+            (
+                "policy_effect",
+                "attribution metadata only; no detection or final verdict is inferred",
+            ),
+        )
+    )
+
+
 def export_revoked_certificate_semantics(
     parsed: RevokedCertificate,
 ) -> RuleSemantics:
@@ -239,15 +330,6 @@ def export_revoked_certificate_semantics(
     )
 
     unsupported_reasons: list[SemanticIssue] = []
-    if parsed.recid_tail_raw:
-        unsupported_reasons.append(
-            SemanticIssue(
-                "recid_metadata_meaning_unknown",
-                "The receiver uses the tail to derive the stored threat/RecID "
-                "association, but its producer-side object meaning is unknown.",
-                (("length", len(parsed.recid_tail_raw)),),
-            )
-        )
     if parsed.unknown_flag_bits:
         unsupported_reasons.append(
             SemanticIssue(
@@ -385,10 +467,11 @@ def export_revoked_certificate_semantics(
         )
     return RuleSemantics(
         status="unsupported" if unsupported_reasons else "confirmed_subset",
-        representation="revoked_certificate.raw_spans.ir.v1",
+        representation="revoked_certificate.raw_spans.ir.v2",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
+                ("attribution", _receiver_attribution(parsed)),
                 (
                     "framing",
                     JSONArray(
@@ -552,7 +635,30 @@ def export_revoked_certificate_semantics(
                 unknowns=(
                     SemanticUnknown(
                         "receiver_transform",
-                        "The producer meaning of the optional RecID metadata object is unknown.",
+                        "Runtime object allocation/registration, caller metadata and resolver-table results remain state-dependent.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="revoked_certificate_receiver_attribution",
+                scope="receiver_transform",
+                statement=(
+                    "Load preserves the caller threat ID without a tail; with a "
+                    "tail it bounds name bytes by the first-byte length limit, "
+                    "conditionally pushes class1 name data, constructs RecID "
+                    "metadata, and resolves a non-sentinel RecID into record +0x38."
+                ),
+                coverage="subset",
+                evidence_refs=(
+                    "revoked_certificate_attribution",
+                    "revoked_certificate_attribution_helper_probe",
+                ),
+                unknowns=(
+                    SemanticUnknown(
+                        "receiver_transform",
+                        "Actual object IDs, allocations, name registration and resolver "
+                        "state are runtime-dependent; byte previews do not establish "
+                        "engine text encoding, policy or a final verdict.",
                     ),
                 ),
             ),
@@ -573,6 +679,38 @@ def export_revoked_certificate_semantics(
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                id="revoked_certificate_attribution_helper_probe",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref=(
+                    "Pinned DLL SHA256 "
+                    "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                    "27 original-createrecidp cases observe bounded name bytes, "
+                    "class1 calls, name-ID forwarding and sentinel returns. "
+                    "kpushobject and createrecid are call/return seams; no full "
+                    "Load, resolver or name-registration execution is claimed"
+                ),
+                locator=(
+                    "local_revoked_attribution_native::test_original_createrecidp_call_boundaries; "
+                    "runner SHA256 5a60420c01209abb4df2425799b494e6f31fb6c0719380ae5b227e400b92c2f6"
+                ),
+                supports=("revoked_certificate_receiver_attribution",),
+            ),
+            SemanticEvidence(
+                id="revoked_certificate_attribution",
+                axis="receiver",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 fresh attribution branch audit",
+                locator=(
+                    "Load @ 0x180320808: helper sentinel gate @ 0x180320973, "
+                    "resolver @ 0x180320980, store +0x38 @ 0x180320924; "
+                    "createrecidp @ 0x180323040: bounded length/nonzero-first-byte "
+                    "class1 push @ 0x18032309B..0x1803230B0, no-name sentinel "
+                    "still calls createrecid @ 0x1800FB5EC; threatidfromrecid @ 0x1800F97F0"
+                ),
+                supports=("revoked_certificate_receiver_attribution",),
+            ),
             SemanticEvidence(
                 id="revoked_certificate_dispatch",
                 axis="dispatch",
@@ -638,12 +776,13 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
         }
     )
     manifest = {
-        "schema": "vdm.revoked_certificate.artifact.v1",
+        "schema": "vdm.revoked_certificate.artifact.v2",
         "record_type": {
             "byte": REVOKED_CERTIFICATE_TYPE,
             "name": "REVOKED_CERTIFICATE",
         },
         "raw_hex": parsed.raw.hex(),
+        "attribution": semantic_json_to_data(_receiver_attribution(parsed)),
         "key": {
             "length": parsed.key_len,
             "length_raw_hex": parsed.raw[:2].hex(),
@@ -678,10 +817,6 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
             "match": "certificate_key_lookup_subject_to_filetime_and_signed_file_gates",
             "x509_field_mapping": "unknown",
             "final_trust_or_scan_verdict": "unknown",
-            "recid_tail_effect": (
-                "loader_validates_tail_and_may_replace_stored_threat_id; "
-                "portable_attribution_and_other_consumers_unknown"
-            ),
             "reuse_profile": {
                 "profile": "mpengine-1.443.903.0",
                 "status": "bounded_engine_behavior_profile",
@@ -754,7 +889,7 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
                 ],
                 "unknowns": [
                     "wide_key_identity_mapping",
-                    "portable_RecID_attribution_and_other_consumers",
+                    "runtime_generated_ID_values_and_other_consumers",
                     "unknown_revoke_flag_bits",
                     "final_trust_or_scan_verdict",
                 ],
