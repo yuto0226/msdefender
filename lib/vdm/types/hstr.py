@@ -869,7 +869,7 @@ def parse_hstr(payload: bytes, *, type_byte: int) -> HstrPayload:
 
 def _hstr_bm_runtime_context(
     subsig: HstrSubsignature, pattern: BmPattern
-) -> tuple[JSONObject, BmMatchContext | None, BmSemanticContext]:
+) -> tuple[JSONObject, BmMatchContext, BmSemanticContext]:
     """Derive BM worker facts from an explicitly selected HSTR BM subsig."""
     assert subsig.flags is not None
     flags = subsig.flags.value
@@ -880,6 +880,7 @@ def _hstr_bm_runtime_context(
     if identity:
         translation = bytes(range(256))
     capture_marker_bytes_present = b"\x90\x1b" in pattern.raw
+    capture_enabled = None if capture_marker_bytes_present else False
     worker_mode = ((flags >> 6) & 2) | 1
     display = JSONObject(
         (
@@ -894,17 +895,16 @@ def _hstr_bm_runtime_context(
             ("worker_mode", worker_mode),
             ("offsets_argument_present", False),
             ("capture_marker_bytes_present", capture_marker_bytes_present),
+            ("capture_enabled", capture_enabled),
         )
     )
-    match_context = None
-    if not capture_marker_bytes_present:
-        match_context = BmMatchContext(
-            reader_kind="BUFFER",
-            translation=translation if identity else "ascii_lowercase",
-            worker_mode=worker_mode,
-            capture_enabled=False,
-            pattern_preparation="identity" if identity else "ascii_lowercase",
-        )
+    match_context = BmMatchContext(
+        reader_kind="BUFFER",
+        translation=translation if identity else "ascii_lowercase",
+        worker_mode=worker_mode,
+        capture_enabled=capture_enabled,
+        pattern_preparation="identity" if identity else "ascii_lowercase",
+    )
     complete_single_segment = (
         pattern.issue is None and pattern.ended and not pattern.remaining_raw
     )
@@ -1926,7 +1926,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v13",
+        representation="hstr.matcher-subset.ir.v14",
         data=data,
         evidence=tuple(legacy_evidence),
         profile="mpengine-1.443.903.0",
