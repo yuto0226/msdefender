@@ -64,6 +64,12 @@ class _SemanticAccumulator:
         default_factory=lambda: defaultdict(Counter)
     )
     claim_unknowns: Counter[str] = field(default_factory=Counter)
+    claim_unknown_reasons: dict[str, Counter[str]] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )
+    claim_unknown_reason_records: dict[str, Counter[str]] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )
     claim_evidence_axes: dict[str, Counter[str]] = field(
         default_factory=lambda: defaultdict(Counter)
     )
@@ -103,6 +109,7 @@ class _SemanticAccumulator:
 
         assert exported.semantics is not None
         semantics = exported.semantics
+        seen_unknown_reasons: set[tuple[str, str]] = set()
         self.statuses[semantics.status] += 1
         self.representations[semantics.representation] += 1
         self.issues.update(issue.code for issue in semantics.issues)
@@ -113,6 +120,13 @@ class _SemanticAccumulator:
             self.claim_coverage[claim.scope][claim.coverage] += 1
             for unknown in claim.unknowns:
                 self.claim_unknowns[unknown.scope] += 1
+                self.claim_unknown_reasons[unknown.scope][unknown.reason] += 1
+                reason_key = (unknown.scope, unknown.reason)
+                if reason_key not in seen_unknown_reasons:
+                    self.claim_unknown_reason_records[unknown.scope][
+                        unknown.reason
+                    ] += 1
+                    seen_unknown_reasons.add(reason_key)
             for evidence_ref in claim.evidence_refs:
                 self.claim_evidence_axes[claim.scope][
                     evidence_by_id[evidence_ref].axis
@@ -204,6 +218,7 @@ def build_semantic_inventory(
         semantic_scopes = sorted(
             set(accumulated.claim_coverage)
             | set(accumulated.claim_unknowns)
+            | set(accumulated.claim_unknown_reasons)
             | set(accumulated.claim_evidence_axes)
         )
         type_key = f"0x{type_byte:02X}"
@@ -234,6 +249,11 @@ def build_semantic_inventory(
                 if sample_limit_per_type == 0
                 else "deterministic_shape_sample",
                 "sample_count": accumulated.sample_count,
+                "unknown_reason_record_count_basis": (
+                    "all_records"
+                    if sample_limit_per_type == 0
+                    else "deterministic_shape_sample"
+                ),
                 "status_counts": dict(accumulated.statuses),
                 "representation_counts": dict(accumulated.representations),
                 "profile_counts": dict(accumulated.profiles),
@@ -242,6 +262,18 @@ def build_semantic_inventory(
                     scope: {
                         "coverage_counts": dict(accumulated.claim_coverage[scope]),
                         "unknown_count": accumulated.claim_unknowns[scope],
+                        "unknown_reasons": [
+                            {
+                                "reason": reason,
+                                "occurrence_count": occurrences,
+                                "sampled_record_count": accumulated.claim_unknown_reason_records[
+                                    scope
+                                ][reason],
+                            }
+                            for reason, occurrences in sorted(
+                                accumulated.claim_unknown_reasons[scope].items()
+                            )
+                        ],
                         "evidence_axis_counts": dict(
                             accumulated.claim_evidence_axes[scope]
                         ),
@@ -265,7 +297,7 @@ def build_semantic_inventory(
         if type_byte not in counts
     ]
     return {
-        "schema": "vdm-semantic-evidence-inventory.v4",
+        "schema": "vdm-semantic-evidence-inventory.v5",
         "sources": source_identities,
         "sampling": {
             "scope": "all_records"
