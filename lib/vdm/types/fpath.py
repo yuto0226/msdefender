@@ -22,6 +22,7 @@ from ..core import (
     SemanticJSONValue,
     SemanticUnknown,
 )
+from ..fpath_env import OriginalEnvRecipe, original_env_recipe_for_row
 from ..fpath_lookup import (
     CSIDL_INDEX_MISS,
     ORIGINAL_CSIDL_LOOKUP_PROFILE,
@@ -203,6 +204,11 @@ def _fpath_csidl_lookup(parsed: FpathPayload) -> dict[str, object]:
     }
 
 
+def _fpath_env_recipe(parsed: FpathPayload) -> OriginalEnvRecipe | None:
+    index = lookup_original_csidl_index(parsed.csidl_value)
+    return None if index == CSIDL_INDEX_MISS else original_env_recipe_for_row(index)
+
+
 def _fpath_match_profile(parsed: FpathPayload) -> dict[str, object]:
     """Return the engine-confirmed bounded path candidate contract."""
     is_asep = parsed.type_byte in {0x71, 0x75}
@@ -372,6 +378,7 @@ def render_fpath(parsed: FpathPayload) -> FormatResult:
     """Render known path fields and opaque tail lengths as logger sections."""
     name = FPATH_TYPES[parsed.type_byte]
     lookup_index = lookup_original_csidl_index(parsed.csidl_value)
+    env_recipe = _fpath_env_recipe(parsed)
     path_rows = (
         ("csidl_value", f"0x{parsed.csidl_value:04X}"),
         (
@@ -395,6 +402,9 @@ def render_fpath(parsed: FpathPayload) -> FormatResult:
             "NUL" if parsed.nul_terminated else "absent (payload boundary)",
         ),
     )
+
+    if env_recipe is not None:
+        path_rows += (("path_provider", f"QueryPathFromEnv: {env_recipe.template}"),)
 
     if parsed.path_kind == "foldername":
         path_rows += (
@@ -451,12 +461,15 @@ def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
         else parsed.path_region_raw[parsed.pipe_offset :]
     )
     manifest = {
-        "schema": "vdm.fpath.artifact.v3",
+        "schema": "vdm.fpath.artifact.v4",
         "record_type": {"byte": parsed.type_byte, "name": type_name},
         "family": "asep" if is_asep else "standard",
         "raw_hex": parsed.raw.hex(),
         "match_profile": _fpath_match_profile(parsed),
         "receiver_input_profile": _fpath_receiver_input_profile(parsed),
+        "callback_control_flow_recipe": (
+            None if (recipe := _fpath_env_recipe(parsed)) is None else recipe.to_json()
+        ),
         "csidl": {
             "value": parsed.csidl_value,
             "raw_hex": parsed.raw[:HEADER_SIZE].hex(),
@@ -602,13 +615,19 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
             )
             else "confirmed_subset"
         ),
-        representation="fpath.path-match-candidate.ir.v5",
+        representation="fpath.path-match-candidate.ir.v6",
         data=JSONObject(
             (
                 ("type", type_name),
                 ("raw_hex", parsed.raw.hex()),
                 ("match_profile", _semantic_json(match_profile)),
                 ("receiver_input_profile", _semantic_json(receiver_input_profile)),
+                (
+                    "callback_control_flow_recipe",
+                    None
+                    if (recipe := _fpath_env_recipe(parsed)) is None
+                    else _semantic_json(recipe.to_json()),
+                ),
                 ("storage_family", "asep" if is_asep else "standard"),
                 (
                     "csidl",
@@ -735,7 +754,36 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
         if is_asep
         else "compares the supplied resource path using exact or wildcard matching"
     )
-    return (
+    env_claims = (
+        (
+            SemanticClaim(
+                id="fpath_env_callback_recipe",
+                scope="runtime_consumer",
+                statement=(
+                    "For this actual selected original row, QueryPathFromEnv calls "
+                    "ExpandEnvStrings(profile, row+8 template, 7). NULL returns 3 "
+                    "and preserves prior output; non-NULL calls release-and-clear "
+                    "FreeExpandedData before VirtualizeSimplePath with runtime "
+                    "caller flags and fifth argument 1, returning its status unchanged."
+                ),
+                coverage="subset",
+                evidence_refs=(
+                    "fpath_env_callback_static",
+                    "fpath_env_callback_native",
+                ),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Runtime environment expansion, WOW/redirection/worker output "
+                        "paths and initialized-engine behavior are not resolved.",
+                    ),
+                ),
+            ),
+        )
+        if _fpath_env_recipe(parsed) is not None
+        else ()
+    )
+    return env_claims + (
         SemanticClaim(
             id="fpath_wire_layout",
             scope="wire_layout",
@@ -898,7 +946,41 @@ def _fpath_evidence(parsed: FpathPayload) -> tuple[SemanticEvidence, ...]:
         "fcmp_file_path @ 0x1803B0160; MatchWildCardHelper_char_ @ "
         "0x180223784; file_size_check @ 0x180223914"
     )
-    return (
+    env_evidence = (
+        (
+            SemanticEvidence(
+                id="fpath_env_callback_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 original callback and row bytes",
+                locator=(
+                    "QueryPathFromEnv @ 0x1800C86B0 (0xCE bytes); template pointer "
+                    "row+8; ExpandEnvStrings @ 0x1800C6A80; FreeExpandedData @ "
+                    "0x1800C1404; VirtualizeSimplePath @ 0x1800C1C94; "
+                    "11 original callback rows, selected by actual CSIDL helper index."
+                ),
+                supports=("fpath_env_callback_recipe",),
+            ),
+            SemanticEvidence(
+                id="fpath_env_callback_native",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref="mpengine 1.443.903.0 original QueryPathFromEnv only",
+                locator=(
+                    "tests/local_fpath_query_env_native.py SHA256 "
+                    "1310296c4b28bf88141dc45c33bb53cbc50402f578c77ff30deaa4e8c2b043cd; "
+                    "32 synthetic controls and 11 original rows, 43 result rows; "
+                    "expand/free-output/virtualize are explicit call-return seams. "
+                    "Arguments, order, prior-output retention and status propagation "
+                    "only; not original-callee/full-initialization execution."
+                ),
+                supports=("fpath_env_callback_recipe",),
+            ),
+        )
+        if _fpath_env_recipe(parsed) is not None
+        else ()
+    )
+    return env_evidence + (
         SemanticEvidence(
             id="fpath_csidl_lookup_static",
             axis="receiver",
