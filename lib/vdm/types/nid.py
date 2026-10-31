@@ -23,6 +23,11 @@ from ..core import (
 NID_TYPE: Final = 0x55
 SNID_TYPE: Final = 0x7E
 NID64_TYPE: Final = 0xCE
+_SNID98_RESOLVER_CALLABLE: Final = "lib.vdm.snid_resolver.resolve_import_descriptor"
+_SNID98_SNAPSHOT_TYPES: Final = (
+    ("nid_snapshot", "lib.vdm.snid_resolver.NidLookupSnapshot"),
+    ("virtual_dlls", "lib.vdm.snid_resolver.VirtualDllSnapshot"),
+)
 
 _FAMILY_NAMES = MappingProxyType(
     {
@@ -396,6 +401,30 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                                 "virtual DLL ID and API-set selector99 can affect ordinal selector97 lookup",
                             ),
                             (
+                                "resolver_contract",
+                                "portable reply-NULL NID4 selector97/99 snapshot evaluation: "
+                                "normalized delta/base order, resolved runtime names, shared selector108 sequence membership; "
+                                "accept only status 1; wire no-tail is not runtime empty"
+                                if snid98
+                                else "not applicable",
+                            ),
+                            (
+                                "resolver_callable",
+                                _SNID98_RESOLVER_CALLABLE if snid98 else None,
+                            ),
+                            (
+                                "resolver_snapshot_types",
+                                JSONObject(_SNID98_SNAPSHOT_TYPES) if snid98 else None,
+                            ),
+                            (
+                                "virtual_dll_contract",
+                                "explicit selected-host lookup/stored-ID snapshot; index0 and ID0 valid; "
+                                "MSVCRT canonical before path strip; dot presence before trim; "
+                                "API99 accepted target uses raw target CRC even when virtual-known"
+                                if snid98
+                                else "not applicable",
+                            ),
+                            (
                                 "suffix_source",
                                 "context +0xAAA68 raw4; verified pefile_scan_mp reset writes zero; all alias writers unknown",
                             ),
@@ -535,15 +564,22 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     statement=(
                         "For selector 98, pe_parse_imports produces the first 16 query "
                         "bytes with MD5 over ordered effective import tokens; the "
-                        "consumer appends four unchanged context bytes."
+                        "consumer appends four unchanged context bytes. Portable "
+                        "reproduction accepts explicit ordinal resolution or resolved "
+                        "runtime snapshots within the ASCII success profile."
                     ),
                     coverage="subset",
-                    evidence_refs=("snid98_producer_static",),
+                    evidence_refs=(
+                        "snid98_producer_static",
+                        "snid98_resolver_differential",
+                    ),
                     unknowns=(
                         SemanticUnknown(
                             "runtime_consumer",
                             "Portable reproduction covers successful effective inputs "
-                            "in an ASCII profile with explicit ordinal resolution; "
+                            "in an ASCII profile with explicit ordinal resolution or "
+                            "resolved runtime NID4/virtual-host/suppression snapshots; "
+                            "snapshot/namespace loading, "
                             "other locales, traversal failures, all suffix aliases "
                             "and outer caller gates remain unknown.",
                         ),
@@ -597,6 +633,24 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     locator="pe_parse_imports@0x1801385F4; MD5 Result@0x180138836; reset@0x1803E9858; scan_imphash@0x1804A6370",
                     supports=("snid98_effective_import_key_prefix",),
                 ),
+                SemanticEvidence(
+                    id="snid98_resolver_differential",
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref="mpengine 1.443.903.0; DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                    locator=(
+                        "tests/local_snid98_resolver_native.py (43 cases; SHA256 "
+                        "b67f5ec019b8c46eb5e9c70ab42a6d56c8f27fe6ec23d25edb46a8c7801ebf78); "
+                        "tests/local_snid98_resolver_differential.py (23 cases; SHA256 "
+                        "76a211f10d04f54493a280490756c57cf005fc575cdfa84c9508548f8f3b1da4); "
+                        "docs/mpengine.dll/1.443.903.0/snid98_resolver_private.md; "
+                        "lib.vdm.snid_resolver.resolve_import_descriptor; reply-NULL "
+                        "NID4 selectors97/99, ASCII successful effective imports, "
+                        "explicit resolved-name/selected-host/suppression snapshots; "
+                        "namespace loading and outer scan gates excluded"
+                    ),
+                    supports=("snid98_effective_import_key_prefix",),
+                ),
             )
             if snid98
             else ()
@@ -644,6 +698,16 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
                 if snid98
                 else "unknown; selector98 derivation does not apply"
             ),
+            "resolver_contract": (
+                "NID4 selector97/99 reply-NULL subset with normalized delta/base "
+                "runtime rows and resolved names, shared selector108 membership, "
+                "explicit selected-host virtual table; accept status exactly1; "
+                "wire tail is not a resolved-name backend"
+                if snid98
+                else "unknown; selector98 resolver does not apply"
+            ),
+            "resolver_callable": _SNID98_RESOLVER_CALLABLE if snid98 else None,
+            "resolver_snapshot_types": dict(_SNID98_SNAPSHOT_TYPES) if snid98 else None,
             "file_content_hash_ioc": False,
             "outer_caller_gates": "unknown",
             "recid_or_pcode_effect": "unknown",
