@@ -189,6 +189,50 @@ def _context_requirements(
     return tuple(missing), tuple(issues)
 
 
+def _raw17_context_requirements(
+    context: BmMatchContext | None, *, strict_mode: bool
+) -> tuple[tuple[str, ...], tuple[BmRenderIssue, ...]]:
+    """Keep raw17 evidence narrower than the legacy raw03 context policy."""
+    requirements = (
+        "BUFFER reader",
+        "identity 256-byte translation",
+        "worker mode 1" if strict_mode else "worker mode 1 or 3",
+        "capture disabled",
+        "explicit pattern_preparation='identity'",
+    )
+    if context is None:
+        return requirements, ()
+    facts = (
+        ("reader", context.reader_kind, context.reader_kind == "BUFFER"),
+        (
+            "translation",
+            context.translation,
+            isinstance(context.translation, bytes)
+            and context.translation == _IDENTITY_TRANSLATION,
+        ),
+        (
+            "worker_mode",
+            context.worker_mode,
+            type(context.worker_mode) is int
+            and context.worker_mode in ((1,) if strict_mode else (1, 3)),
+        ),
+        ("capture", context.capture_enabled, context.capture_enabled is False),
+        (
+            "pattern_preparation",
+            context.pattern_preparation,
+            context.pattern_preparation == "identity",
+        ),
+    )
+    missing = []
+    issues = []
+    for requirement, (name, value, compatible) in zip(requirements, facts):
+        if value is None:
+            missing.append(requirement)
+        elif not compatible:
+            issues.append(BmRenderIssue(f"incompatible_context.{name}", 0))
+    return tuple(missing), tuple(issues)
+
+
 def _regex_byte_class(values: bytes) -> str:
     """A compact class of raw subject bytes, including high bytes and NUL."""
     ranges = []
@@ -364,8 +408,15 @@ def render_bm_yara(
     in a regex, restricted to BUFFER/mode 1/no captures and backend budgets.
     Primary raw04 uses an exact fixed count; primary raw05 searches 0..count
     over the prepared spec's subject preimage. Aliases remain unsupported.
+    Positive-width literal raw17 choices preserve Boolean acceptance under
+    their narrower identity/mode1-or3 context, assuming successful temporary
+    pattern allocation. First-success offsets and match ends are not modeled.
     """
     operations = interpret_bm_pattern(pattern).operations
+    has_raw17_alternatives = any(
+        isinstance(operation, BmAlternatives) and operation.token.raw_id == 0x17
+        for operation in operations
+    )
     has_range_search = any(
         isinstance(operation, BmExtension) and operation.name == "RANGE_SEARCH"
         for operation in operations
@@ -384,7 +435,10 @@ def render_bm_yara(
         and not pattern.remaining_raw
         and b"\x90\x1b" not in pattern.raw
     )
-    requirements, context_issues = _context_requirements(
+    context_requirements = (
+        _raw17_context_requirements if has_raw17_alternatives else _context_requirements
+    )
+    requirements, context_issues = context_requirements(
         context, strict_mode=regex_backend
     )
     lowercase_map = _uses_ascii_lowercase_profile(context)
@@ -395,6 +449,8 @@ def render_bm_yara(
             lowercase_map=lowercase_map,
         )
     issues = list(context_issues)
+    if has_raw17_alternatives and b"\x90\x1b" in pattern.raw:
+        issues.append(BmRenderIssue("unsupported.raw17_capture_marker", 0, 0x17))
     printable_preview = render_bm_printable_preview(pattern)
     if pattern.issue is not None:
         issue = pattern.issue
@@ -516,14 +572,6 @@ def render_bm_yara(
                         "empty_alternative", operation.offset, operation.token.raw_id
                     )
                 )
-            elif operation.token.raw_id == 0x17:
-                issues.append(
-                    BmRenderIssue(
-                        "unsupported.first_success_alternatives",
-                        operation.offset,
-                        operation.token.raw_id,
-                    )
-                )
             elif lowercase_map:
                 issues.append(
                     BmRenderIssue(
@@ -543,12 +591,22 @@ def render_bm_yara(
                     choices = "|".join(
                         _regex_literal(choice, False) for choice in operation.choices
                     )
-                    alternative = f"({choices})"
+                    alternative = (
+                        choices
+                        if operation.token.raw_id == 0x17
+                        and len(operation.choices) == 1
+                        else f"({choices})"
+                    )
                 else:
                     choices = " | ".join(
                         choice.hex(" ").upper() for choice in operation.choices
                     )
-                    alternative = f"( {choices} )"
+                    alternative = (
+                        choices
+                        if operation.token.raw_id == 0x17
+                        and len(operation.choices) == 1
+                        else f"( {choices} )"
+                    )
                 parts.append((alternative, operation.offset, False, None))
         elif (
             isinstance(operation, BmClass)

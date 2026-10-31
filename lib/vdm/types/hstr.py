@@ -5,6 +5,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from ..bm import (
+    BmAlternatives,
     BmOpaque,
     BmPattern,
     decode_bm_pattern,
@@ -1270,6 +1271,8 @@ def _hstr_loader_locator(type_byte: int) -> str:
 
 def _hstr_typed_semantics(
     parsed: HstrPayload,
+    *,
+    raw17_literal_indices: tuple[int, ...] = (),
 ) -> tuple[tuple[SemanticClaim, ...], tuple[SemanticEvidence, ...]]:
     """Build claims without projecting one family's caller facts onto another."""
     type_byte = parsed.type_byte
@@ -1511,12 +1514,76 @@ def _hstr_typed_semantics(
             ),
         )
     )
+    if raw17_literal_indices:
+        claim_id = f"{prefix}_raw17_literal_boolean_subset"
+        static_id = f"{prefix}_raw17_literal_worker"
+        native_id = f"{prefix}_raw17_literal_native"
+        claims.append(
+            SemanticClaim(
+                id=claim_id,
+                scope="detection_predicate",
+                statement=(
+                    f"Subsignatures {raw17_literal_indices} render positive-width "
+                    "literal raw17 alternatives as Boolean OR at the same entry "
+                    "cursor under their exact BUFFER/identity/prepared-identity/"
+                    "mode1-or3/no-capture context; existing suffix gates remain."
+                ),
+                coverage="subset",
+                evidence_refs=(static_id, native_id),
+                unknowns=(
+                    SemanticUnknown(
+                        "detection_predicate",
+                        "Successful temporary allocation is assumed. First-success "
+                        "offsets, match ends, captures, outer selection, validators "
+                        "and final Defender verdict are not established by this "
+                        "Boolean rendering; regex suffixes retain mode1 gates.",
+                    ),
+                ),
+            )
+        )
+        evidence.extend(
+            (
+                SemanticEvidence(
+                    id=static_id,
+                    axis="consumer",
+                    kind="engine_static",
+                    source_ref="mpengine 1.443.903.0",
+                    locator=(
+                        "BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60; raw17 "
+                        "shared rewrite @ 0x1800EE4A7..0x1800EE5F9 copies each "
+                        "literal chunk plus the entire suffix and commits reader "
+                        "only after complete child success; child >512 bytes "
+                        "selects malloc @ 0x1800EF21A rather than a hard cap"
+                    ),
+                    supports=(claim_id,),
+                ),
+                SemanticEvidence(
+                    id=native_id,
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref=(
+                        "Pinned DLL SHA256 "
+                        "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                        "original worker versus libyara 4.5.4: 4222 literal/nested "
+                        "comparisons in modes1/3, plus 35 mixed-suffix comparisons "
+                        "in mode1 only; identity, null backrefs, nonnull scratch, "
+                        "same fixed entry cursor, Boolean results only"
+                    ),
+                    locator=(
+                        "local_bm_raw17_literal_yara_engine; "
+                        "local_bm_raw17_mixed_suffix_engine"
+                    ),
+                    supports=(claim_id,),
+                ),
+            )
+        )
     return tuple(claims), tuple(evidence)
 
 
 def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
     """Export a lossless HSTR matcher subset, never a final engine verdict."""
     unsupported = False
+    raw17_literal_indices: list[int] = []
     issues: list[SemanticIssue] = [_outer_verdict_issue(parsed.type_byte)]
     if parsed.receiver_ignored:
         issues.append(
@@ -1660,6 +1727,17 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             bm_render, bm_runtime_context, semantic_context = _render_hstr_bm_yara(
                 subsig, pattern
             )
+            if (
+                bm_render.fidelity.value == "exact"
+                and parsed.type_byte in _CONFIRMED_MATCHER_FAMILIES
+                and not parsed.receiver_ignored
+                and any(
+                    isinstance(operation, BmAlternatives)
+                    and operation.token.raw_id == 0x17
+                    for operation in interpret_bm_pattern(pattern).operations
+                )
+            ):
+                raw17_literal_indices.append(index)
             pattern_data, pattern_issues = serialize_bm_pattern(
                 pattern,
                 context=semantic_context,
@@ -1872,7 +1950,9 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             ("scanner_context", _hstr_scanner_context(parsed.type_byte)),
         )
     )
-    claims, claim_evidence = _hstr_typed_semantics(parsed)
+    claims, claim_evidence = _hstr_typed_semantics(
+        parsed, raw17_literal_indices=tuple(raw17_literal_indices)
+    )
     legacy_evidence = [
         "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
         "mpengine 1.443.903.0 add_sstring_internal @ 0x1800FE008",
@@ -1926,7 +2006,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
             if unsupported
             else "confirmed_subset"
         ),
-        representation="hstr.matcher-subset.ir.v14",
+        representation="hstr.matcher-subset.ir.v15",
         data=data,
         evidence=tuple(legacy_evidence),
         profile="mpengine-1.443.903.0",
