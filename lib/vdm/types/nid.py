@@ -29,6 +29,123 @@ _SNID98_SNAPSHOT_TYPES: Final = (
     ("nid_snapshot", "lib.vdm.snid_resolver.NidLookupSnapshot"),
     ("virtual_dlls", "lib.vdm.snid_resolver.VirtualDllSnapshot"),
 )
+_NID64_SUPPRESSION: Final = JSONObject(
+    (
+        ("lookup_callable", "lib.vdm.nid_suppression.lookup_nid64_name"),
+        ("snapshot_type", "lib.vdm.nid_suppression.Nid64LookupSnapshot"),
+        ("entry_type", "lib.vdm.nid_suppression.Nid64RuntimeEntry"),
+        ("nid4_snapshot_field", "suppression"),
+        ("result_type", "lib.vdm.nid_suppression.Nid64LookupResult"),
+        ("unsupported_error_type", "lib.vdm.nid_suppression.UnsupportedNidSuppression"),
+        ("sequence_callable", "lib.vdm.nid_suppression.nid64_signature_sequence"),
+        ("query_selector_bits", 32),
+        ("entry_selector_bits", 8),
+        ("query_key_bits", 64),
+        ("reply", "NULL only"),
+        ("name_output", "NULL only; non-NULL output hint not modeled"),
+        (
+            "wrapper_acceptance",
+            "nid64search returns1 only for raw lookup status==1; raw2 maps0",
+        ),
+        (
+            "candidate_policy",
+            "!# bypasses recursive108; otherwise query108 before NULL success; miss+NULL returns1 immediately; later non-NULL candidates may overwrite; any nonzero delta raw status blocks base",
+        ),
+        (
+            "recursive_key",
+            "CRC_1(LE64 entry key || selector byte) OR 0x9CE00000000; not a universal wire-key derivation",
+        ),
+        (
+            "traversal",
+            "iterative lazy reached-state evaluation; reached cycles raise Unsupported; unreachable cycles are not evaluated",
+        ),
+        (
+            "name_domain",
+            "raw NUL-free bytes or NULL; high-bit bytes preserved; empty bytes differ from NULL",
+        ),
+        (
+            "metadata_view",
+            "all effective rows, or explicit selector108-only projection rejecting queries for other selectors",
+        ),
+        ("empty_wire_callable", "lib.vdm.nid64_namespace.empty108_snapshot_from_wire"),
+        ("empty_wire_profile_type", "lib.vdm.nid64_namespace.WireOnlyEmpty108Profile"),
+        (
+            "empty_wire_profile_kind",
+            "mpengine-1.443.903.0.complete-base-wire-ce.empty-effective-delta.no-cache-overlay-or-other-producers",
+        ),
+        (
+            "empty_wire_boundary",
+            "requires complete caller-selected CE base projection, explicit empty delta and no cache/overlay/other producers; validates no raw selector108 then returns only a selector108 metadata view; corpus absence does not establish runtime absence",
+        ),
+        (
+            "unknown_boundary",
+            "effective namespace/cache loading, alias writers, other producers, expiry/OS/resource initialization and scan verdict remain caller preconditions or unknown",
+        ),
+    )
+)
+_NID64_NO_TAIL_NAME_BRIDGE: Final = JSONObject(
+    (
+        ("callable", "lib.vdm.nid64_namespace.no_tail_nid64_runtime_entry"),
+        ("namespace_snapshot_type", "lib.vdm.nid_namespace.NoTailNameSnapshot"),
+        ("initialization_profile_type", "lib.vdm.nid_namespace.NoTailNameProfile"),
+        (
+            "profile_kind",
+            "mpengine-1.443.903.0.normal-copy.unique-direct-full.no-redirect.no-override",
+        ),
+        ("unsupported_error_type", "lib.vdm.nid_namespace.UnsupportedNidNamespace"),
+        ("record_type", NID64_TYPE),
+        ("payload_length", 9),
+        ("caller_threat_id_required", True),
+        (
+            "source",
+            "raw THREAT_BEGIN/name_raw; preserved high-bit C-string content/NULL; no display decode",
+        ),
+        (
+            "caller_sig_boundary",
+            "no-tail receiver stores caller sig directly; sig not part of name-value output; named20bit bound does not apply",
+        ),
+        (
+            "unknown_boundary",
+            "selected unique direct-full profile only; dependencies/special IDs/overlays/missing namespace unsupported, not NULL",
+        ),
+    )
+)
+_NID64_NAMED_NAME_BRIDGE: Final = JSONObject(
+    (
+        ("callable", "lib.vdm.nid64_namespace.named_tail_nid64_runtime_entry"),
+        (
+            "initialization_profile_type",
+            "lib.vdm.nid_named_namespace.NamedTailNameProfile",
+        ),
+        (
+            "profile_kind",
+            "mpengine-1.443.903.0.normal-copy.consistent-mini.immutable-no-shadow",
+        ),
+        ("optional_parent_namespace_type", "lib.vdm.nid_namespace.NoTailNameSnapshot"),
+        ("unsupported_error_type", "lib.vdm.nid_namespace.UnsupportedNidNamespace"),
+        ("record_type", NID64_TYPE),
+        ("payload_length", "greater than 9"),
+        ("caller_threat_id_required", True),
+        ("caller_sig_id_required", True),
+        ("caller_sig_id_bits", 20),
+        (
+            "source",
+            "original createrecidz flags0 bounded raw tail; first NUL included in storage; later suffix ignored; high-bit content preserved",
+        ),
+        (
+            "leading_nul_branch",
+            "requires explicit parent namespace with matching threats_loaded; preserve NULL versus empty; unknown is Unsupported",
+        ),
+        (
+            "output_boundary",
+            "name-value projection only; no numeric mini/sig/report reconstruction",
+        ),
+        (
+            "unknown_boundary",
+            "successful exact-span immutable consistent-mini no-shadow profile only; unverified interner, mutation, unterminated storage or missing parent unsupported",
+        ),
+    )
+)
 _NO_TAIL_NAME_BRIDGE: Final = JSONObject(
     (
         ("callable", "lib.vdm.nid_namespace.no_tail_nid_runtime_entry"),
@@ -273,6 +390,12 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
     snid98 = parsed.type_byte == SNID_TYPE and parsed.metadata_raw == 98
     no_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) == 5
     named_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) > 5
+    nid64 = parsed.type_byte == NID64_TYPE
+    nid4_resolver_record = parsed.type_byte == NID_TYPE and parsed.metadata_raw in (
+        97,
+        99,
+    )
+    suppression_applies = nid64 or nid4_resolver_record or snid98
 
     framing = JSONArray(
         (
@@ -461,6 +584,29 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     ),
                 ),
                 ("provider_specific_key_inputs_confirmed_subset", provider_inputs),
+                ("nid64_reply_null_profile", _NID64_SUPPRESSION if nid64 else None),
+                (
+                    "suppression_backend",
+                    _NID64_SUPPRESSION if nid4_resolver_record else None,
+                ),
+                (
+                    "nid64_name_bridge",
+                    (
+                        _NID64_NO_TAIL_NAME_BRIDGE
+                        if len(parsed.raw) == 9
+                        else _NID64_NAMED_NAME_BRIDGE
+                    )
+                    if nid64
+                    else None,
+                ),
+                (
+                    "known_nid64_role",
+                    "selector108 recursive suppression provider; wire corpus has zero such records, not proof of runtime absence"
+                    if nid64 and parsed.metadata_raw == 108
+                    else "generic NID64 lookup/name association; selector role remains caller-specific"
+                    if nid64
+                    else "not applicable",
+                ),
                 (
                     "no_tail_namespace_bridge",
                     _NO_TAIL_NAME_BRIDGE if no_tail_nid else None,
@@ -518,7 +664,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                             (
                                 "resolver_contract",
                                 "portable reply-NULL NID4 selector97/99 snapshot evaluation: "
-                                "normalized delta/base order, resolved runtime names, shared selector108 sequence membership; "
+                                "normalized delta/base order, resolved runtime names, explicit recursive NID64 selector108 snapshot; "
                                 "accept only status 1; wire no-tail is not runtime empty"
                                 if snid98
                                 else "not applicable",
@@ -536,6 +682,10 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                                 _NO_TAIL_NAME_BRIDGE if snid98 else None,
                             ),
                             ("namespace_dependency_selector", 97 if snid98 else None),
+                            (
+                                "suppression_backend",
+                                _NID64_SUPPRESSION if snid98 else None,
+                            ),
                             (
                                 "named_tail_namespace_dependency",
                                 _NAMED_TAIL_NAME_BRIDGE if snid98 else None,
@@ -628,7 +778,8 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                 scope="runtime_consumer",
                 statement=lookup_statement,
                 coverage="subset",
-                evidence_refs=(consumer_evidence_id,),
+                evidence_refs=(consumer_evidence_id,)
+                + (("nid64_suppression_differential",) if nid4_resolver_record else ()),
                 unknowns=(
                     SemanticUnknown(
                         "runtime_consumer",
@@ -683,6 +834,37 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     ),
                 ),
             ),
+        )
+        + (
+            (
+                SemanticClaim(
+                    id="nid64_reply_null_recursive_policy",
+                    scope="runtime_consumer",
+                    statement=(
+                        "In the explicit reply-NULL effective NID64 runtime snapshot, "
+                        "exact key/selector candidates use ordered delta/base arbitration "
+                        "and lazy recursive selector108 policy; nid64search(name=NULL) "
+                        "accepts only raw status1. Generic wire-name factories project "
+                        "raw bytes within fixed direct-full/mini profiles, without deriving "
+                        "arbitrary wire keys or generated numeric IDs."
+                    ),
+                    coverage="subset",
+                    evidence_refs=("nid64_suppression_differential",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "Reached cycles are Unsupported. Complete effective rows/names, "
+                            "normalized index consistency and successful resources are explicit; "
+                            "cache/namespace builders, other producers, non-NULL reply/name hint "
+                            "and final verdict are outside. Current wire selector108 count0 "
+                            "does not establish runtime absence; empty-wire profile requires "
+                            "complete CE base, empty delta and no cache/overlay/other producers.",
+                        ),
+                    ),
+                ),
+            )
+            if nid64
+            else ()
         )
         + (
             (
@@ -763,6 +945,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                         "snid98_producer_static",
                         "snid98_resolver_differential",
                         "nid_named_tail_name_bridge_native",
+                        "nid64_suppression_differential",
                     ),
                     unknowns=(
                         SemanticUnknown(
@@ -813,6 +996,35 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                 locator=lookup_locator,
                 supports=(report_claim_id,),
             ),
+        )
+        + (
+            (
+                SemanticEvidence(
+                    id="nid64_suppression_differential",
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref="mpengine 1.443.903.0; DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                    locator=(
+                        "tests/local_nid64_suppression_native.py (40 cases; SHA256 "
+                        "1bad9619df9e31d43e6924bbdca1541a5266feabb17ff1f0010e2065bff7f287); "
+                        "tests/local_nid64_suppression_differential.py (40 cases; SHA256 "
+                        "10137265bb16f39a8c6cd7dea1ae47eadfed599d8b1e717670f7d0ce77d1b016); "
+                        "nid64search@0x1802D66F8 -> nid64searchrecid@0x1800AE690 -> "
+                        "Lookup<Nid64Provider>@0x1800AE800; RecordPush@0x180497874; "
+                        "GetSigSeq@0x180320B9C; docs/mpengine.dll/1.443.903.0/nid64_suppression_private.md; "
+                        "replyNULL/nameNULL lazy rawstatus/recursive snapshot subset, "
+                        "generic CE wire-name projection under fixed profiles; no whole cache/namespace loader; "
+                        "wire108 absence census d2d1611ecf882df109c86aa757878292196cc7785e6a6275717fdaf3cf507e45 is not runtime policy"
+                    ),
+                    supports=("nid64_reply_null_recursive_policy",)
+                    if nid64
+                    else ("snid98_effective_import_key_prefix",)
+                    if snid98
+                    else (consumer_claim_id,),
+                ),
+            )
+            if suppression_applies
+            else ()
         )
         + (
             (
@@ -884,6 +1096,9 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     locator=(
                         "tests/local_snid98_resolver_native.py (43 cases; SHA256 "
                         "b67f5ec019b8c46eb5e9c70ab42a6d56c8f27fe6ec23d25edb46a8c7801ebf78); "
+                        "historical source bridge for snid_resolver SHA256 "
+                        "9b2a04d2e36bd863ebd53939c53c2666dadc646780f7eab3b050c3d42b6238d9 "
+                        "(frozenset backend superseded by v5; not executable against current API): "
                         "tests/local_snid98_resolver_differential.py (23 cases; SHA256 "
                         "76a211f10d04f54493a280490756c57cf005fc575cdfa84c9508548f8f3b1da4); "
                         "docs/mpengine.dll/1.443.903.0/snid98_resolver_private.md; "
@@ -907,6 +1122,11 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
     snid98 = parsed.type_byte == SNID_TYPE and parsed.metadata_raw == 98
     no_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) == 5
     named_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) > 5
+    nid64 = parsed.type_byte == NID64_TYPE
+    nid4_resolver_record = parsed.type_byte == NID_TYPE and parsed.metadata_raw in (
+        97,
+        99,
+    )
     manifest = {
         "schema": "vdm.nid.artifact.v2",
         "record_type": {
@@ -945,7 +1165,7 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
             ),
             "resolver_contract": (
                 "NID4 selector97/99 reply-NULL subset with normalized delta/base "
-                "runtime rows and resolved names, shared selector108 membership, "
+                "runtime rows and resolved names, explicit lazy recursive CE selector108 snapshot, "
                 "explicit selected-host virtual table; accept status exactly1; "
                 "wire tail is not a resolved-name backend"
                 if snid98
@@ -953,6 +1173,19 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
             ),
             "resolver_callable": _SNID98_RESOLVER_CALLABLE if snid98 else None,
             "resolver_snapshot_types": dict(_SNID98_SNAPSHOT_TYPES) if snid98 else None,
+            "nid64_reply_null_profile": semantic_json_to_data(_NID64_SUPPRESSION)
+            if nid64
+            else None,
+            "suppression_backend": semantic_json_to_data(_NID64_SUPPRESSION)
+            if snid98 or nid4_resolver_record
+            else None,
+            "nid64_name_bridge": semantic_json_to_data(
+                _NID64_NO_TAIL_NAME_BRIDGE
+                if len(parsed.raw) == 9
+                else _NID64_NAMED_NAME_BRIDGE
+            )
+            if nid64
+            else None,
             "no_tail_namespace_bridge": semantic_json_to_data(_NO_TAIL_NAME_BRIDGE)
             if no_tail_nid
             else None,

@@ -3,7 +3,7 @@
 This covers the ASCII success profile of pe_parse_imports in mpengine 1.443.903.0.
 Snapshots contain normalized NID4 store order and resolved runtime threat names;
 they are not dictionaries of wire tails. Building the namespace/mini-threat store,
-selector108 state, virtual host tables, PE traversal and OS load state is outside
+virtual host tables, PE traversal and OS load state is outside
 this module. Snapshot construction is a caller precondition, never inferred from
 an isolated VDM record. All names are C-string content without a terminating NUL.
 """
@@ -13,6 +13,7 @@ import zlib
 from dataclasses import dataclass
 from itertools import pairwise
 
+from .nid_suppression import Nid64LookupSnapshot, lookup_nid64_name
 from .snid_imphash import (
     ImportDescriptor,
     NamedImport,
@@ -127,13 +128,14 @@ class NidLookupSnapshot:
 
     Rows are flattened in normalized chunk/candidate order, sorted by unsigned key;
     equal-key order is retained. Bloom/index consistency is a precondition. The
-    shared suppressed_sequences is the explicit selector108 membership backend,
-    not a claim that selector108 state can be reconstructed from these NID4 rows.
+    suppression is an explicit effective NID64 runtime snapshot. Its recursive
+    selector108 policy is evaluated only on reached non-attribute candidates;
+    wire selector108 absence alone never establishes this runtime snapshot.
     """
 
     delta: tuple[NidRuntimeEntry, ...]
     base: tuple[NidRuntimeEntry, ...]
-    suppressed_sequences: frozenset[int]
+    suppression: Nid64LookupSnapshot
 
     def __post_init__(self) -> None:
         for rows in (self.delta, self.base):
@@ -143,10 +145,8 @@ class NidLookupSnapshot:
                 raise TypeError("NID stores must be tuples of NidRuntimeEntry values")
             if any(left.key > right.key for left, right in pairwise(rows)):
                 raise ValueError("NID stores must retain normalized unsigned-key order")
-        if not isinstance(self.suppressed_sequences, frozenset):
-            raise TypeError("suppressed_sequences must be an explicit frozenset")
-        for sequence in self.suppressed_sequences:
-            _uint(sequence, 64, "suppressed signature sequence")
+        if not isinstance(self.suppression, Nid64LookupSnapshot):
+            raise TypeError("suppression must be an explicit Nid64LookupSnapshot")
 
 
 def nid_signature_sequence(key: int, selector: int) -> int:
@@ -165,7 +165,6 @@ def lookup_nid_name(
     if type(selector) is not int or selector not in (97, 99):
         raise ValueError("this resolver profile supports only selectors 97 and 99")
     _uint(key, 32, "NID4 query key")
-    suppressed = nid_signature_sequence(key, selector) in snapshot.suppressed_sequences
     for rows in (snapshot.delta, snapshot.base):
         result = NidLookupResult(0, None)
         for row in rows:
@@ -173,7 +172,16 @@ def lookup_nid_name(
                 continue
             name = row.runtime_name
             attribute = name is not None and name.startswith(b"!#")
-            status = 1 if attribute or not suppressed else 2
+            if attribute:
+                status = 1
+            else:
+                suppressed = (
+                    lookup_nid64_name(
+                        snapshot.suppression, 108, nid_signature_sequence(key, selector)
+                    ).status
+                    == 1
+                )
+                status = 2 if suppressed else 1
             result = NidLookupResult(status, name)
             if name is None and status == 1:
                 return result

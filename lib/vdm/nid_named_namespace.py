@@ -64,6 +64,37 @@ def named_tail_nid_runtime_entry(
         raise TypeError("a parsed NidPayload is required")
     if parsed_nid.type_byte != NID_TYPE or len(parsed_nid.raw) <= 5:
         raise UnsupportedNidNamespace("bridge requires a nonempty type55 tail")
+    name = _named_tail_runtime_name(
+        parsed_nid.raw[5:],
+        caller_threat_id=caller_threat_id,
+        caller_sig_id=caller_sig_id,
+        profile=profile,
+        parent_namespace=parent_namespace,
+    )
+    if name is not None and not name.isascii():
+        raise UnsupportedNidNamespace(
+            "raw runtime name is outside the ASCII NID resolver profile"
+        )
+    return NidRuntimeEntry(
+        key=int.from_bytes(parsed_nid.raw[:4], "little"),
+        selector=parsed_nid.raw[4],
+        runtime_name=name,
+    )
+
+
+def _named_tail_runtime_name(
+    tail: bytes,
+    *,
+    caller_threat_id: int,
+    caller_sig_id: int,
+    profile: NamedTailNameProfile,
+    parent_namespace: NoTailNameSnapshot | None,
+) -> bytes | None:
+    """Shared RecordPush/createrecidz flags0 name-value projection.
+
+    Callers validate their family/header first. This preserves raw high-bit bytes;
+    any narrower downstream row-name domain is checked by that row factory.
+    """
     if type(caller_threat_id) is not int or not 0 <= caller_threat_id <= 0xFFFFFFFF:
         raise ValueError("caller threat ID must be an unsigned 32-bit integer")
     if type(caller_sig_id) is not int or not 0 <= caller_sig_id <= 0xFFFFF:
@@ -75,7 +106,6 @@ def named_tail_nid_runtime_entry(
     ):
         raise TypeError("parent_namespace must be a NoTailNameSnapshot or None")
 
-    tail = parsed_nid.raw[5:]
     if tail[0] == 0:
         if parent_namespace is None:
             raise UnsupportedNidNamespace("leading NUL requires a parent namespace")
@@ -89,12 +119,4 @@ def named_tail_nid_runtime_entry(
                 "unterminated name depends on external object storage"
             )
         name = tail[:nul]
-    if name is not None and not name.isascii():
-        raise UnsupportedNidNamespace(
-            "raw runtime name is outside the ASCII NID resolver profile"
-        )
-    return NidRuntimeEntry(
-        key=int.from_bytes(parsed_nid.raw[:4], "little"),
-        selector=parsed_nid.raw[4],
-        runtime_name=name,
-    )
+    return name
