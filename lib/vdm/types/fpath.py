@@ -461,7 +461,7 @@ def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
         else parsed.path_region_raw[parsed.pipe_offset :]
     )
     manifest = {
-        "schema": "vdm.fpath.artifact.v5",
+        "schema": "vdm.fpath.artifact.v6",
         "record_type": {"byte": parsed.type_byte, "name": type_name},
         "family": "asep" if is_asep else "standard",
         "raw_hex": parsed.raw.hex(),
@@ -615,7 +615,7 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
             )
             else "confirmed_subset"
         ),
-        representation="fpath.path-match-candidate.ir.v7",
+        representation="fpath.path-match-candidate.ir.v8",
         data=JSONObject(
             (
                 ("type", type_name),
@@ -799,8 +799,37 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
                     SemanticUnknown(
                         "runtime_consumer",
                         "Actual environment bindings, nonzero CRT locale state, "
-                        "real Win32 API values, allocation failures, virtualization "
-                        "and WOW paths remain outside this conditional algorithm.",
+                        "real Win32 API values, allocation failures and actual "
+                        "virtualized/WOW paths remain outside this text algorithm.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="fpath_conditional_path_virtualization",
+                scope="runtime_consumer",
+                statement=(
+                    "For this selected original environment row, the path consumer "
+                    "has conditional UTF-16 prefix/profile/redirection and worker "
+                    "algorithms, ordered flags 2/1/4, candidate deduplication, "
+                    "status propagation, partial-output clearing and input-consume "
+                    "notifications. Runtime context, OS queries and profile "
+                    "resolution are repeated in original order; failed resolver "
+                    "AL with a nonnull view still requests release. The original "
+                    "callback enters with cleared owned output and consume-input 1."
+                ),
+                coverage="subset",
+                evidence_refs=(
+                    "fpath_virtualization_static",
+                    "fpath_virtualization_native",
+                    "fpath_virtualization_adapter",
+                ),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Actual context/profile bindings, opaque handles, WOW "
+                        "candidate generation, physical heap/reference effects "
+                        "and nonzero CRT locale state remain backend-owned or "
+                        "outside the allocation/string-success profile.",
                     ),
                 ),
             ),
@@ -1014,6 +1043,54 @@ def _fpath_evidence(parsed: FpathPayload) -> tuple[SemanticEvidence, ...]:
                     "CRT locale-changed flag zero branch only."
                 ),
                 supports=("fpath_env_conditional_text_algorithm",),
+            ),
+            SemanticEvidence(
+                id="fpath_virtualization_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 original virtualizer functions",
+                locator=(
+                    "VirtualizeSimplePath @ 0x1800C1C94; Worker @ 0x1800C1ED0; "
+                    "PathStartWith @ 0x1800C1680; bISPathVirtualizable @ 0x1800C15F4; "
+                    "WOW gate @ 0x1800C27B8; AddToDataList @ 0x1800C3FAC; "
+                    "GetVirtualizedPath @ 0x1800C7DFC; GetLocalAppPath @ 0x1800C7EEC; "
+                    "ProcessingRedirectionPath @ 0x180D00D88."
+                ),
+                supports=("fpath_conditional_path_virtualization",),
+            ),
+            SemanticEvidence(
+                id="fpath_virtualization_native",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref="mpengine 1.443.903.0 23 original virtualizer functions",
+                locator=(
+                    "tests/local_fpath_virtualize_native.py SHA256 "
+                    "a10b8edc614c66c54cf1859964846d566c4fa59b87535a720d36d5de4ac0b212; "
+                    "85 cases, including failed/256 resolver AL with nonnull view "
+                    "release. Dynamic OS/handle/enumeration/reference, allocator, "
+                    "printf and WOW candidate sources are explicit seams; original "
+                    "CRT locale-zero branch, string helpers and memmove execute. "
+                    "Binary/code, PC, return RIP/RSP, guest-fault and double-free "
+                    "guards checked; stderr retains a host mem_map exception trace."
+                ),
+                supports=("fpath_conditional_path_virtualization",),
+            ),
+            SemanticEvidence(
+                id="fpath_virtualization_adapter",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref="portable path algorithm versus guarded original helpers",
+                locator=(
+                    "tests/local_path_virtualize_adapter.py SHA256 "
+                    "210347fc5856f685b88b4d967f669532ef5793d6baec1a5b5194aa38425ea318; "
+                    "77 allocation/string-success comparisons (64 worker/wrapper "
+                    "and 13 prefix cases), matching text/status, dynamic context/OS/"
+                    "resolver/release/enumeration order, duplicate disposal and "
+                    "input consumption. Explicit dynamic OS-return and net "
+                    "redirection-status seams; native allocator/printf failures "
+                    "are excluded. stderr retains a host mem_map exception trace."
+                ),
+                supports=("fpath_conditional_path_virtualization",),
             ),
             SemanticEvidence(
                 id="fpath_env_expansion_native",

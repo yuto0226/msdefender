@@ -5,6 +5,7 @@ from types import MappingProxyType
 from typing import Final
 
 from .env_expand import ORIGINAL_ENV_EXPANSION_PROFILE
+from .path_virtualize import ORIGINAL_PATH_VIRTUALIZATION_PROFILE
 
 QUERY_PATH_FROM_ENV: Final = 0x1800C86B0
 _ORIGINAL_ENV_ROWS: Final = MappingProxyType(
@@ -81,7 +82,28 @@ class OriginalEnvRecipe:
                 "VirtualizeSimplePath": {
                     "caller_flags": "forwarded_unchanged",
                     "fifth_argument": 1,
-                    "WOW_redirection_worker_state_and_paths": "unresolved",
+                    "conditional_path_algorithm": {
+                        "callable": "lib.vdm.path_virtualize.virtualize_simple_path",
+                        "profile": {
+                            key: list(value) if isinstance(value, tuple) else value
+                            for key, value in ORIGINAL_PATH_VIRTUALIZATION_PROFILE.items()
+                        },
+                        "caller_context": {
+                            "initial_paths": [],
+                            "output_cleanup_marker": 0,
+                            "reason": "FreeExpandedData_clears_output_before_call",
+                            "consume_input": True,
+                        },
+                        "runtime_bindings": [
+                            "dynamic_global_context_and_distinct_UTF16_prefix_counts",
+                            "offline_scan_and_OS_query_results_in_original_call_order",
+                            "dynamic_profile_resolution_raw_return_AL_and_nonnull_view_release",
+                            "profile_required_pointer_states_flags_b8_and_base_b0",
+                            "ordered_dynamic_profile_enumeration_and_cursor_close",
+                            "explicit_WOW_candidate_provider_when_gate_is_one",
+                        ],
+                    },
+                    "actual_runtime_paths": "unresolved",
                 },
             },
             "ordered_operations": [
@@ -143,7 +165,7 @@ class OriginalEnvRecipe:
             "paths_materialized": False,
             "unresolved_providers": [
                 "ExpandEnvrPaths_runtime_environment_bindings_and_API_backend",
-                "VirtualizeSimplePath_WOW_redirection_and_worker",
+                "VirtualizeSimplePath_runtime_bindings_WOW_candidates_and_reference_effects",
             ],
             "initialized_engine_executed": False,
         }
