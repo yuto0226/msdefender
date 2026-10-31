@@ -22,6 +22,11 @@ from ..core import (
     SemanticJSONValue,
     SemanticUnknown,
 )
+from ..fpath_lookup import (
+    CSIDL_INDEX_MISS,
+    ORIGINAL_CSIDL_LOOKUP_PROFILE,
+    lookup_original_csidl_index,
+)
 
 FPATH_TYPES: Final = MappingProxyType(
     {
@@ -184,6 +189,20 @@ def _parse_size_constraint(raw: bytes) -> JSONObject:
     )
 
 
+def _fpath_csidl_lookup(parsed: FpathPayload) -> dict[str, object]:
+    index = lookup_original_csidl_index(parsed.csidl_value)
+    return {
+        "profile_id": ORIGINAL_CSIDL_LOOKUP_PROFILE["id"],
+        "selector_u16": parsed.csidl_value,
+        "result_u32": index,
+        "matched": index != CSIDL_INDEX_MISS,
+        "row_index": None if index == CSIDL_INDEX_MISS else index,
+        "state_assumption": "normal_readonly_original_key_state",
+        "initialized_engine_executed": False,
+        "runtime_expansion": "unresolved",
+    }
+
+
 def _fpath_match_profile(parsed: FpathPayload) -> dict[str, object]:
     """Return the engine-confirmed bounded path candidate contract."""
     is_asep = parsed.type_byte in {0x71, 0x75}
@@ -200,11 +219,11 @@ def _fpath_match_profile(parsed: FpathPayload) -> dict[str, object]:
         "runtime_path_bytes_are_fully_expanded": False,
         "csidl": {
             "required": True,
-            "mapping": "CSIDL_2_ix_sorted_table_lookup",
+            "mapping": "CSIDL_2_ix_engine_binary_search",
             "entry_count": 49,
             "entry_stride": 0x28,
             "miss_sentinel": 0x7FFFFFFF,
-            "selected_index": None,
+            "lookup": _fpath_csidl_lookup(parsed),
             "expansion_prefix": "runtime_only_unresolved",
         },
         "path_matching": {
@@ -276,7 +295,7 @@ def _fpath_match_profile(parsed: FpathPayload) -> dict[str, object]:
         "polarity": None,
         "final_verdict": None,
         "limitations": [
-            "csidl_table_contents_and_expansion_prefix_are_runtime_only",
+            "csidl_nonkey_fields_and_expansion_prefix_are_unmodeled",
             "resource_candidate_is_not_a_user_visible_report_or_final_verdict",
             "optional_recid_tail_semantics_are_unresolved",
         ],
@@ -352,8 +371,18 @@ def parse_fpath(payload: bytes, *, type_byte: int) -> FpathPayload:
 def render_fpath(parsed: FpathPayload) -> FormatResult:
     """Render known path fields and opaque tail lengths as logger sections."""
     name = FPATH_TYPES[parsed.type_byte]
+    lookup_index = lookup_original_csidl_index(parsed.csidl_value)
     path_rows = (
         ("csidl_value", f"0x{parsed.csidl_value:04X}"),
+        (
+            "csidl_lookup",
+            "original-key profile: "
+            + (
+                "miss (0x7FFFFFFF)"
+                if lookup_index == CSIDL_INDEX_MISS
+                else f"row {lookup_index}"
+            ),
+        ),
         ("path_len", f"{len(parsed.path_bytes)} B"),
         (
             "path",
@@ -422,7 +451,7 @@ def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
         else parsed.path_region_raw[parsed.pipe_offset :]
     )
     manifest = {
-        "schema": "vdm.fpath.artifact.v2",
+        "schema": "vdm.fpath.artifact.v3",
         "record_type": {"byte": parsed.type_byte, "name": type_name},
         "family": "asep" if is_asep else "standard",
         "raw_hex": parsed.raw.hex(),
@@ -432,6 +461,7 @@ def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
             "value": parsed.csidl_value,
             "raw_hex": parsed.raw[:HEADER_SIZE].hex(),
             "offset": 0,
+            "lookup": _fpath_csidl_lookup(parsed),
         },
         "path": {
             "kind": parsed.path_kind,
@@ -468,7 +498,7 @@ def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
         "semantic_boundary": {
             "path_matching": "confirmed_subset",
             "final_verdict": "unknown",
-            "csidl_runtime_mapping": "unknown",
+            "csidl_runtime_expansion": "unknown",
             "pipe_suffix": "file_size_constraint_dsl",
             "recid_tail": "opaque_bytes_preserved",
             "path_encoding": "single_byte_latin1_view_is_reversible_not_text_semantics",
@@ -522,9 +552,9 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
             "The resource matcher yields a gated candidate, not the outer scan verdict.",
         ),
         SemanticIssue(
-            "csidl_table_entry_semantics_unknown",
-            "CSIDL_2_ix maps the selector to an engine table index, but the "
-            "selected row and runtime path-expansion semantics are unresolved.",
+            "csidl_runtime_expansion_unknown",
+            "The pinned original/read-only key-state lookup projects a numeric "
+            "index or miss; runtime path expansion and other row fields remain unresolved.",
         ),
     ]
     if parsed.pipe_offset is not None:
@@ -572,7 +602,7 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
             )
             else "confirmed_subset"
         ),
-        representation="fpath.path-match-candidate.ir.v4",
+        representation="fpath.path-match-candidate.ir.v5",
         data=JSONObject(
             (
                 ("type", type_name),
@@ -591,11 +621,14 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
                                 "mapping",
                                 JSONObject(
                                     (
-                                        ("kind", "sorted_table_lookup"),
+                                        ("kind", "engine_binary_search"),
                                         ("entry_count", 49),
                                         ("entry_stride", 0x28),
                                         ("miss_sentinel", 0x7FFFFFFF),
-                                        ("selected_index", "runtime_only"),
+                                        (
+                                            "lookup",
+                                            _semantic_json(_fpath_csidl_lookup(parsed)),
+                                        ),
                                     )
                                 ),
                             ),
@@ -742,7 +775,7 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
             unknowns=(
                 SemanticUnknown(
                     "receiver_transform",
-                    "CSIDL table contents and runtime RecID construction are not projected.",
+                    "CSIDL nonkey fields, expansion and runtime RecID construction are not projected.",
                 ),
             ),
         ),
@@ -764,6 +797,25 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
                     "receiver_transform",
                     "Upper storage readability, borrowed tail byte values, allocation, "
                     "copy, full loader acceptance and runtime identity remain unproven.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="fpath_original_csidl_lookup",
+            scope="receiver_transform",
+            statement=(
+                "The pinned original/read-only key-state profile reproduces "
+                "CSIDL_2_ix numeric index or 0x7fffffff miss using the original "
+                "unsorted 49-key order and CRT binary search with even lower midpoint. "
+                "Normal PE mapping/relocation preserves the read-only key spans."
+            ),
+            coverage="subset",
+            evidence_refs=("fpath_csidl_lookup_static", "fpath_csidl_lookup_native"),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "Engine initialization was not executed; runtime expansion, "
+                    "other row fields and any deliberate key mutation are outside this profile.",
                 ),
             ),
         ),
@@ -847,6 +899,34 @@ def _fpath_evidence(parsed: FpathPayload) -> tuple[SemanticEvidence, ...]:
         "0x180223784; file_size_check @ 0x180223914"
     )
     return (
+        SemanticEvidence(
+            id="fpath_csidl_lookup_static",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0 original PE image",
+            locator=(
+                "CSIDL_2_ix @ 0x180321810; bsearch @ 0x1809387E0; "
+                "fcmp_predef_path @ 0x1804E0FE0; g_predef_paths @ 0x180DB98D0, "
+                "49 rows stride 0x28, unsigned WORD key +0x20; .rdata READ/non-WRITE "
+                "and zero key-span relocation overlaps; tests/local_fpath_csidl_state_v1.json"
+            ),
+            supports=("fpath_original_csidl_lookup",),
+        ),
+        SemanticEvidence(
+            id="fpath_csidl_lookup_native",
+            axis="engine_equivalent_test",
+            kind="engine_equivalent_test",
+            source_ref="mpengine 1.443.903.0 original raw/read-only key-state helpers",
+            locator=(
+                "tests/local_fpath_csidl_raw_engine.py SHA256 "
+                "32960de592956bfae87176506d5bae000ae1e8f73cd2b63128f95e6d7a6387c2; "
+                "65536 uint16 selectors plus 37 selected controls, including 26 corpus "
+                "selectors; original CSIDL_2_ix, full CRT search and comparator, no stubs; "
+                "numeric returns and comparison traces match. Engine initialization, "
+                "filesystem expansion and whole-loader acceptance were not executed."
+            ),
+            supports=("fpath_original_csidl_lookup",),
+        ),
         SemanticEvidence(
             id="fpath_receiver_span_static",
             axis="receiver",
