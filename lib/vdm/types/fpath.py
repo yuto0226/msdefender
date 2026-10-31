@@ -58,6 +58,80 @@ class FpathPayload:
         return self.path_bytes.decode("latin-1")
 
 
+def _fpath_receiver_input_profile(parsed: FpathPayload) -> dict[str, object]:
+    """Separate bounded wire bytes from the original receiver's input contract."""
+    size = len(parsed.raw)
+    is_folder = parsed.path_kind == "foldername"
+    tail_offset = HEADER_SIZE + len(parsed.path_region_raw) + int(parsed.nul_terminated)
+    uses_helper = parsed.nul_terminated and (is_folder or bool(parsed.tail_raw))
+    scan_borrows_byte = is_folder and not parsed.nul_terminated
+    return {
+        "kind": "bounded_receiver_input_projection",
+        "offset_unit": "payload_bytes",
+        "wrapper_input": "original_payload_pointer_and_length_unchanged",
+        "receiver": "folder_DB_receiver" if is_folder else "fpath_DB_receiver",
+        "preconditions": [
+            "csidl_lookup_succeeded",
+            "receiver_reaches_the_described_scan_or_recid_selection_stage",
+            "preceding_allocation_and_copy_complete_normally_where_required",
+        ],
+        "path_scan": {
+            "external_read": (
+                {"offset": size, "length": 1} if scan_borrows_byte else None
+            ),
+            "external_byte_must_be_readable": scan_borrows_byte,
+            "upper_storage_readability_guarantee": (
+                "unknown" if scan_borrows_byte else "not_required_by_path_scan"
+            ),
+            "external_value_affects_path_length_or_recid_route_under_readable": False,
+        },
+        "wire_tail": {
+            "offset": tail_offset,
+            "length": len(parsed.tail_raw),
+            "raw_hex": parsed.tail_raw.hex(),
+        },
+        "recid_call": {
+            "callee": "createrecidp" if uses_helper else "createrecid",
+            "tail_argument": (
+                {
+                    "offset": tail_offset,
+                    "declared_length": len(parsed.tail_raw) + int(is_folder),
+                    "wire_available_length": len(parsed.tail_raw),
+                    "outside_payload_length": int(is_folder),
+                    "outside_payload_bytes": "unknown" if is_folder else "none",
+                    "declared_span_is_bounded_by_payload": not is_folder,
+                }
+                if uses_helper
+                else None
+            ),
+            "helper_prefix_external_read": (
+                {"offset": size, "length": 1, "must_be_readable": True}
+                if uses_helper and is_folder and not parsed.tail_raw
+                else None
+            ),
+            "helper_guaranteed_no_name": uses_helper
+            and is_folder
+            and not parsed.tail_raw,
+            "returned_recid_store_offset": 0x18,
+            "recid_sentinel_effect": "return_32780_without_appending_record",
+            "threatid_resolver_called_by_receiver": False,
+            "name_projection": (
+                "no_name_delegates_to_createrecid_under_prefix_readable"
+                if uses_helper and is_folder and not parsed.tail_raw
+                else "unmodeled"
+                if uses_helper
+                else "no_tail_helper"
+            ),
+            "runtime_identity": "unresolved",
+        },
+        "proof_scope": {
+            "native": "original_receiver_scan_and_call_selection_slices",
+            "allocation_and_copy_executed": False,
+            "full_loader_acceptance": "unproven",
+        },
+    }
+
+
 def _parse_size_constraint(raw: bytes) -> JSONObject:
     """Project the decimal grammar implemented by ``setSize``.
 
@@ -348,11 +422,12 @@ def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
         else parsed.path_region_raw[parsed.pipe_offset :]
     )
     manifest = {
-        "schema": "vdm.fpath.artifact.v1",
+        "schema": "vdm.fpath.artifact.v2",
         "record_type": {"byte": parsed.type_byte, "name": type_name},
         "family": "asep" if is_asep else "standard",
         "raw_hex": parsed.raw.hex(),
         "match_profile": _fpath_match_profile(parsed),
+        "receiver_input_profile": _fpath_receiver_input_profile(parsed),
         "csidl": {
             "value": parsed.csidl_value,
             "raw_hex": parsed.raw[:HEADER_SIZE].hex(),
@@ -466,12 +541,16 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
                     ),
                 )
             )
+    receiver_input_profile = _fpath_receiver_input_profile(parsed)
+    helper_called = parsed.nul_terminated and (
+        parsed.path_kind == "foldername" or bool(parsed.tail_raw)
+    )
     if parsed.tail_raw:
         issues.append(
             SemanticIssue(
-                "pcode_tail_not_exported",
-                "Bytes after NUL are sent to createrecidp; their program and "
-                "record-identity semantics are not exported.",
+                "receiver_recid_semantics_unmodeled",
+                "The receiver calls createrecidp with the separately described "
+                "input span; name construction and runtime identity are not projected.",
                 (("length", len(parsed.tail_raw)),),
             )
         )
@@ -493,12 +572,13 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
             )
             else "confirmed_subset"
         ),
-        representation="fpath.path-match-candidate.ir.v3",
+        representation="fpath.path-match-candidate.ir.v4",
         data=JSONObject(
             (
                 ("type", type_name),
                 ("raw_hex", parsed.raw.hex()),
                 ("match_profile", _semantic_json(match_profile)),
+                ("receiver_input_profile", _semantic_json(receiver_input_profile)),
                 ("storage_family", "asep" if is_asep else "standard"),
                 (
                     "csidl",
@@ -578,20 +658,20 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
                     ),
                 ),
                 (
-                    "pcode_tail",
+                    "receiver_tail",
                     JSONObject(
                         (
                             (
                                 "wire",
                                 _wire_field(
-                                    "pcode_tail",
+                                    "wire_tail",
                                     parsed.tail_raw,
                                     path_end + 1 if parsed.nul_terminated else path_end,
                                 ),
                             ),
                             (
                                 "receiver_path",
-                                "createrecidp" if parsed.tail_raw else "createrecid",
+                                "createrecidp" if helper_called else "createrecid",
                             ),
                             ("meaning", None),
                         )
@@ -628,14 +708,15 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
             scope="wire_layout",
             statement=(
                 f"{type_name} contains a u16 CSIDL selector, a bounded narrow path, "
-                "and an optional NUL-separated RecID program tail."
+                "and optional NUL-separated wire tail bytes. The receiver's "
+                "declared helper span is projected separately from these wire bytes."
             ),
             coverage="subset",
             evidence_refs=("fpath_receiver",),
             unknowns=(
                 SemanticUnknown(
                     "wire_layout",
-                    "The optional RecID program tail grammar remains unresolved.",
+                    "Helper name construction and runtime identity are not projected.",
                 ),
             ),
         ),
@@ -661,7 +742,28 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
             unknowns=(
                 SemanticUnknown(
                     "receiver_transform",
-                    "CSIDL table contents and RecID program construction are not projected.",
+                    "CSIDL table contents and runtime RecID construction are not projected.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="fpath_receiver_input_span",
+            scope="receiver_transform",
+            statement=(
+                "Wrappers pass the original payload pointer and length unchanged. "
+                "FILEPATH helper spans are bounded remaining bytes; FOLDERNAME "
+                "declares one extra byte. Without NUL, the folder scan reads one "
+                "external byte whose value does not affect path length or RecID "
+                "route when readable. Receivers store RecID at +0x18 and reject "
+                "its sentinel with 32780 without calling a threat-ID resolver."
+            ),
+            coverage="subset",
+            evidence_refs=("fpath_receiver_span_static", "fpath_receiver_span_native"),
+            unknowns=(
+                SemanticUnknown(
+                    "receiver_transform",
+                    "Upper storage readability, borrowed tail byte values, allocation, "
+                    "copy, full loader acceptance and runtime identity remain unproven.",
                 ),
             ),
         ),
@@ -745,6 +847,35 @@ def _fpath_evidence(parsed: FpathPayload) -> tuple[SemanticEvidence, ...]:
         "0x180223784; file_size_check @ 0x180223914"
     )
     return (
+        SemanticEvidence(
+            id="fpath_receiver_span_static",
+            axis="receiver",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "folder_DB_receiver @ 0x1803212EB..0x18032131D and "
+                "0x1803213DD..0x1803213F5; fpath_DB_receiver @ "
+                "0x18032166F..0x1803216B8 and 0x18032172F..0x18032179A; "
+                "createrecidp @ 0x180323040 bounds name length by declared_length-1; "
+                + dispatch
+            ),
+            supports=("fpath_receiver_input_span",),
+        ),
+        SemanticEvidence(
+            id="fpath_receiver_span_native",
+            axis="engine_equivalent_test",
+            kind="engine_equivalent_test",
+            source_ref="mpengine 1.443.903.0 original receiver slices",
+            locator=(
+                "tests/local_fpath_receiver_tail_slice.py SHA256 "
+                "10b862bf6994065a25e734661db6391c555bafb876d216ad967188964d6a62df; "
+                "43 tests / 64 result rows: 40 synthetic, 6 actual record controls, "
+                "18 explicit external-byte 00/01/FF controls. Only scan and "
+                "call-selection slices; allocation/copy and callees not executed; "
+                "not full receiver or loader acceptance."
+            ),
+            supports=("fpath_receiver_input_span",),
+        ),
         SemanticEvidence(
             id="fpath_receiver",
             axis="receiver",
