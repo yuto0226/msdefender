@@ -63,6 +63,58 @@ _NO_TAIL_NAME_BRIDGE: Final = JSONObject(
         ),
     )
 )
+_NAMED_TAIL_NAME_BRIDGE: Final = JSONObject(
+    (
+        ("callable", "lib.vdm.nid_named_namespace.named_tail_nid_runtime_entry"),
+        (
+            "initialization_profile_type",
+            "lib.vdm.nid_named_namespace.NamedTailNameProfile",
+        ),
+        (
+            "profile_kind",
+            "mpengine-1.443.903.0.normal-copy.consistent-mini.immutable-no-shadow",
+        ),
+        ("optional_parent_namespace_type", "lib.vdm.nid_namespace.NoTailNameSnapshot"),
+        ("unsupported_error_type", "lib.vdm.nid_namespace.UnsupportedNidNamespace"),
+        ("record_type", NID_TYPE),
+        ("payload_length", "greater than 5"),
+        ("caller_threat_id_required", True),
+        ("caller_sig_id_required", True),
+        ("caller_sig_id_bits", 20),
+        ("threats_loaded_required", True),
+        ("threats_loaded_values", JSONArray((False, True))),
+        ("source", "raw type55 payload tail; never identity_text or display name"),
+        (
+            "named_branch",
+            "nonzero first byte and bounded NUL: exact raw bytes before first NUL; post-NUL suffix never reaches object storage",
+        ),
+        (
+            "leading_nul_branch",
+            "parent_namespace required; same threats_loaded; explicit caller ID lookup; proven NULL and empty remain distinct",
+        ),
+        (
+            "runtime_entry_name_profile",
+            "ASCII C-string content only; non-ASCII unsupported without strip/decode",
+        ),
+        (
+            "storage_profile",
+            "successful normal flags0 copy returning exact requested bounded span including NUL; immutable value-preserving OID; no unverified interner/dedup/casefold/collision state",
+        ),
+        (
+            "mini_profile",
+            "consistent InternalIdMap/mini name association, flags0x1F7, no mutation/full-fast shadow/counter collision; consistent cross-parent cache reuse allowed",
+        ),
+        (
+            "output_boundary",
+            "name-value projection only; generated mini IDs, signature counters and report identities not reconstructed",
+        ),
+        ("key_generation", "not derived; raw NID4 key/selector retained"),
+        (
+            "unknown_boundary",
+            "unterminated storage, missing parent dependency, inconsistent initialization and namespace overrides are unsupported, never synthesized runtime NULL; no whole namespace loader",
+        ),
+    )
+)
 
 _FAMILY_NAMES = MappingProxyType(
     {
@@ -220,6 +272,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
     identity_raw = parsed.recid_input_raw[:identity_length]
     snid98 = parsed.type_byte == SNID_TYPE and parsed.metadata_raw == 98
     no_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) == 5
+    named_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) > 5
 
     framing = JSONArray(
         (
@@ -421,6 +474,20 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     else "not applicable",
                 ),
                 (
+                    "named_tail_namespace_bridge",
+                    _NAMED_TAIL_NAME_BRIDGE if named_tail_nid else None,
+                ),
+                (
+                    "known_named_tail_namespace_role",
+                    "selector97 runtime names can feed the selector98 ordinal resolver"
+                    if named_tail_nid and parsed.metadata_raw == 97
+                    else "selector99 runtime names can feed the selector98 API-set resolver"
+                    if named_tail_nid and parsed.metadata_raw == 99
+                    else "generic name association only; key/selector purpose unknown"
+                    if named_tail_nid
+                    else "not applicable",
+                ),
+                (
                     "selector98_producer_profile",
                     JSONObject(
                         (
@@ -469,6 +536,14 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                                 _NO_TAIL_NAME_BRIDGE if snid98 else None,
                             ),
                             ("namespace_dependency_selector", 97 if snid98 else None),
+                            (
+                                "named_tail_namespace_dependency",
+                                _NAMED_TAIL_NAME_BRIDGE if snid98 else None,
+                            ),
+                            (
+                                "named_tail_namespace_dependency_selectors",
+                                JSONArray((97, 99)) if snid98 else None,
+                            ),
                             (
                                 "virtual_dll_contract",
                                 "explicit selected-host lookup/stored-ID snapshot; index0 and ID0 valid; "
@@ -643,6 +718,37 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
         + (
             (
                 SemanticClaim(
+                    id="nid_named_tail_runtime_name_association",
+                    scope="runtime_consumer",
+                    statement=(
+                        "For a type55 nonempty tail in the fixed successful value-preserving "
+                        "normal-copy consistent immutable mini profile, a nonzero label with "
+                        "bounded NUL supplies the exact raw name bytes before that NUL. "
+                        "A leading NUL instead retains the explicit caller parent namespace. "
+                        "The portable ASCII factory preserves key and selector without deriving "
+                        "their role or reproducing generated numeric IDs."
+                    ),
+                    coverage="subset",
+                    evidence_refs=("nid_named_tail_name_bridge_native",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "Initialization, OID-to-span equality, immutable consistent mini rows "
+                            "and no shadows/collisions must be explicit. Leading NUL requires a "
+                            "supported parent snapshot with matching loaded state; unresolved "
+                            "parent, unterminated storage and non-ASCII runtime-entry names are "
+                            "unsupported, not runtime NULL. Whole namespace loading, numeric "
+                            "mini allocation and report identity remain outside this projection.",
+                        ),
+                    ),
+                ),
+            )
+            if named_tail_nid
+            else ()
+        )
+        + (
+            (
+                SemanticClaim(
                     id="snid98_effective_import_key_prefix",
                     scope="runtime_consumer",
                     statement=(
@@ -656,6 +762,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     evidence_refs=(
                         "snid98_producer_static",
                         "snid98_resolver_differential",
+                        "nid_named_tail_name_bridge_native",
                     ),
                     unknowns=(
                         SemanticUnknown(
@@ -663,7 +770,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                             "Portable reproduction covers successful effective inputs "
                             "in an ASCII profile with explicit ordinal resolution or "
                             "resolved runtime NID4/virtual-host/suppression snapshots; "
-                            "snapshot/namespace loading, "
+                            "whole snapshot/namespace loading beyond the fixed named-tail bridge, "
                             "other locales, traversal failures, all suffix aliases "
                             "and outer caller gates remain unknown.",
                         ),
@@ -734,6 +841,34 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
         + (
             (
                 SemanticEvidence(
+                    id="nid_named_tail_name_bridge_native",
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref="mpengine 1.443.903.0; DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                    locator=(
+                        "tests/local_nid_named_tail_native.py (31 cases; SHA256 "
+                        "68d61185a6240620828e87f3bf8773ec331b307c3c4824361d8f8be4e3185ddc); "
+                        "tests/local_nid_named_namespace_differential.py (35 cases; SHA256 "
+                        "60102c8101a62aa53591abe8b3b8607ebdb9899edcc2947c4852ec9b88682521); "
+                        "RecordPush@0x180447AE4 -> kpushobject@0x1800FBFDC -> "
+                        "createrecid@0x1800FB5EC -> GenerateInternalId@0x1803C3030 -> "
+                        "add_mini_threat@0x18046EC28 -> get_threat_name@0x1800F7D10; "
+                        "docs/mpengine.dll/1.443.903.0/nid_named_tail_bridge_private.md; "
+                        "generic type55 name-value projection; successful exact-span normal-copy "
+                        "immutable consistent-mini no-shadow profile, ASCII runtime entries; "
+                        "651 saved raw selector97/99 corpus records compared; whole loader and numeric IDs excluded"
+                    ),
+                    supports=("nid_named_tail_runtime_name_association",)
+                    if named_tail_nid
+                    else ("snid98_effective_import_key_prefix",),
+                ),
+            )
+            if named_tail_nid or snid98
+            else ()
+        )
+        + (
+            (
+                SemanticEvidence(
                     id="snid98_producer_static",
                     axis="consumer",
                     kind="engine_static",
@@ -771,6 +906,7 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
     key_width = _KEY_WIDTHS[parsed.type_byte]
     snid98 = parsed.type_byte == SNID_TYPE and parsed.metadata_raw == 98
     no_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) == 5
+    named_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) > 5
     manifest = {
         "schema": "vdm.nid.artifact.v2",
         "record_type": {
@@ -824,6 +960,17 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
             if snid98
             else None,
             "namespace_dependency_selector": 97 if snid98 else None,
+            "named_tail_namespace_bridge": semantic_json_to_data(
+                _NAMED_TAIL_NAME_BRIDGE
+            )
+            if named_tail_nid
+            else None,
+            "named_tail_namespace_dependency": semantic_json_to_data(
+                _NAMED_TAIL_NAME_BRIDGE
+            )
+            if snid98
+            else None,
+            "named_tail_namespace_dependency_selectors": [97, 99] if snid98 else None,
             "file_content_hash_ioc": False,
             "outer_caller_gates": "unknown",
             "recid_or_pcode_effect": "unknown",
