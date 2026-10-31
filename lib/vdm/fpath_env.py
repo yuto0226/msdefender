@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
+from .env_expand import ORIGINAL_ENV_EXPANSION_PROFILE
+
 QUERY_PATH_FROM_ENV: Final = 0x1800C86B0
 _ORIGINAL_ENV_ROWS: Final = MappingProxyType(
     {
@@ -48,7 +50,7 @@ class OriginalEnvRecipe:
             "preconditions": ["row_template_pointer_and_output_pointer_nonnull"],
             "runtime_inputs": ["profile", "caller_flags", "prior_out"],
             "inputs_scope": "direct_callback_inputs",
-            "provider_runtime_state": "provider_owned_and_unmodeled",
+            "provider_runtime_state": "explicit_runtime_bindings_required",
             "caller_flags_source": "runtime_caller_not_vdm_payload_header",
             "provider_contract": {
                 "ExpandEnvStrings": {
@@ -60,6 +62,20 @@ class OriginalEnvRecipe:
                         "resolved_profile_plus_0x40_otherwise_empty_profile_wrapper"
                     ),
                     "ExpandEnvrPaths_boolean": "not_bit0_of_global_context_byte_0x2f0",
+                    "conditional_text_algorithm": {
+                        "callable": "lib.vdm.env_expand.expand_original_env_template",
+                        "profile": {
+                            key: list(value) if isinstance(value, tuple) else value
+                            for key, value in ORIGINAL_ENV_EXPANSION_PROFILE.items()
+                        },
+                        "runtime_bindings": {
+                            "profile_entries": "ordered_entries_of_resolved_profile_wrapper",
+                            "system_entries": "ordered_entries_of_system_wrapper",
+                            "allow_api": "not_bit0_of_global_context_byte_0x2f0",
+                            "api_fallback": "explicit_CallExpandAPI_text_or_null_backend",
+                            "CRT_state": "locale_changed_flag_must_be_zero",
+                        },
+                    },
                     "expanded_result": "unresolved",
                 },
                 "VirtualizeSimplePath": {
@@ -126,7 +142,7 @@ class OriginalEnvRecipe:
             ],
             "paths_materialized": False,
             "unresolved_providers": [
-                "ExpandEnvrPaths_runtime_environment_expansion",
+                "ExpandEnvrPaths_runtime_environment_bindings_and_API_backend",
                 "VirtualizeSimplePath_WOW_redirection_and_worker",
             ],
             "initialized_engine_executed": False,

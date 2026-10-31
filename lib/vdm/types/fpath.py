@@ -461,7 +461,7 @@ def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
         else parsed.path_region_raw[parsed.pipe_offset :]
     )
     manifest = {
-        "schema": "vdm.fpath.artifact.v4",
+        "schema": "vdm.fpath.artifact.v5",
         "record_type": {"byte": parsed.type_byte, "name": type_name},
         "family": "asep" if is_asep else "standard",
         "raw_hex": parsed.raw.hex(),
@@ -615,7 +615,7 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
             )
             else "confirmed_subset"
         ),
-        representation="fpath.path-match-candidate.ir.v6",
+        representation="fpath.path-match-candidate.ir.v7",
         data=JSONObject(
             (
                 ("type", type_name),
@@ -776,6 +776,31 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
                         "runtime_consumer",
                         "Runtime environment expansion, WOW/redirection/worker output "
                         "paths and initialized-engine behavior are not resolved.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="fpath_env_conditional_text_algorithm",
+                scope="runtime_consumer",
+                statement=(
+                    "For this actual selected original environment row, the template "
+                    "has a portable single-pass UTF-16 expansion algorithm with "
+                    "ordered profile/system entries, finite-prefix ASCII-folded "
+                    "first matches, nullable values and an explicit API backend. "
+                    "This assumes the original CRT locale-changed flag is zero "
+                    "and output allocation/append succeed."
+                ),
+                coverage="subset",
+                evidence_refs=(
+                    "fpath_env_expansion_static",
+                    "fpath_env_expansion_native",
+                ),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Actual environment bindings, nonzero CRT locale state, "
+                        "real Win32 API values, allocation failures, virtualization "
+                        "and WOW paths remain outside this conditional algorithm.",
                     ),
                 ),
             ),
@@ -975,6 +1000,36 @@ def _fpath_evidence(parsed: FpathPayload) -> tuple[SemanticEvidence, ...]:
                     "only; not original-callee/full-initialization execution."
                 ),
                 supports=("fpath_env_callback_recipe",),
+            ),
+            SemanticEvidence(
+                id="fpath_env_expansion_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 original expansion and CRT code",
+                locator=(
+                    "ExpandEnvrPaths @ 0x1800C6C10; Find @ 0x1800C6F30; "
+                    "AppendInOutput @ 0x1800C1464; CallExpandAPI @ 0x18034EA10; "
+                    "StringCchCopyNW @ 0x18034EBF8; StringCchCatNW @ 0x1800C3360; "
+                    "_wcsnicmp @ 0x18094A2D0; __ascii_wcsnicmp @ 0x18094A260; "
+                    "CRT locale-changed flag zero branch only."
+                ),
+                supports=("fpath_env_conditional_text_algorithm",),
+            ),
+            SemanticEvidence(
+                id="fpath_env_expansion_native",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref="mpengine 1.443.903.0 eight original expansion functions",
+                locator=(
+                    "tests/local_fpath_expand_env_native.py SHA256 "
+                    "fc8943e96d71c6ffb4c09131b8f2f00c7bbbdc227085a3ec2d0db7f91441408a; "
+                    "30 original-code cases; allocator and Win32 API import seams; "
+                    "trace disabled and CRT locale-changed flag zero. Binary/code, "
+                    "PC, return RIP/RSP and guest-fault guards checked. Native "
+                    "resource-failure cases do not extend the portable allocation-"
+                    "success profile. stderr includes a host mem_map exception trace."
+                ),
+                supports=("fpath_env_conditional_text_algorithm",),
             ),
         )
         if _fpath_env_recipe(parsed) is not None
