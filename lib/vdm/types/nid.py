@@ -178,6 +178,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
     identity_offset = key_width + 1
     identity_length = len(parsed.recid_input_raw) - len(parsed.ignored_trailing_raw)
     identity_raw = parsed.recid_input_raw[:identity_length]
+    snid98 = parsed.type_byte == SNID_TYPE and parsed.metadata_raw == 98
 
     framing = JSONArray(
         (
@@ -213,12 +214,18 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     (
                         ("caller", "scan_imphash@0x1804A6370"),
                         ("query_selector", 98),
+                        ("applies_to_record", snid98),
                         (
                             "key_source",
                             "context +0xAAA58 (16 bytes) || context +0xAAA68 (4 bytes)",
                         ),
                         ("operation", "copied unchanged to snidsearchrecidex"),
-                        ("upstream_producer", "unknown"),
+                        (
+                            "upstream_producer",
+                            "pe_parse_imports@0x1801385F4; MD5 prefix subset"
+                            if snid98
+                            else "not applicable to this record; producer unknown",
+                        ),
                     )
                 ),
             )
@@ -289,8 +296,14 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
 
     issues: list[SemanticIssue] = [
         SemanticIssue(
-            "upstream_key_generation_unknown",
-            "Provider-level caller inputs are recorded per family, but upstream "
+            "upstream_key_generation_partial"
+            if snid98
+            else "upstream_key_generation_unknown",
+            "Selector 98 has a confirmed effective-import MD5 prefix subset; "
+            "locale, traversal/resource failures, all suffix alias writers and "
+            "outer caller applicability remain unresolved."
+            if snid98
+            else "Provider-level caller inputs are recorded per family, but upstream "
             "generation remains unknown: NID/SNID context-field producers are "
             "unlocated; NID64 accepts RecID signature-sequence or existing reply "
             "QWORD sources without establishing their common derivation.",
@@ -321,7 +334,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
-        representation="nid.exact_lookup.ir.v2",
+        representation="nid.exact_lookup.ir.v3",
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
@@ -354,6 +367,45 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     ),
                 ),
                 ("provider_specific_key_inputs_confirmed_subset", provider_inputs),
+                (
+                    "selector98_producer_profile",
+                    JSONObject(
+                        (
+                            ("applies_to_record", snid98),
+                            ("query_selector", 98),
+                            (
+                                "algorithm",
+                                "MD5 of effective import token stream"
+                                if snid98
+                                else "not applicable",
+                            ),
+                            (
+                                "input_boundary",
+                                "successfully mapped/traversed effective descriptors and thunks; original order, duplicates retained",
+                            ),
+                            (
+                                "normalization",
+                                "ASCII success profile: lowercase DLL/function, last dll/sys/ocx extension removed, dot separator, comma tokens",
+                            ),
+                            (
+                                "ordinal_resolution",
+                                "explicit selector97 result: miss ordN; matched empty skip; nonempty drop first byte then lowercase",
+                            ),
+                            (
+                                "runtime_dependency",
+                                "virtual DLL ID and API-set selector99 can affect ordinal selector97 lookup",
+                            ),
+                            (
+                                "suffix_source",
+                                "context +0xAAA68 raw4; verified pefile_scan_mp reset writes zero; all alias writers unknown",
+                            ),
+                            (
+                                "scope",
+                                "caller-specific derivation subset; not a file-content hash or final verdict",
+                            ),
+                        )
+                    ),
+                ),
                 (
                     "record_identity",
                     JSONObject(
@@ -474,6 +526,32 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     ),
                 ),
             ),
+        )
+        + (
+            (
+                SemanticClaim(
+                    id="snid98_effective_import_key_prefix",
+                    scope="runtime_consumer",
+                    statement=(
+                        "For selector 98, pe_parse_imports produces the first 16 query "
+                        "bytes with MD5 over ordered effective import tokens; the "
+                        "consumer appends four unchanged context bytes."
+                    ),
+                    coverage="subset",
+                    evidence_refs=("snid98_producer_static",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "Portable reproduction covers successful effective inputs "
+                            "in an ASCII profile with explicit ordinal resolution; "
+                            "other locales, traversal failures, all suffix aliases "
+                            "and outer caller gates remain unknown.",
+                        ),
+                    ),
+                ),
+            )
+            if snid98
+            else ()
         ),
         claim_evidence=(
             SemanticEvidence(
@@ -508,6 +586,20 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                 locator=lookup_locator,
                 supports=(report_claim_id,),
             ),
+        )
+        + (
+            (
+                SemanticEvidence(
+                    id="snid98_producer_static",
+                    axis="consumer",
+                    kind="engine_static",
+                    source_ref="mpengine 1.443.903.0",
+                    locator="pe_parse_imports@0x1801385F4; MD5 Result@0x180138836; reset@0x1803E9858; scan_imphash@0x1804A6370",
+                    supports=("snid98_effective_import_key_prefix",),
+                ),
+            )
+            if snid98
+            else ()
         ),
     )
 
@@ -515,8 +607,9 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
 def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
     """Export the exact-key record and all following bytes losslessly."""
     key_width = _KEY_WIDTHS[parsed.type_byte]
+    snid98 = parsed.type_byte == SNID_TYPE and parsed.metadata_raw == 98
     manifest = {
-        "schema": "vdm.nid.artifact.v1",
+        "schema": "vdm.nid.artifact.v2",
         "record_type": {
             "byte": parsed.type_byte,
             "name": _FAMILY_NAMES[parsed.type_byte],
@@ -539,8 +632,20 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
         },
         "matcher_boundary": {
             "confirmed_operation": "exact_key_and_metadata_byte_lookup",
-            "key_generation": "unknown",
-            "provider_selector": "unknown",
+            "key_generation": "selector98_effective_import_md5_prefix_subset"
+            if snid98
+            else "unknown",
+            "provider_selector": 98 if snid98 else "unknown",
+            "selector98_profile_applies": snid98,
+            "digest_prefix_raw_hex": parsed.key_raw[:16].hex() if snid98 else None,
+            "context_suffix_raw_hex": parsed.key_raw[16:].hex() if snid98 else None,
+            "derivation_boundary": (
+                "effective mapped imports, ASCII profile, explicit ordinal resolver results; suffix supplied explicitly"
+                if snid98
+                else "unknown; selector98 derivation does not apply"
+            ),
+            "file_content_hash_ioc": False,
+            "outer_caller_gates": "unknown",
             "recid_or_pcode_effect": "unknown",
             "final_report_or_verdict": "unknown",
         },
