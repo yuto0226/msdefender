@@ -126,25 +126,33 @@ class NidLookupResult:
 class NidLookupSnapshot:
     """Initialized reply-NULL NID4 stores for the selector97/99 caller profile.
 
-    Rows are flattened in normalized chunk/candidate order, sorted by unsigned key;
-    equal-key order is retained. Bloom/index consistency is a precondition. The
+    Base/delta contain ordered chunks, each retaining its supplied native candidate
+    order. Only local unsigned-key monotonicity is checked. This minimum check is
+    not full PostProcess normalization: its comparator also orders selector ascending
+    and stored threat ID descending. These projected rows omit stored threat IDs.
+    No wire sorting, deduplication, numeric mini IDs or physical RecIDs are inferred.
+    Equal-key order and chunk order must come from the selected runtime snapshot.
+    Bloom/index and name consistency are caller preconditions. The
     suppression is an explicit effective NID64 runtime snapshot. Its recursive
     selector108 policy is evaluated only on reached non-attribute candidates;
     wire selector108 absence alone never establishes this runtime snapshot.
     """
 
-    delta: tuple[NidRuntimeEntry, ...]
-    base: tuple[NidRuntimeEntry, ...]
+    delta: tuple[tuple[NidRuntimeEntry, ...], ...]
+    base: tuple[tuple[NidRuntimeEntry, ...], ...]
     suppression: Nid64LookupSnapshot
 
     def __post_init__(self) -> None:
-        for rows in (self.delta, self.base):
-            if not isinstance(rows, tuple) or any(
-                not isinstance(row, NidRuntimeEntry) for row in rows
-            ):
-                raise TypeError("NID stores must be tuples of NidRuntimeEntry values")
-            if any(left.key > right.key for left, right in pairwise(rows)):
-                raise ValueError("NID stores must retain normalized unsigned-key order")
+        for chunks in (self.delta, self.base):
+            if not isinstance(chunks, tuple):
+                raise TypeError("NID stores must be tuples of ordered chunks")
+            for rows in chunks:
+                if not isinstance(rows, tuple) or any(
+                    not isinstance(row, NidRuntimeEntry) for row in rows
+                ):
+                    raise TypeError("each NID chunk must be a tuple of NidRuntimeEntry")
+                if any(left.key > right.key for left, right in pairwise(rows)):
+                    raise ValueError("NID chunks must retain local unsigned-key order")
         if not isinstance(self.suppression, Nid64LookupSnapshot):
             raise TypeError("suppression must be an explicit Nid64LookupSnapshot")
 
@@ -165,26 +173,29 @@ def lookup_nid_name(
     if type(selector) is not int or selector not in (97, 99):
         raise ValueError("this resolver profile supports only selectors 97 and 99")
     _uint(key, 32, "NID4 query key")
-    for rows in (snapshot.delta, snapshot.base):
+    for chunks in (snapshot.delta, snapshot.base):
         result = NidLookupResult(0, None)
-        for row in rows:
-            if row.key != key or row.selector != selector:
-                continue
-            name = row.runtime_name
-            attribute = name is not None and name.startswith(b"!#")
-            if attribute:
-                status = 1
-            else:
-                suppressed = (
-                    lookup_nid64_name(
-                        snapshot.suppression, 108, nid_signature_sequence(key, selector)
-                    ).status
-                    == 1
-                )
-                status = 2 if suppressed else 1
-            result = NidLookupResult(status, name)
-            if name is None and status == 1:
-                return result
+        for rows in chunks:
+            for row in rows:
+                if row.key != key or row.selector != selector:
+                    continue
+                name = row.runtime_name
+                attribute = name is not None and name.startswith(b"!#")
+                if attribute:
+                    status = 1
+                else:
+                    suppressed = (
+                        lookup_nid64_name(
+                            snapshot.suppression,
+                            108,
+                            nid_signature_sequence(key, selector),
+                        ).status
+                        == 1
+                    )
+                    status = 2 if suppressed else 1
+                result = NidLookupResult(status, name)
+                if name is None and status == 1:
+                    return result
         if result.status:
             return result
     return NidLookupResult(0, None)

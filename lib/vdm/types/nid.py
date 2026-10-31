@@ -29,6 +29,54 @@ _SNID98_SNAPSHOT_TYPES: Final = (
     ("nid_snapshot", "lib.vdm.snid_resolver.NidLookupSnapshot"),
     ("virtual_dlls", "lib.vdm.snid_resolver.VirtualDllSnapshot"),
 )
+_NID4_CHUNK_CONTRACT: Final = JSONObject(
+    (
+        ("snapshot_type", "lib.vdm.snid_resolver.NidLookupSnapshot"),
+        ("entry_type", "lib.vdm.snid_resolver.NidRuntimeEntry"),
+        ("lookup_callable", "lib.vdm.snid_resolver.lookup_nid_name"),
+        ("portable_query_selectors", JSONArray((97, 99))),
+        (
+            "base_shape",
+            "tuple of ordered chunks; each chunk is a tuple of runtime entries",
+        ),
+        (
+            "delta_shape",
+            "tuple of ordered chunks; each chunk is a tuple of runtime entries",
+        ),
+        (
+            "validation",
+            "chunk-local unsigned-key monotonicity only; rejects flat row containers; not full native normalization",
+        ),
+        (
+            "native_order",
+            "PostProcess sorts each chunk by unsigned key ascending, selector ascending, stored threat ID descending; no cross-chunk sorting or dedup",
+        ),
+        (
+            "candidate_order",
+            "preserve caller-supplied native chunk/equal-key order; later candidates can overwrite across chunks; unsuppressed NULL returns immediately",
+        ),
+        (
+            "tie_boundary",
+            "native large sort can reorder true comparator ties and batching can change raw sig/padding order; no stable wire-order claim",
+        ),
+        (
+            "projection_boundary",
+            "runtime entries omit stored threat IDs; names/parent IDs/arrival cannot substitute generated mini IDs for sorting; no wire builder or inferred numeric IDs",
+        ),
+        (
+            "physical_recid_boundary",
+            "row-name policy projection requires actual namespace mapping consistency; compact short nonfinal chunks are traversal fixtures, not a valid packed physical RecID namespace",
+        ),
+        (
+            "publication_boundary",
+            "requires successful selected runtime snapshot; failed PostProcess may leave sorted rows without publishing range; cache/epoch/base-delta selection remains explicit",
+        ),
+        (
+            "ce_boundary",
+            "NID64 retains its separately verified globally-keysorted subset; NID4 chunk evidence is not generalized to CE",
+        ),
+    )
+)
 _NID64_SUPPRESSION: Final = JSONObject(
     (
         ("lookup_callable", "lib.vdm.nid_suppression.lookup_nid64_name"),
@@ -584,6 +632,10 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     ),
                 ),
                 ("provider_specific_key_inputs_confirmed_subset", provider_inputs),
+                (
+                    "nid4_chunk_contract",
+                    _NID4_CHUNK_CONTRACT if parsed.type_byte == NID_TYPE else None,
+                ),
                 ("nid64_reply_null_profile", _NID64_SUPPRESSION if nid64 else None),
                 (
                     "suppression_backend",
@@ -664,7 +716,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                             (
                                 "resolver_contract",
                                 "portable reply-NULL NID4 selector97/99 snapshot evaluation: "
-                                "normalized delta/base order, resolved runtime names, explicit recursive NID64 selector108 snapshot; "
+                                "caller-supplied ordered NID4 base/delta chunks and resolved runtime names, explicit recursive NID64 selector108 snapshot; "
                                 "accept only status 1; wire no-tail is not runtime empty"
                                 if snid98
                                 else "not applicable",
@@ -676,6 +728,10 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                             (
                                 "resolver_snapshot_types",
                                 JSONObject(_SNID98_SNAPSHOT_TYPES) if snid98 else None,
+                            ),
+                            (
+                                "nid4_chunk_contract",
+                                _NID4_CHUNK_CONTRACT if snid98 else None,
                             ),
                             (
                                 "no_tail_namespace_dependency",
@@ -779,7 +835,12 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                 statement=lookup_statement,
                 coverage="subset",
                 evidence_refs=(consumer_evidence_id,)
-                + (("nid64_suppression_differential",) if nid4_resolver_record else ()),
+                + (("nid64_suppression_differential",) if nid4_resolver_record else ())
+                + (
+                    ("nid4_postprocess_differential",)
+                    if parsed.type_byte == NID_TYPE
+                    else ()
+                ),
                 unknowns=(
                     SemanticUnknown(
                         "runtime_consumer",
@@ -834,6 +895,35 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     ),
                 ),
             ),
+        )
+        + (
+            (
+                SemanticClaim(
+                    id="nid4_chunked_runtime_candidate_order",
+                    scope="runtime_consumer",
+                    statement=(
+                        "NID4 PostProcess sorts each chunk by unsigned key, selector and "
+                        "descending stored threat ID, without cross-chunk sorting or dedup. "
+                        "The selector97/99 portable row-name policy consumes explicit ordered "
+                        "chunks, preserving supplied native candidate order and cross-chunk "
+                        "overwrite/NULL early return; it does not build that order from wire names."
+                    ),
+                    coverage="subset",
+                    evidence_refs=("nid4_postprocess_differential",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "Local-key validation is only a minimum check, not full normalization. "
+                            "Projected rows omit stored threat IDs and physical RecIDs; native large-sort "
+                            "tie order/batching, mini allocation, cache/epoch and successful publication "
+                            "cannot be inferred from wire/arrival/name values. Actual runtime namespace "
+                            "mapping consistency is required. CE is not generalized from this evidence.",
+                        ),
+                    ),
+                ),
+            )
+            if parsed.type_byte == NID_TYPE
+            else ()
         )
         + (
             (
@@ -946,13 +1036,14 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                         "snid98_resolver_differential",
                         "nid_named_tail_name_bridge_native",
                         "nid64_suppression_differential",
+                        "nid4_postprocess_differential",
                     ),
                     unknowns=(
                         SemanticUnknown(
                             "runtime_consumer",
                             "Portable reproduction covers successful effective inputs "
                             "in an ASCII profile with explicit ordinal resolution or "
-                            "resolved runtime NID4/virtual-host/suppression snapshots; "
+                            "resolved runtime ordered NID4 chunks/virtual-host/suppression snapshots; "
                             "whole snapshot/namespace loading beyond the fixed named-tail bridge, "
                             "other locales, traversal failures, all suffix aliases "
                             "and outer caller gates remain unknown.",
@@ -1007,8 +1098,14 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                     locator=(
                         "tests/local_nid64_suppression_native.py (40 cases; SHA256 "
                         "1bad9619df9e31d43e6924bbdca1541a5266feabb17ff1f0010e2065bff7f287); "
+                        "historical source bridge for snid_resolver SHA256 "
+                        "4d9bdbfabb05f3c976e628c11f193ae8a5d3690b2c761fa99795ec46aa35d4ec "
+                        "at af9a30e (flat NID4 rows superseded by v6 chunks; not executable against current NID4 API): "
                         "tests/local_nid64_suppression_differential.py (40 cases; SHA256 "
                         "10137265bb16f39a8c6cd7dea1ae47eadfed599d8b1e717670f7d0ce77d1b016); "
+                        "current chunk-shaped NID4 API source bridge: "
+                        "tests/local_nid64_suppression_chunked_differential.py (40 cases; SHA256 "
+                        "0728b25a892ccefaee07727ecb50f8ba96929a58713892d753b23be631386c32); "
                         "nid64search@0x1802D66F8 -> nid64searchrecid@0x1800AE690 -> "
                         "Lookup<Nid64Provider>@0x1800AE800; RecordPush@0x180497874; "
                         "GetSigSeq@0x180320B9C; docs/mpengine.dll/1.443.903.0/nid64_suppression_private.md; "
@@ -1024,6 +1121,34 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                 ),
             )
             if suppression_applies
+            else ()
+        )
+        + (
+            (
+                SemanticEvidence(
+                    id="nid4_postprocess_differential",
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref="mpengine 1.443.903.0; DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                    locator=(
+                        "tests/local_nid_postprocess_native.py (29 cases; SHA256 "
+                        "51c74a887800b086ce2fb70e404df2229c8dcf15565612eec4d3c99b780133d7); "
+                        "tests/local_nid_chunked_lookup_differential.py (22 cases; SHA256 "
+                        "7dc84f116e931a465cdcb92f7bb03267202c5eeedc11693574ab8ae51d2b0d7b); "
+                        "tests/local_nid64_suppression_chunked_differential.py (40 current cases; SHA256 "
+                        "0728b25a892ccefaee07727ecb50f8ba96929a58713892d753b23be631386c32); "
+                        "PostProcessRecords@0x1802CA990 -> Worker@0x1802CA9B0 -> "
+                        "Sort@0x18040FA78/merge@0x1805AC614; RegisterRecIDHandler@0x1802CB1C8; "
+                        "Lookup@0x1800AF540; docs/mpengine.dll/1.443.903.0/nid_postprocess_private.md; "
+                        "native per-chunk sort/cross-chunk row-name policy only; supplied runtime order, "
+                        "local-key minimum check, no wire builder/physical RecID or CE layout generalization"
+                    ),
+                    supports=("nid4_chunked_runtime_candidate_order", consumer_claim_id)
+                    if parsed.type_byte == NID_TYPE
+                    else ("snid98_effective_import_key_prefix",),
+                ),
+            )
+            if parsed.type_byte == NID_TYPE or snid98
             else ()
         )
         + (
@@ -1164,7 +1289,7 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
                 else "unknown; selector98 derivation does not apply"
             ),
             "resolver_contract": (
-                "NID4 selector97/99 reply-NULL subset with normalized delta/base "
+                "NID4 selector97/99 reply-NULL subset with explicit ordered base/delta chunks, "
                 "runtime rows and resolved names, explicit lazy recursive CE selector108 snapshot, "
                 "explicit selected-host virtual table; accept status exactly1; "
                 "wire tail is not a resolved-name backend"
@@ -1173,6 +1298,9 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
             ),
             "resolver_callable": _SNID98_RESOLVER_CALLABLE if snid98 else None,
             "resolver_snapshot_types": dict(_SNID98_SNAPSHOT_TYPES) if snid98 else None,
+            "nid4_chunk_contract": semantic_json_to_data(_NID4_CHUNK_CONTRACT)
+            if parsed.type_byte == NID_TYPE or snid98
+            else None,
             "nid64_reply_null_profile": semantic_json_to_data(_NID64_SUPPRESSION)
             if nid64
             else None,
