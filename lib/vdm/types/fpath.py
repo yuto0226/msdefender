@@ -23,6 +23,7 @@ from ..core import (
     SemanticUnknown,
 )
 from ..fpath_env import OriginalEnvRecipe, original_env_recipe_for_row
+from ..fpath_hive import OriginalHiveRecipe, original_hive_recipe_for_row
 from ..fpath_lookup import (
     CSIDL_INDEX_MISS,
     ORIGINAL_CSIDL_LOOKUP_PROFILE,
@@ -209,6 +210,18 @@ def _fpath_env_recipe(parsed: FpathPayload) -> OriginalEnvRecipe | None:
     return None if index == CSIDL_INDEX_MISS else original_env_recipe_for_row(index)
 
 
+def _fpath_hive_recipe(parsed: FpathPayload) -> OriginalHiveRecipe | None:
+    index = lookup_original_csidl_index(parsed.csidl_value)
+    return None if index == CSIDL_INDEX_MISS else original_hive_recipe_for_row(index)
+
+
+def _fpath_callback_recipe(
+    parsed: FpathPayload,
+) -> OriginalEnvRecipe | OriginalHiveRecipe | None:
+    env = _fpath_env_recipe(parsed)
+    return env if env is not None else _fpath_hive_recipe(parsed)
+
+
 def _fpath_match_profile(parsed: FpathPayload) -> dict[str, object]:
     """Return the engine-confirmed bounded path candidate contract."""
     is_asep = parsed.type_byte in {0x71, 0x75}
@@ -378,7 +391,7 @@ def render_fpath(parsed: FpathPayload) -> FormatResult:
     """Render known path fields and opaque tail lengths as logger sections."""
     name = FPATH_TYPES[parsed.type_byte]
     lookup_index = lookup_original_csidl_index(parsed.csidl_value)
-    env_recipe = _fpath_env_recipe(parsed)
+    callback_recipe = _fpath_callback_recipe(parsed)
     path_rows = (
         ("csidl_value", f"0x{parsed.csidl_value:04X}"),
         (
@@ -403,8 +416,15 @@ def render_fpath(parsed: FpathPayload) -> FormatResult:
         ),
     )
 
-    if env_recipe is not None:
-        path_rows += (("path_provider", f"QueryPathFromEnv: {env_recipe.template}"),)
+    if callback_recipe is not None:
+        callback_name = (
+            "QueryPathFromHive"
+            if isinstance(callback_recipe, OriginalHiveRecipe)
+            else "QueryPathFromEnv"
+        )
+        path_rows += (
+            ("path_provider", f"{callback_name}: {callback_recipe.template}"),
+        )
 
     if parsed.path_kind == "foldername":
         path_rows += (
@@ -461,14 +481,16 @@ def export_fpath_artifact(parsed: FpathPayload) -> ArtifactExport:
         else parsed.path_region_raw[parsed.pipe_offset :]
     )
     manifest = {
-        "schema": "vdm.fpath.artifact.v6",
+        "schema": "vdm.fpath.artifact.v7",
         "record_type": {"byte": parsed.type_byte, "name": type_name},
         "family": "asep" if is_asep else "standard",
         "raw_hex": parsed.raw.hex(),
         "match_profile": _fpath_match_profile(parsed),
         "receiver_input_profile": _fpath_receiver_input_profile(parsed),
         "callback_control_flow_recipe": (
-            None if (recipe := _fpath_env_recipe(parsed)) is None else recipe.to_json()
+            None
+            if (recipe := _fpath_callback_recipe(parsed)) is None
+            else recipe.to_json()
         ),
         "csidl": {
             "value": parsed.csidl_value,
@@ -615,7 +637,7 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
             )
             else "confirmed_subset"
         ),
-        representation="fpath.path-match-candidate.ir.v8",
+        representation="fpath.path-match-candidate.ir.v9",
         data=JSONObject(
             (
                 ("type", type_name),
@@ -625,7 +647,7 @@ def export_fpath_semantics(parsed: FpathPayload) -> RuleSemantics:
                 (
                     "callback_control_flow_recipe",
                     None
-                    if (recipe := _fpath_env_recipe(parsed)) is None
+                    if (recipe := _fpath_callback_recipe(parsed)) is None
                     else _semantic_json(recipe.to_json()),
                 ),
                 ("storage_family", "asep" if is_asep else "standard"),
@@ -837,7 +859,45 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
         if _fpath_env_recipe(parsed) is not None
         else ()
     )
-    return env_claims + (
+    hive_claims = (
+        (
+            SemanticClaim(
+                id="fpath_hive_callback_recipe",
+                scope="runtime_consumer",
+                statement=(
+                    "This actual selected original row calls QueryPathFromHive "
+                    "with its row+8 template. NULL CSIDL expansion returns 3 and "
+                    "preserves prior output; a nonnull result clears output before "
+                    "case-insensitive comparison. An unchanged template is freed "
+                    "and returns 2; a changed result containing any percent passes "
+                    "through ordinary ExpandEnvStrings flags 7 before consume-input "
+                    "virtualization and unchanged status forwarding. CSIDL "
+                    "expansion fixes API fallback false, with system type 1 and "
+                    "resolved profile wrapper +0x48, separately from ordinary "
+                    "environment type 0/profile +0x40."
+                ),
+                coverage="subset",
+                evidence_refs=(
+                    "fpath_hive_callback_static",
+                    "fpath_hive_callback_native",
+                ),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Registry provider value types, enumeration/token packaging, "
+                        "actual system/profile list contents, offline key mapping, "
+                        "reference effects and final runtime paths remain unresolved. "
+                        "The two raw HKLM builder descriptors do not identify "
+                        "effective registry IoCs or allow/deny policy.",
+                    ),
+                ),
+            ),
+        )
+        if _fpath_hive_recipe(parsed) is not None
+        else ()
+    )
+    callback_claims = env_claims + hive_claims
+    return callback_claims + (
         SemanticClaim(
             id="fpath_wire_layout",
             scope="wire_layout",
@@ -893,7 +953,10 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
                 "its sentinel with 32780 without calling a threat-ID resolver."
             ),
             coverage="subset",
-            evidence_refs=("fpath_receiver_span_static", "fpath_receiver_span_native"),
+            evidence_refs=(
+                "fpath_receiver_span_static",
+                "fpath_receiver_span_native",
+            ),
             unknowns=(
                 SemanticUnknown(
                     "receiver_transform",
@@ -912,7 +975,10 @@ def _fpath_claims(parsed: FpathPayload) -> tuple[SemanticClaim, ...]:
                 "Normal PE mapping/relocation preserves the read-only key spans."
             ),
             coverage="subset",
-            evidence_refs=("fpath_csidl_lookup_static", "fpath_csidl_lookup_native"),
+            evidence_refs=(
+                "fpath_csidl_lookup_static",
+                "fpath_csidl_lookup_native",
+            ),
             unknowns=(
                 SemanticUnknown(
                     "receiver_transform",
@@ -1112,7 +1178,49 @@ def _fpath_evidence(parsed: FpathPayload) -> tuple[SemanticEvidence, ...]:
         if _fpath_env_recipe(parsed) is not None
         else ()
     )
-    return env_evidence + (
+    hive_evidence = (
+        (
+            SemanticEvidence(
+                id="fpath_hive_callback_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 original callback, wrappers and table bytes",
+                locator=(
+                    "QueryPathFromHive @ 0x1800C8330 (302 bytes); ExpandCSIDLString "
+                    "@ 0x1800C8460; GetSystemCSIDLDB @ 0x1800C85A8; GetEnvVar "
+                    "@ 0x1800C70DC; CreateGlobalCSIDLDB @ 0x1804501F0; two "
+                    "24-byte query descriptors @ 0x180DF26A0. 35 original callback "
+                    "rows, 31 reachable by original lookup; actual selected index "
+                    "gates this claim. AddEnvrFromReg body remains a provider boundary."
+                ),
+                supports=("fpath_hive_callback_recipe",),
+            ),
+            SemanticEvidence(
+                id="fpath_hive_callback_native",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref="mpengine 1.443.903.0 17 original callback/expansion helpers",
+                locator=(
+                    "tests/local_fpath_hive_native.py SHA256 "
+                    "b5344ec345c9b55fbe8c48bad76cf5d9f6e34d53056421690cf54d931415a720; "
+                    "77 cases: 42 synthetic controls and 35 raw-row direct calls, "
+                    "including raw native-lookup-unreachable rows as controls only. "
+                    "Exact +0x48/+0x40 wrapper pointers, list type 1/0, failed AL256 "
+                    "nonnull release and forwarded text/flags/status asserted. "
+                    "GetEnvVar, resolver/release, allocator and final virtualizer "
+                    "are explicit seams; tracing disabled, original CRT locale "
+                    "zero and ordinary API fallback disabled. Binary/code, PC, "
+                    "return RIP/RSP, guest faults, row retention and double-free "
+                    "guards checked; stderr retains a host mem_map exception trace."
+                ),
+                supports=("fpath_hive_callback_recipe",),
+            ),
+        )
+        if _fpath_hive_recipe(parsed) is not None
+        else ()
+    )
+    callback_evidence = env_evidence + hive_evidence
+    return callback_evidence + (
         SemanticEvidence(
             id="fpath_csidl_lookup_static",
             axis="receiver",
