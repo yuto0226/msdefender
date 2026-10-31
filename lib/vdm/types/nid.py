@@ -18,6 +18,7 @@ from ..core import (
     SemanticEvidence,
     SemanticIssue,
     SemanticUnknown,
+    semantic_json_to_data,
 )
 
 NID_TYPE: Final = 0x55
@@ -27,6 +28,40 @@ _SNID98_RESOLVER_CALLABLE: Final = "lib.vdm.snid_resolver.resolve_import_descrip
 _SNID98_SNAPSHOT_TYPES: Final = (
     ("nid_snapshot", "lib.vdm.snid_resolver.NidLookupSnapshot"),
     ("virtual_dlls", "lib.vdm.snid_resolver.VirtualDllSnapshot"),
+)
+_NO_TAIL_NAME_BRIDGE: Final = JSONObject(
+    (
+        ("callable", "lib.vdm.nid_namespace.no_tail_nid_runtime_entry"),
+        ("namespace_snapshot_type", "lib.vdm.nid_namespace.NoTailNameSnapshot"),
+        ("initialization_profile_type", "lib.vdm.nid_namespace.NoTailNameProfile"),
+        (
+            "profile_kind",
+            "mpengine-1.443.903.0.normal-copy.unique-direct-full.no-redirect.no-override",
+        ),
+        ("record_type", NID_TYPE),
+        ("payload_length", 5),
+        ("caller_threat_id_required", True),
+        ("threats_loaded_required", True),
+        ("threats_loaded_values", JSONArray((False, True))),
+        ("source", "raw THREAT_BEGIN payload/name_raw; never display name"),
+        (
+            "runtime_entry_name_profile",
+            (
+                "ASCII C-string content only; non-ASCII raises UnsupportedNidNamespace; "
+                "the separate raw runtime_name accessor preserves high-bit bytes without strip/decode"
+            ),
+        ),
+        ("unsupported_error_type", "lib.vdm.nid_namespace.UnsupportedNidNamespace"),
+        ("key_generation", "not derived; raw NID4 key/selector retained"),
+        (
+            "unknown_boundary",
+            (
+                "caller must select effective namespace/profile; dependencies, special/magic IDs, "
+                "duplicates, alternate store, overlays and nonempty NID tails are unsupported; "
+                "unresolved namespace is an error, not runtime NULL"
+            ),
+        ),
+    )
 )
 
 _FAMILY_NAMES = MappingProxyType(
@@ -184,6 +219,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
     identity_length = len(parsed.recid_input_raw) - len(parsed.ignored_trailing_raw)
     identity_raw = parsed.recid_input_raw[:identity_length]
     snid98 = parsed.type_byte == SNID_TYPE and parsed.metadata_raw == 98
+    no_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) == 5
 
     framing = JSONArray(
         (
@@ -373,6 +409,18 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                 ),
                 ("provider_specific_key_inputs_confirmed_subset", provider_inputs),
                 (
+                    "no_tail_namespace_bridge",
+                    _NO_TAIL_NAME_BRIDGE if no_tail_nid else None,
+                ),
+                (
+                    "known_no_tail_namespace_role",
+                    "selector97 runtime names can feed the selector98 ordinal resolver"
+                    if no_tail_nid and parsed.metadata_raw == 97
+                    else "generic name association only; key/selector purpose unknown"
+                    if no_tail_nid
+                    else "not applicable",
+                ),
+                (
                     "selector98_producer_profile",
                     JSONObject(
                         (
@@ -416,6 +464,11 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                                 "resolver_snapshot_types",
                                 JSONObject(_SNID98_SNAPSHOT_TYPES) if snid98 else None,
                             ),
+                            (
+                                "no_tail_namespace_dependency",
+                                _NO_TAIL_NAME_BRIDGE if snid98 else None,
+                            ),
+                            ("namespace_dependency_selector", 97 if snid98 else None),
                             (
                                 "virtual_dll_contract",
                                 "explicit selected-host lookup/stored-ID snapshot; index0 and ID0 valid; "
@@ -559,6 +612,37 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
         + (
             (
                 SemanticClaim(
+                    id="nid_no_tail_runtime_name_association",
+                    scope="runtime_consumer",
+                    statement=(
+                        "For a five-byte type55 record, RecordPush retains the explicit "
+                        "caller threat ID. In the fixed normal-copy unique direct-full "
+                        "namespace profile, its name comes from raw THREAT_BEGIN bytes "
+                        "up to the first NUL; zero name length yields runtime NULL. "
+                        "The raw accessor preserves bytes, while the runtime-entry factory "
+                        "supports ASCII names only. This associates a name without deriving "
+                        "the NID key or selector role."
+                    ),
+                    coverage="subset",
+                    evidence_refs=("nid_no_tail_name_bridge_native",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "Effective caller namespace and initialization profile must be "
+                            "explicit; dependency redirects, overlays, special/magic IDs, "
+                            "alternate store and nonempty-tail mini-threat loading remain outside. "
+                            "Non-ASCII raw names are preserved by the accessor but unsupported "
+                            "by the runtime-entry factory; they are not stripped or decoded.",
+                        ),
+                    ),
+                ),
+            )
+            if no_tail_nid
+            else ()
+        )
+        + (
+            (
+                SemanticClaim(
                     id="snid98_effective_import_key_prefix",
                     scope="runtime_consumer",
                     statement=(
@@ -626,6 +710,30 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
         + (
             (
                 SemanticEvidence(
+                    id="nid_no_tail_name_bridge_native",
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref="mpengine 1.443.903.0; DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                    locator=(
+                        "tests/local_snid98_name_bridge_native.py (27 cases; SHA256 "
+                        "adc6b01bc524964610be7d8ba7ed0bbafba128b3da96b379cc6ceb0395de9bc3); "
+                        "tests/local_nid_namespace_differential.py (24 cases; SHA256 "
+                        "835331b479d46e6b952cb169e8fc3dc911406fe469ef86f89b5be0bb592852d9); "
+                        "threat_info_receiver@0x1809EB590 -> kpushobject@0x1800FBFDC -> "
+                        "kstore_copy_buff@0x1800FC594 -> add_full_threat@0x180483A10; "
+                        "RecordPush@0x180447AE4 -> get_threat_name@0x1800F7D10; "
+                        "docs/mpengine.dll/1.443.903.0/snid98_name_bridge_private.md; "
+                        "normal-copy unique direct-full no-redirect/no-override profile only"
+                    ),
+                    supports=("nid_no_tail_runtime_name_association",),
+                ),
+            )
+            if no_tail_nid
+            else ()
+        )
+        + (
+            (
+                SemanticEvidence(
                     id="snid98_producer_static",
                     axis="consumer",
                     kind="engine_static",
@@ -662,6 +770,7 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
     """Export the exact-key record and all following bytes losslessly."""
     key_width = _KEY_WIDTHS[parsed.type_byte]
     snid98 = parsed.type_byte == SNID_TYPE and parsed.metadata_raw == 98
+    no_tail_nid = parsed.type_byte == NID_TYPE and len(parsed.raw) == 5
     manifest = {
         "schema": "vdm.nid.artifact.v2",
         "record_type": {
@@ -708,6 +817,13 @@ def export_nid_artifact(parsed: NidPayload) -> ArtifactExport:
             ),
             "resolver_callable": _SNID98_RESOLVER_CALLABLE if snid98 else None,
             "resolver_snapshot_types": dict(_SNID98_SNAPSHOT_TYPES) if snid98 else None,
+            "no_tail_namespace_bridge": semantic_json_to_data(_NO_TAIL_NAME_BRIDGE)
+            if no_tail_nid
+            else None,
+            "no_tail_namespace_dependency": semantic_json_to_data(_NO_TAIL_NAME_BRIDGE)
+            if snid98
+            else None,
+            "namespace_dependency_selector": 97 if snid98 else None,
             "file_content_hash_ioc": False,
             "outer_caller_gates": "unknown",
             "recid_or_pcode_effect": "unknown",
