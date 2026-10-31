@@ -215,7 +215,7 @@ def export_nid_semantics(parsed: NidPayload) -> RuleSemantics:
                         ("query_selector", 98),
                         (
                             "key_source",
-                            "context +0xAA018 (16 bytes) || context +0xAA028 (4 bytes)",
+                            "context +0xAAA58 (16 bytes) || context +0xAAA68 (4 bytes)",
                         ),
                         ("operation", "copied unchanged to snidsearchrecidex"),
                         ("upstream_producer", "unknown"),
