@@ -374,6 +374,20 @@ def _stage_profile(parsed: StaticPayload) -> JSONObject:
                     expected_hash_hex=parsed.hash_raw.hex()
                     if mode is not None
                     else None,
+                    native_hash_range_validation=(
+                        obj(
+                            evidence_ref="static_mode2_hash_io_test",
+                            stage_scope="stage3 mode_hash byte predicate only; no native first-page/prefix/tail stage pipeline",
+                            path="CompareValues(stage3) -> GetHashes(mask4) -> CRC_0 -> CompareHash",
+                            read_chunk_bytes=0x80000,
+                            source_scope="immutable complete underlying bytes; successful exact UfsSeek/UfsRead services for provider_offset and record_file_size",
+                            cache_scope="native cache reuse/grow/shrink tested; no portable cache lifecycle or mutable-source equivalence",
+                            remaining_runtime="real OS/provider selection, metadata/ETW/name/CFG/sign policies, PLI/heartbeat/cancellation remain external or untested",
+                            failure_scope="I/O failure is not hash mismatch; unavailable complete source remains unknown",
+                        )
+                        if mode is StaticHashMode.CRC_0
+                        else None
+                    ),
                     long_target_post_hash_gate=obj(
                         when=expr("greater_than", "provider_size", "record_file_size"),
                         predicate=expr(
@@ -1049,8 +1063,8 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         unknowns=(
             SemanticUnknown(
                 "runtime_consumer",
-                "Provider selection, untested branches, and real I/O/GetHashes "
-                "behavior are not established by this bounded test.",
+                "Real OS/provider selection, cache lifetime, untested branches and "
+                "non-mode2 GetHashes integration remain outside the bounded byte model.",
             ),
         ),
     )
@@ -1085,6 +1099,62 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 "real provider/I/O/hash services, and final result remain unknown.",
             ),
         ),
+    )
+    mode2_claims = (
+        (
+            SemanticClaim(
+                id="static_mode2_hash_range",
+                scope="runtime_consumer",
+                statement=(
+                    "For mode2, real CompareValues stage3 calls GetHashes(mask4), "
+                    "CRC_0 and CompareHash starting at provider_offset for record_file_size "
+                    "bytes; bounded immutable successful-byte-service cases agree with "
+                    "the StaticMatchContext stage3 mode-hash predicate, including empty/"
+                    "nonzero-offset and 512KiB chunk boundaries."
+                ),
+                coverage="subset",
+                evidence_refs=("static_mode2_hash_io_test",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "UfsSeek/UfsRead are explicit byte services, not a real OS loader. "
+                        "Metadata/ETW/name/CFG/sign policies remain services. Native cache "
+                        "partial failures and mutable-source reuse are not modeled as hash "
+                        "mismatches or rollback; PLI/heartbeat/cancellation, provider selection, "
+                        "other primitives, the full first-page/prefix/tail pipeline and final "
+                        "verdict remain outside this evidence.",
+                    ),
+                ),
+            ),
+        )
+        if mode is StaticHashMode.CRC_0
+        else ()
+    )
+    mode2_evidence = (
+        (
+            SemanticEvidence(
+                id="static_mode2_hash_io_test",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref=(
+                    "mpengine path 1.443.903.0; PE FileVersion 1.1.25110.1; DLL SHA256 "
+                    "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3"
+                ),
+                locator=(
+                    "tests/local_static_mode2_hash_io_native.py (20 cases/36 calls; SHA256 "
+                    "6888a89f617c2c47c657bf48eead6da4577241400214517b82bd4cb7810986f9); "
+                    "report SHA256 72c317e91ac917adbfffc26ee0e0c7ef4cda9e82d29d369c86e4934c2122f43b; "
+                    "CompareValues@0x1800F8490 -> GetHashes@0x1803B9F7C(mask4) -> "
+                    "CRC_0@0x180704738 -> CompareHash@0x18055D644; "
+                    "docs/mpengine.dll/1.443.903.0/static_mode2_hash_io_private.md; "
+                    "explicit Ufs byte/policy services, immutable successful complete-source subset; "
+                    "not a full I/O/cache/engine equivalence claim"
+                ),
+                supports=("static_mode2_hash_range",),
+            ),
+        )
+        if mode is StaticHashMode.CRC_0
+        else ()
     )
     return RuleSemantics(
         status="unsupported" if recid_unsupported else "confirmed_subset",
@@ -1268,6 +1338,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             consumer_claim,
             predicate_claim,
             control_flow_claim,
+            *mode2_claims,
             SemanticClaim(
                 id="static_report_mapping",
                 scope="report_mapping",
@@ -1333,7 +1404,8 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 ),
                 supports=(control_flow_claim.id,),
             ),
-        ),
+        )
+        + mode2_evidence,
     )
 
 
