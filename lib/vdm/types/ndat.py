@@ -5,6 +5,13 @@ import json
 from dataclasses import dataclass
 from typing import Final
 
+from ..asr_auto_enable import (
+    AsrAutoEnableCandidate,
+    AsrAutoEnableReceiverProjection,
+    UnsupportedAsrAutoEnable,
+    compile_asr_auto_enable_candidate,
+    project_asr_auto_enable_receiver,
+)
 from ..core import (
     Artifact,
     ArtifactExport,
@@ -72,6 +79,274 @@ class NdatPayload:
     callback_index: int
     record_id_suffix_raw: bytes | None
     trailing_raw: bytes
+
+
+class UnsupportedNdatAsrAutoEnable(ValueError):
+    """The authoritative raw NDAT payload does not select callback21."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatAsrAutoEnable:
+    """Raw-authority settings candidate, independent of runtime map state."""
+
+    raw: bytes
+    counted_data: bytes
+    projection: AsrAutoEnableReceiverProjection
+    portable_candidate: AsrAutoEnableCandidate | None
+    portable_reason: str | None
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+
+
+def project_ndat_asr_auto_enable(parsed: NdatPayload) -> NdatAsrAutoEnable:
+    """Reparse raw bytes before selecting callback, count, data or suffix."""
+    if not isinstance(parsed, NdatPayload):
+        raise TypeError("parsed must be NdatPayload")
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 21:
+        raise UnsupportedNdatAsrAutoEnable("requires callback decimal21 (0x15)")
+    projection = project_asr_auto_enable_receiver(parsed.data_raw, parsed.data_length)
+    candidate, reason = None, None
+    if projection.branch == "uuid_candidate":
+        try:
+            candidate = compile_asr_auto_enable_candidate(projection.effective_utf8)
+        except UnsupportedAsrAutoEnable as exc:
+            reason = str(exc)
+    return NdatAsrAutoEnable(
+        parsed.raw,
+        parsed.data_raw,
+        projection,
+        candidate,
+        reason,
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _asr_auto_enable_manifest(parsed: NdatPayload) -> JSONObject:
+    model = project_ndat_asr_auto_enable(parsed)
+    p, candidate = model.projection, model.portable_candidate
+    settings = None if candidate is None else candidate.settings
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.asr-auto-enable.candidate.v1"),
+            ("type", "NDAT"),
+            ("kind", "asr_auto_enable_settings_candidate"),
+            (
+                "callback",
+                JSONObject(
+                    (
+                        ("index", 21),
+                        ("dispatch_target", "AsrAutoEnableNdatCallback"),
+                        ("is_final_detection", False),
+                    )
+                ),
+            ),
+            ("raw_hex", model.raw.hex()),
+            ("data_count", p.count),
+            ("counted_data_hex", model.counted_data.hex()),
+            ("wire_data_pointer", "non_null_storage; count0 is not NULL no-op"),
+            ("receiver_branch", p.branch),
+            ("receiver_known_return_u32", p.known_return_u32),
+            (
+                "effective_utf8_hex",
+                None if p.effective_utf8 is None else p.effective_utf8.hex(),
+            ),
+            (
+                "after_terminator_hex",
+                None if p.after_terminator is None else p.after_terminator.hex(),
+            ),
+            (
+                "record_name_raw_hex",
+                None
+                if model.record_id_suffix_raw is None
+                else model.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", model.trailing_raw.hex()),
+            ("runtime_recid_used_by_callback", False),
+            ("record_name_used_by_callback", False),
+            ("portable_supported", candidate is not None),
+            ("portable_reason", model.portable_reason),
+            (
+                "portable_domain",
+                "case-sensitive WARN_/AUDIT_/BLOCK_, M1:/M2:/M3:/M4:, exactly36 hyphenated ASCII UUID hex bytes; UUID hex case preserved, GUID identity case-independent",
+            ),
+            ("uuid_canonical", None if candidate is None else str(candidate.uuid)),
+            (
+                "guid_bytes_le_hex",
+                None if candidate is None else candidate.guid_bytes_le.hex(),
+            ),
+            (
+                "settings_candidate",
+                None
+                if settings is None
+                else JSONObject(
+                    (
+                        ("enabled", settings.enabled),
+                        ("action_u32", settings.action),
+                        ("flags_u32", settings.flags),
+                    )
+                ),
+            ),
+            (
+                "settings_layout",
+                JSONObject(
+                    (
+                        ("size_bytes", 12),
+                        ("enabled_offset", 0),
+                        ("padding_offset", 1),
+                        ("padding_size", 3),
+                        ("padding_value", None),
+                        ("action_u32_offset", 4),
+                        ("flags_u32_offset", 8),
+                    )
+                ),
+            ),
+            (
+                "native_recipe",
+                JSONObject(
+                    (
+                        ("receiver", "mpengine.dll+0x5BC650"),
+                        (
+                            "decoder",
+                            "mpengine.dll+0x668794; CP65001 flags0 first-NUL CString",
+                        ),
+                        ("uuid_parser", "mpengine.dll+0x66BF24; UuidFromStringW"),
+                        ("map_emplace", "mpengine.dll+0xAF1DE8; first-wins GUID map"),
+                        (
+                            "object_constructor",
+                            "mpengine.dll+0x48C878; object40B/map+24",
+                        ),
+                        ("global_slot", "mpengine.dll+0x128A6B0"),
+                    )
+                ),
+            ),
+            (
+                "recipe",
+                JSONObject(
+                    (
+                        (
+                            "projector",
+                            "lib.vdm.types.ndat.project_ndat_asr_auto_enable",
+                        ),
+                        (
+                            "receiver_projector",
+                            "lib.vdm.asr_auto_enable.project_asr_auto_enable_receiver",
+                        ),
+                        (
+                            "compiler",
+                            "lib.vdm.asr_auto_enable.compile_asr_auto_enable_candidate",
+                        ),
+                        (
+                            "candidate_type",
+                            "lib.vdm.asr_auto_enable.AsrAutoEnableCandidate",
+                        ),
+                        (
+                            "settings_type",
+                            "lib.vdm.asr_auto_enable.AsrAutoEnableSettings",
+                        ),
+                        (
+                            "collection_type",
+                            "lib.vdm.asr_auto_enable.AsrAutoEnableCollectionSnapshot",
+                        ),
+                        (
+                            "lookup",
+                            "lib.vdm.asr_auto_enable.lookup_asr_auto_enable_candidate",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "collection_contract",
+                "externally supplied successful ingestion history in complete selected map history in actual runtime callback order, including earlier entries; first same-GUID entry wins; no wire/deferred order inferred",
+            ),
+            (
+                "consumer_contract",
+                "LoadRulesFromDatabase links settings by GUID; only raw state5/non-FolderGuard enters observed AutoEnableRule slice, which reads action@4; enabled/flags are not established final-policy gates",
+            ),
+            (
+                "unsupported_boundary",
+                "unsupported local UUID syntax/encoding is not original UuidFromStringW rejection; native recipe retained",
+            ),
+            ("native_uuid_accepted", None),
+            ("callback_completed", None),
+            ("map_insertion_completed", None),
+            ("stored_candidate", None),
+            ("effective_policy", None),
+            ("final_verdict", None),
+        )
+    )
+
+
+def _export_asr_auto_enable(parsed: NdatPayload) -> ArtifactExport:
+    model = project_ndat_asr_auto_enable(parsed)
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("asr-auto-enable-data.bin", "binary", model.counted_data),
+            Artifact(
+                "asr-auto-enable-metadata.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_asr_auto_enable_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode("utf8")
+                + b"\n",
+            ),
+        ),
+    )
+
+
+def _asr_auto_enable_semantics(parsed: NdatPayload) -> RuleSemantics:
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="ndat.asr-auto-enable.candidate.v1",
+        data=_asr_auto_enable_manifest(parsed),
+        profile="mpengine-1.443.903.0",
+        evidence=(
+            "AsrAutoEnableNdatCallback@0x1805BC650; GUID map _Emplace@0x180AF1DE8; HipsManager::AutoEnableRule@0x180592FA0",
+        ),
+        issues=(
+            SemanticIssue(
+                "asr_auto_enable_effective_policy_external",
+                "Settings candidates are not stored-state or effective-policy assertions; deferred order, UUID-parser acceptance, allocation, consumer gates and final policy remain external.",
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                "ndat-asr-auto-enable-candidate",
+                "runtime_consumer",
+                "Callback21 parses action/mode and UUID into 12B settings, map emplace keeps first same-GUID entry. Local canonical ASCII UUID projection preserves spelling and padding unknowns; explicit successful runtime order supplies bounded lookup.",
+                "subset",
+                ("ndat-asr-auto-enable-static", "ndat-asr-auto-enable-native"),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Local support does not assert original parser acceptance, successful map insertion, actual deferred order, effective policy or detection. Noncanonical/non-ASCII UUID forms are locally unsupported.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "ndat-asr-auto-enable-static",
+                "consumer",
+                "engine_static",
+                "docs/mpengine.dll/1.443.903.0/ndat_asr_auto_enable_contract_private.md",
+                ("ndat-asr-auto-enable-candidate",),
+                "callback21 prefix/mode; settings0/4/8; map first-wins; constrained consumer",
+            ),
+            SemanticEvidence(
+                "ndat-asr-auto-enable-native",
+                "engine_equivalent_test",
+                "engine_runtime",
+                "tests/local_cb21_23_native_v1_manifest.json",
+                ("ndat-asr-auto-enable-candidate",),
+                "bounded original-DLL gates/constructor/map; actual2/supplied-order/modes/first-NUL/uppercase UUID; ACP1252 LCID1028; no effective-policy execution",
+            ),
+        ),
+    )
 
 
 class UnsupportedNdatDnsCacheInfo(ValueError):
@@ -2958,6 +3233,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs and linkage metadata."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 21:
+        return _export_asr_auto_enable(parsed)
     if parsed.callback_index in (16, 17):
         return _export_header_msg_pattern(parsed)
     if parsed.callback_index == 12:
@@ -3168,6 +3445,51 @@ def _preview_rows(data: bytes) -> tuple[tuple[str, str], ...]:
 
 def render_ndat(parsed: NdatPayload) -> FormatResult:
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 21:
+        model = project_ndat_asr_auto_enable(parsed)
+        candidate = model.portable_candidate
+        effective = model.projection.effective_utf8
+        preview = repr(effective) if effective is not None else "not selected"
+        if len(preview) > 64:
+            preview = preview[:61] + "..."
+        return FormatResult(
+            sections=(
+                DisplaySection(
+                    "ASR Settings Candidate",
+                    rows=(
+                        ("candidate", preview),
+                        ("receiver", model.projection.branch),
+                        (
+                            "UUID",
+                            "locally unsupported or not selected"
+                            if candidate is None
+                            else str(candidate.uuid),
+                        ),
+                        (
+                            "settings",
+                            "not projected"
+                            if candidate is None
+                            else f"enabled={candidate.settings.enabled}; action={candidate.settings.action}; flags=0x{candidate.settings.flags:x}",
+                        ),
+                        ("padding", "bytes1..3 unknown; not synthesized"),
+                        (
+                            "map",
+                            "first same-GUID successful entry wins; runtime order external",
+                        ),
+                        (
+                            "policy",
+                            "effective policy and consumer gates remain external",
+                        ),
+                        (
+                            "portable",
+                            "canonical ASCII UUID candidate"
+                            if candidate is not None
+                            else model.portable_reason or "not selected",
+                        ),
+                    ),
+                ),
+            )
+        )
     if parsed.callback_index in (16, 17):
         is_header = parsed.callback_index == 16
         supported = bool(parsed.data_raw) and parsed.data_raw[-1] == 0
@@ -3369,6 +3691,8 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
 def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     """Export only NDAT callbacks tied to a static registration and consumer."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 21:
+        return _asr_auto_enable_semantics(parsed)
     if parsed.callback_index in (16, 17):
         return _header_msg_semantics(parsed)
     if parsed.callback_index == 12:
