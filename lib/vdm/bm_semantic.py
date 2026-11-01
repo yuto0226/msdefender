@@ -77,6 +77,18 @@ def _snapshot_context_is_exact(
     )
 
 
+def _fixed_skip_context_is_exact(
+    program: BmExecutionProgram, context: BmSemanticContext | None
+) -> bool:
+    return context is not None and program.identity_fixed_skip_closed(
+        reader_kind=context.reader_kind,
+        identity_translation=context.translation == "identity",
+        worker_modes=context.worker_modes,
+        capture_enabled=context.capture_enabled,
+        matches_vector_supplied=context.matches_vector_supplied,
+    )
+
+
 def _worker_modes_are_mode1_equivalent(
     context: BmSemanticContext, pattern: BmPattern | None
 ) -> bool:
@@ -151,6 +163,7 @@ def _operation_ir(
     pattern: BmPattern | None = None,
     class_choice_context: bool = False,
     snapshot_context: bool = False,
+    fixed_skip_context: bool = False,
 ) -> dict[str, object]:
     raw = operation.raw
     fidelity: OperationFidelity = "exact"
@@ -203,6 +216,25 @@ def _operation_ir(
         decoded.update(kind=operation.kind, operand=operation.operand)
         result["fidelity"] = "conditional"
         result["requirements"] = [operation.support_note]
+        if fixed_skip_context and raw[:2] == b"\x90\x07":
+            result["fidelity"] = "exact"
+            result["requirements"] = [
+                "flat canonical literal/raw01/primary-raw07/END; identity BUFFER modes1/3; null backrefs/vector; immutable valid backing; limit == len(subject)",
+                "same-start Boolean acceptance only; no PE mapping, candidate selection, wrapper output or reporting equivalence",
+            ]
+            decoded["engine_transition"] = {
+                "reader": "BUFFER",
+                "count_source": "LE16 token[2:4]",
+                "count_unit": "byte",
+                "zero_count": "continue without subject read or bounds test",
+                "per_byte_guard": "cursor < limit",
+                "per_byte_update": "cursor += 1; count -= 1",
+                "failure_preserves_partial_cursor": True,
+                "success_means": "suffix is reachable; it must still match",
+                "evaluator": "evaluate_bm_fixed_skip_finite",
+                "evidence_tier": "engine_static; offline reference validation is not original-engine execution",
+                "engine_evidence": "raw07 descriptor 0x180DBBAD5=070400; dispatch special-case 0x1800EDDEB..0x1800EDDEE; checked byte loop 0x1800EE2ED..0x1800EE317",
+            }
         if (
             operation.kind == "backward_scan"
             and context is not None
@@ -601,12 +633,18 @@ def _execution_graph(
         matches_vector_supplied=context.matches_vector_supplied,
     )
     snapshot_closed = _snapshot_context_is_exact(program, context)
+    fixed_skip_closed = _fixed_skip_context_is_exact(program, context)
     fidelity = (
         "unsupported"
         if not program.complete
         else "exact"
         if qualified
-        and (program.primitive_closed or class_choice_closed or snapshot_closed)
+        and (
+            program.primitive_closed
+            or class_choice_closed
+            or snapshot_closed
+            or fixed_skip_closed
+        )
         else "conditional"
     )
     return {
@@ -619,6 +657,20 @@ def _execution_graph(
         "has_rewrites": any(node.rewrite is not None for node in program.invocations),
         **({"class_choice_closed": True} if class_choice_closed else {}),
         **({"snapshot_finite_closed": True} if snapshot_closed else {}),
+        **(
+            {
+                "fixed_skip_finite_closed": True,
+                "fixed_skip_finite_domain": {
+                    "grammar": "literal/escaped90/raw01/primary-raw07/END; one invocation, no tail or rewrites",
+                    "backing": "immutable subject bytes at reader.base; limit == len(subject); u64 reader fields",
+                    "evaluator": "evaluate_bm_fixed_skip_finite",
+                    "evidence_tier": "engine_static; offline independent model and same-invocation raw01 chunk equivalence",
+                    "outputs": "same-start Boolean acceptance; evaluator preserves worker reader and END scratch; wrapper scalar outputs, PE mapping and reporting excluded",
+                },
+            }
+            if fixed_skip_closed
+            else {}
+        ),
         **(
             {
                 "snapshot_finite_domain": {
@@ -667,6 +719,7 @@ def _execution_graph(
                         pattern=node_pattern,
                         class_choice_context=class_choice_closed,
                         snapshot_context=snapshot_closed,
+                        fixed_skip_context=fixed_skip_closed,
                     )
                     for operation in node.prefix
                 ],
@@ -715,12 +768,19 @@ def serialize_bm_pattern(
         ),
         context,
     )
+    fixed_skip_closed = _fixed_skip_context_is_exact(
+        build_bm_execution_program(
+            pattern, preparation=context.pattern_preparation if context else None
+        ),
+        context,
+    )
     operations = [
         _operation_ir(
             operation,
             context=context,
             pattern=pattern,
             snapshot_context=snapshot_closed,
+            fixed_skip_context=fixed_skip_closed,
         )
         for operation in semantic_pattern.operations
     ]

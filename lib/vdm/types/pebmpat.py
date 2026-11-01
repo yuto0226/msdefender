@@ -89,6 +89,7 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
         graph.get("has_rewrites")
         or end_tail_closed
         or graph.get("snapshot_finite_closed")
+        or graph.get("fixed_skip_finite_closed")
     ) and not (
         status == "confirmed_subset"
         and (graph.get("fidelity") == "conditional" or graph.get("class_choice_closed"))
@@ -115,6 +116,11 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
             *(
                 (("snapshot_finite_domain", graph["snapshot_finite_domain"]),)
                 if graph.get("snapshot_finite_closed")
+                else ()
+            ),
+            *(
+                (("fixed_skip_finite_domain", graph["fixed_skip_finite_domain"]),)
+                if graph.get("fixed_skip_finite_closed")
                 else ()
             ),
             *(
@@ -882,6 +888,41 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             )
         )
 
+    fixed_skip_closed = bool(
+        pattern_data is not None
+        and dict(serialized["execution_graph"].items).get("fixed_skip_finite_closed")
+    )
+    if fixed_skip_closed:
+        claims.append(
+            SemanticClaim(
+                id="pebmpat_buffer_fixed_skip",
+                scope="runtime_consumer",
+                statement=(
+                    "Primary raw07 selects the BUFFER inline handler before the "
+                    "general jump table. Modes1/3 consume the LE16 byte count "
+                    "with a bounds check before each cursor increment; zero "
+                    "continues without reading the subject and short input "
+                    "preserves partial cursor progress. Only the canonical flat "
+                    "literal/raw01/primary-raw07/END identity BUFFER domain with "
+                    "null backrefs/vector is qualified for same-start Boolean "
+                    "acceptance; its evaluator requires immutable finite backing "
+                    "and limit equal to supplied byte length. This closure derives "
+                    "from engine static control flow, not new original-engine "
+                    "execution. PE mapping, candidate selection and reporting "
+                    "remain outside scope."
+                ),
+                coverage="subset",
+                evidence_refs=("pebmpat_raw07_static_consumer",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Other grammars, capture lifecycle, mapped-zero modes "
+                        "and other readers are not qualified by this closure.",
+                    ),
+                ),
+            )
+        )
+
     if 0x13 in operation_raw_ids:
         claims.append(
             SemanticClaim(
@@ -974,6 +1015,33 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             supports=("pebmpat_wire_layout", "pebmpat_receiver_disposition"),
         ),
     ]
+    if fixed_skip_closed:
+        claim_evidence.append(
+            SemanticEvidence(
+                id="pebmpat_raw07_static_consumer",
+                axis="consumer",
+                kind="engine_static",
+                source_ref=(
+                    "mpengine 1.443.903.0 DLL SHA256 "
+                    "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                    "read-only PE descriptor and saved assembly anchors in "
+                    "local_raw07_fieldproof_v1.results.json. Offline independent "
+                    "arithmetic and same-invocation raw01 chunk comparisons "
+                    "validate the portable evaluator only; they are not new "
+                    "original-engine execution receipts. Existing four LOWCASE "
+                    "mode1 HSTR positives are limited supporting observations, "
+                    "without self-contained DLL/address/unpatched provenance."
+                ),
+                locator=(
+                    "BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60, size 0x2628; "
+                    "descriptor @ 0x180DBBAD5 = 07 04 00; direct dispatch "
+                    "@ 0x1800EDDEB..0x1800EDDEE; LE16 @ 0x1800EE2D3; "
+                    "zero/mode/checked byte loop @ 0x1800EE2ED..0x1800EE317; "
+                    "continuation @ 0x1800EE340..0x1800EE34D"
+                ),
+                supports=("pebmpat_buffer_fixed_skip",),
+            )
+        )
     if 0x13 in operation_raw_ids:
         claim_evidence.extend(
             (
