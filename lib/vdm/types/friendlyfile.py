@@ -168,6 +168,9 @@ def export_friendlyfile_sha256(parsed: FriendlyFileSha256) -> ArtifactExport:
             },
             "final_policy": None,
             "portable_candidate": semantic_json_to_data(_PORTABLE_CANDIDATE),
+            "ttl_attribute_recipe_profile": semantic_json_to_data(
+                build_friendly_ttl_recipe_profile()
+            ),
             "portable_allowlist": None,
             "standalone_detection": False,
             "limitations": [
@@ -240,6 +243,108 @@ def _recid_tail_semantics(tail: RecIdTail | None) -> JSONObject | None:
                 ),
             ),
             ("lookup_usage", "not_read"),
+        )
+    )
+
+
+def build_friendly_ttl_recipe_profile() -> JSONObject:
+    """Share a static contract; exporting it supplies no runtime TTL facts."""
+    return JSONObject(
+        (
+            ("representation", "friendlyfile.ttl_attribute_recipe.v1"),
+            ("evidence_tier", "engine_static"),
+            (
+                "helper_callable",
+                "lib.vdm.friendlyfile_ttl.project_signature_custom_ttl",
+            ),
+            (
+                "attribute_callable",
+                "lib.vdm.friendlyfile_ttl.project_friendly_ttl_attribute",
+            ),
+            ("cache_callable", "lib.vdm.friendlyfile_ttl.project_friendly_ttl_cache"),
+            ("helper_snapshot_type", "lib.vdm.friendlyfile_ttl.SignatureTtlSnapshot"),
+            (
+                "caller_snapshot_type",
+                "lib.vdm.friendlyfile_ttl.FriendlyTtlCallerSnapshot",
+            ),
+            (
+                "cache_snapshot_type",
+                "lib.vdm.friendlyfile_ttl.FriendlyTtlCacheSnapshot",
+            ),
+            ("helper_result_type", "lib.vdm.friendlyfile_ttl.SignatureTtlResult"),
+            (
+                "attribute_result_type",
+                "lib.vdm.friendlyfile_ttl.FriendlyTtlAttributeRequest",
+            ),
+            (
+                "cache_result_type",
+                "lib.vdm.friendlyfile_ttl.FriendlyTtlCacheProjection",
+            ),
+            (
+                "identity_and_epoch",
+                "signature identity is an explicit runtime reply+0x90 fact, never the A0 digest/tail; nested helper/caller snapshots must share identity and epoch; close-time snapshots are independent observations that may describe a later epoch, never synthesized from caller results",
+            ),
+            (
+                "helper_inputs",
+                "SignatureTtlSnapshot(epoch,signature_id,nid150_result:uint32,name_present,name_bytes,parsed_u64,crt_profile,locale_profile,timestamp_value); None means unknown, false/0 are explicit facts; no implicit defaults",
+            ),
+            (
+                "parser_contract",
+                "explicit parsed_u64 asserts original strtoull(name+1,NULL,0), crt_profile=mpengine.strtoull.base0 and opaque locale_profile in the same snapshot; no Python/ASCII parser or inferred parse result; CRT accepts signed/base0/prefix text and caller does not check errno/endptr",
+            ),
+            (
+                "custom_gate",
+                "only nid150_result==1, name_present and name_bytes starting '#' reach the parser result; parsed in [1,UINT64_MAX-1] returns u64(parsed*60); custom wrap0 does not consult fallback",
+            ),
+            (
+                "fallback",
+                "only known invalid custom branches consult timestamp_value: nonzero returns1440, zero returns0, missing stays unknown; timestamp presence is not an age/expiry calculation",
+            ),
+            (
+                "caller_profiles",
+                JSONArray(
+                    (
+                        "IsSignedFile.friendly_attribute_path",
+                        "IsSignedFile.cached_fast_return",
+                    )
+                ),
+            ),
+            (
+                "attribute_request",
+                "fresh friendly_attribute_path is an externally supplied reached block after the preceding MpMoacFriendlyAdd request; nonzero helper TTL requests MpMoacFriendlyAddTTL(value=u64 TTL); zero skips it; cached_fast_return does not call the helper and retains TTL=None",
+            ),
+            (
+                "setter_boundary",
+                "setter_result is an independent service outcome; request or even explicit setter success does not provide close-time attribute presence/value; existing attributes are not cleared by a skipped request",
+            ),
+            (
+                "cache_inputs",
+                "FriendlyTtlCacheSnapshot(epoch,signature_id,cachemgr_profile,ttl_attribute_present,ttl_attribute_value,entry_write_reached,entry_ttl_before,v2_filler_reached); CacheMgr.MoacFriendlyAdd.V2 requires explicit specialization and path reachability, including relevant outer gates/services",
+            ),
+            (
+                "entry_override",
+                "at explicit entry-write reachability, absent TTL attribute gives effective0; present attribute uses its observed u64; nonzero effective TTL overwrites entry+0x68 even if old value is unknown, zero preserves explicit entry_ttl_before; no constructor0 or persistent-cache lookup is assumed",
+            ),
+            (
+                "v2_event",
+                "only explicit V2 filler reachability with nonzero signature identity projects event_ttl_u32=low32(actual entry TTL); event code55 decimal (0x37); V1/host receiver/default-zero policy and callback success are not modeled",
+            ),
+            (
+                "width_counterexamples",
+                "parsed2^62 produces custom helper TTL0 without fallback; parsed2^30 produces nonzero helper TTL64424509440 but a V2 low32 value0 when that value actually reaches the entry",
+            ),
+            (
+                "result_contract",
+                "projected means source-derived local values/request recipe, unknown means required path facts are missing; FriendlyTtlSnapshotError rejects wrong types/widths, bool-as-uint, invalid provenance or cross-epoch/identity joins; no service or clock executes",
+            ),
+            ("unit", None),
+            ("expiry", None),
+            ("cache_success", None),
+            ("final_allow_or_bypass", None),
+            (
+                "reuse_boundary",
+                "a conditional friendly metadata recipe, not an allowlist, malicious IoC, resolved record match or final verdict; the existing full-UFS digest candidate remains separate; this static profile creates no default snapshots and calls no projector",
+            ),
         )
     )
 
@@ -379,6 +484,7 @@ def export_friendlyfile_sha256_semantics(
                 ),
             ),
             ("portable_candidate", _PORTABLE_CANDIDATE),
+            ("ttl_attribute_recipe_profile", build_friendly_ttl_recipe_profile()),
         )
     )
     return RuleSemantics(
@@ -398,6 +504,28 @@ def export_friendlyfile_sha256_semantics(
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            SemanticClaim(
+                id="friendlyfile_sha256_ttl_attribute_recipe",
+                scope="runtime_consumer",
+                statement=(
+                    "Explicit NID150/name/original-CRT parsed snapshots project custom "
+                    "u64 TTL multiplication or lazy timestamp-presence fallback. The "
+                    "observed IsSignedFile attribute block requests a nonzero TTL, while "
+                    "separate close-time CacheMgr/V2 snapshots project nonzero entry "
+                    "override and the actual entry field's low32 event value."
+                ),
+                coverage="subset",
+                evidence_refs=("friendlyfile_sha256_ttl_static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The A0 digest/tail does not supply identity, metadata or path "
+                        "facts. CRT parsing and all NID/attribute/cache services are "
+                        "external snapshots; TTL unit, expiry, zero-value host policy, "
+                        "cache success and final allow/bypass/verdict remain unknown.",
+                    ),
+                ),
+            ),
             SemanticClaim(
                 id="friendlyfile_sha256_wire_layout",
                 scope="wire_layout",
@@ -564,6 +692,26 @@ def export_friendlyfile_sha256_semantics(
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                id="friendlyfile_sha256_ttl_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                locator=(
+                    "GetSignatureCustomTTL@0x180222270/0x8E; "
+                    "GetSignatureTimeStamp@0x180224018/0x5C; "
+                    "strtoull@0x18094BAF8 and parse_integer@0x18094AFE4; "
+                    "IsSignedFile TTL call/request@0x1802D7C20/0x1802D7C4B; "
+                    "UfsNode::SyncPreClose TTL attribute read@0x1801DEDBC; "
+                    "CacheMgr vftable@0x180EDBF40+0x70 -> MoacFriendlyAdd@0x1800931C0; "
+                    "MOACEntryFriendly ctor@0x18009347C, "
+                    "FillCacheAddDataV2@0x180112580 low32 store@0x1801125B1; "
+                    "MOACManager::AddFile@0x180112850 event55 decimal dispatch@0x1801129E6; "
+                    "docs/signature/A0_friendly_ttl_next_private.md; "
+                    "saved static disassembly/machine-byte evidence only, no TTL service execution"
+                ),
+                supports=("friendlyfile_sha256_ttl_attribute_recipe",),
+            ),
             SemanticEvidence(
                 id="friendlyfile_sha256_native_candidate_test",
                 axis="engine_equivalent_test",
