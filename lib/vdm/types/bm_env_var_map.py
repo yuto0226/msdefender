@@ -181,8 +181,8 @@ def export_bm_env_var_map_semantics(parsed: BMEnvVarMap) -> RuleSemantics:
         ),
         SemanticIssue(
             "word_and_token_names_unknown",
-            "WORD roles are confirmed u16 selector keys in two maps and the audited "
-            "caller reads src_attribute+0x22; fixed value labels remain unresolved.",
+            "WORD roles are confirmed u16 selector keys in two maps and the named "
+            "callers read source/local+0x22; fixed value labels remain unresolved.",
         ),
         SemanticIssue(
             "candidate_expansion_runtime_dependent",
@@ -298,16 +298,17 @@ def export_bm_env_var_map_semantics(parsed: BMEnvVarMap) -> RuleSemantics:
                             ),
                             (
                                 "token_or_selector_meaning",
-                                "Audited main caller uses src_attribute+0x22 WORD; value labels unresolved; other variants not projected",
+                                "Named callers use source/local+0x22 WORD; Both uses actual post-initial key, not an assumed4049; fixed value labels unresolved",
                             ),
                             (
                                 "audited_caller_scope",
-                                "Only tokenized_path_1802C1B10: negative lookup HRESULT -> slot+0x20 fallback; success outA0 -> skip; success outA nonzero -> slot+0x18 with &outA. outB is not consumed after lookup. Other variants unprojected.",
+                                "Named profiles remain distinct: main1802C1B10 gates A, Second180063268 gates B; Both1802EFA80 requests initial detection before gates and two ordered virtual calls without zero-mask gates. IEnvMatch candidates and callee ref effects remain external.",
                             ),
                         )
                     ),
                 ),
                 ("mapping_value_recipe_profile", _mapping_value_profile(parsed)),
+                ("additional_caller_recipe_profile", _additional_callers_profile()),
             )
         ),
         evidence=(
@@ -322,6 +323,19 @@ def export_bm_env_var_map_semantics(parsed: BMEnvVarMap) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=issues,
         claims=(
+            SemanticClaim(
+                "bm-env-additional-caller-plans",
+                "runtime_consumer",
+                "Named Second/Both caller profiles project independent mask routing, phase-bound observations and ordered partial source writes. Second copies48 once then writes+0x10 pointer/+0x18 WORD0; Both requests initial detection first, rereads post-call key and plans A-outer/B-inner pointer writes without rebuilding holes or later frames.",
+                "subset",
+                ("bm-env-additional-callers-static",),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "IEnvMatch and general detection are requests, not executed services. Actual vector normal return/transfer, pointers and post-initial phase facts are explicit. Other source/ref fields and final verdict remain unresolved.",
+                    ),
+                ),
+            ),
             SemanticClaim(
                 "bm-env-alias-instruction-profile",
                 "receiver_transform",
@@ -351,13 +365,13 @@ def export_bm_env_var_map_semantics(parsed: BMEnvVarMap) -> RuleSemantics:
             SemanticClaim(
                 "bm-env-candidate-expansion",
                 "runtime_consumer",
-                "For the audited main caller under its feature/GetEnvMatch gates, shared-map lookup conditionally selects fallback, skip or masked IEnvMatch requests; concrete candidate string production remains external.",
+                "Three named caller profiles separately project main A gating, Second B gating and Both initial detection followed by ordered pair requests; concrete IEnvMatch candidate string production remains external.",
                 "subset",
-                ("bm-env-consumer",),
+                ("bm-env-consumer", "bm-env-additional-callers-static"),
                 (
                     SemanticUnknown(
                         "runtime_consumer",
-                        "Fixed WORD selector labels and IEnvMatch candidate-generation backends remain unresolved; only the named tokenized_path_1802C1B10 routing is projected, not the other two variants.",
+                        "Fixed WORD selector labels, IEnvMatch candidate backends and general detection ref side effects remain unresolved; the three named routing/partial-write profiles are conditional on their own normal-return and phase facts, not complete frame projections.",
                     ),
                 ),
             ),
@@ -389,6 +403,13 @@ def export_bm_env_var_map_semantics(parsed: BMEnvVarMap) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                "bm-env-additional-callers-static",
+                "consumer",
+                "engine_static",
+                "mpengine1.443.903.0; SecondAttribute @0x180063268/627B; BothAttributes @0x1802EFA80/752B; saved primary tests/local_bm_env_additional_callers_primary_v1.json SHA256 b41c201124dd04afb32547e4e84cb50ab45b016a6413fa6daa556ad89fb34581; docs/signature/BM_ENV_VAR_MAP_additional_caller_contract_private.md; DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; source contract only, not caller instruction equivalence",
+                ("bm-env-additional-caller-plans", "bm-env-candidate-expansion"),
+            ),
             SemanticEvidence(
                 "bm-env-alias-instruction-test",
                 "receiver",
@@ -534,9 +555,127 @@ def _mapping_value_profile(parsed: BMEnvVarMap) -> JSONObject:
                     "Only tokenized_path_1802C1B10; feature BYTE181272CD8=0 or negative GetEnvMatch HRESULT "
                     "skips query. Priors are0. Returned lookup HRESULT<0 -> vslot+20 fallback without mask; "
                     "HRESULT>=0/outA0 skips, nonzero requests vslot+18 r9=&outA; outB unused. Pure router accepts "
-                    "explicit returned values; model-composed routing is conditional on normal return. Other two "
-                    "variants/IEnvMatch wide paths/general detection/report/final verdict remain external."
+                    "explicit returned values; model-composed routing is conditional on normal return. This "
+                    "entrypoint is main-only; named Second/Both profiles are exposed separately by bm_env_callers. "
+                    "IEnvMatch wide paths/general detection ref effects/report/final verdict remain external."
                 ),
+            ),
+        )
+    )
+
+
+def _additional_callers_profile() -> JSONObject:
+    return JSONObject(
+        (
+            ("representation", "bm-env.additional-callers.partial-write-recipes.v1"),
+            ("second_projector", "lib.vdm.bm_env_callers.project_bm_env_second_call"),
+            (
+                "second_returned_router",
+                "lib.vdm.bm_env_callers.route_bm_env_second_lookup",
+            ),
+            ("both_projector", "lib.vdm.bm_env_callers.project_bm_env_both_call"),
+            ("both_returned_router", "lib.vdm.bm_env_callers.route_bm_env_both_lookup"),
+            ("binding_type", "lib.vdm.bm_env_callers.BMEnvCallerBinding"),
+            ("query_phase_type", "lib.vdm.bm_env_callers.BMEnvQueryPhase"),
+            ("returned_lookup_type", "lib.vdm.bm_env_callers.BMEnvReturnedLookup"),
+            ("second_snapshot_type", "lib.vdm.bm_env_callers.BMEnvSecondSnapshot"),
+            ("both_snapshot_type", "lib.vdm.bm_env_callers.BMEnvBothSnapshot"),
+            ("vector_type", "lib.vdm.bm_env_callers.BMEnvVectorObservation"),
+            ("candidate_type", "lib.vdm.bm_env_callers.BMEnvCandidate"),
+            (
+                "copy_observation_type",
+                "lib.vdm.bm_env_callers.BMEnvSourceCopyObservation",
+            ),
+            ("runtime_inputs_resolved", False),
+            ("services_executed", False),
+            ("complete_frames_materialized", False),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            (
+                "bindings",
+                (
+                    "Invocation ID/profile/source identity bind entry and later phases; phase epoch may differ. "
+                    "Returned lookup must bind exact query phase/key; map composition uses actual phase epoch and zero "
+                    "priors. Known returned/projected conflicts reject. Both requires explicit initial normal return "
+                    "then post-initial feature/interface/key/maps, never constructor4049 as missing key."
+                ),
+            ),
+            (
+                "second",
+                JSONObject(
+                    (
+                        ("profile", "tokenized_path_second_180063268"),
+                        ("caller_va", 0x180063268),
+                        (
+                            "routing",
+                            "Negative signed32 lookup HRESULT ->slot+0x20 without mask; nonnegative B0 skips, Bnonzero slot+0x18(&B); A is not the skip predicate.",
+                        ),
+                        (
+                            "copy",
+                            "Copy exactly48 bytes once after virtual normal return/move/tidy, before empty-vector check. Unknown/False completion leaves conditional CopyPlan(None), without reading unreached copy facts.",
+                        ),
+                        (
+                            "candidate_writes",
+                            "Each ordered candidate writes c_str pointer to+0x10 QWORD and0 to+0x18 WORD then TestForDetection(extra,false); later source/ref fields are not reset or reconstructed.",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "both",
+                JSONObject(
+                    (
+                        ("profile", "tokenized_path_both_1802EFA80"),
+                        ("caller_va", 0x1802EFA80),
+                        (
+                            "selector",
+                            "Query reads actual post-initial local+0x22 WORD; incoming R9W argument is unused by this body, and constructor4049 is not a missing-key default.",
+                        ),
+                        (
+                            "initial",
+                            "Unconditional initial TestForDetection(extra,false) before feature gate; initial call completion is separate. Constructor writes only listed fields, leaves holes unknown.",
+                        ),
+                        (
+                            "constructor_writes",
+                            JSONArray(
+                                tuple(
+                                    JSONObject(
+                                        (
+                                            ("offset", offset),
+                                            ("width", width),
+                                            ("value_source", value),
+                                        )
+                                    )
+                                    for offset, width, value in (
+                                        (0, 8, "preserved inputA"),
+                                        (8, 4, "0x00400000"),
+                                        (16, 8, "preserved inputB"),
+                                        (24, 4, "0x00400000"),
+                                        (32, 1, "0"),
+                                        (34, 2, "0x4049 initial only"),
+                                        (40, 8, "0"),
+                                    )
+                                )
+                            ),
+                        ),
+                        (
+                            "routing",
+                            "After initial normal return and post-phase gates: negative lookup ->slot+0x20(inputA) then+0x20(inputB); nonnegative ->two slot+0x18 requests even if masks0/unknown. Virtual inputs use preserved entry pointers, not post-call source pointer fields.",
+                        ),
+                        (
+                            "request_completion",
+                            "B request is planned before any A-empty test and is conditional on A normal return/transfer/tidy, not on an invented virtual HRESULT/Boolean or nonempty list. Actual completion and vector facts are independent snapshots bound to exact request ordinal/role/arguments.",
+                        ),
+                        (
+                            "candidate_writes",
+                            "After both transfers, Cartesian Aouter/Binner; empty either list gives no item reads. Each pair only writes pointers+0/+0x10 then TestForDetection(extra,false). No WORD clearing, constructor reset or full later frame inference.",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "unknowns",
+                "Missing facts stay unresolved; unknown pointers remain None with symbolic sources, not0. Requests/field-write plans are conditional, not executed services or successful detections. Actual post-call ref fields/full frames, backend candidates/report/final verdict remain external.",
             ),
         )
     )
