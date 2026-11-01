@@ -10,6 +10,7 @@ from typing import Literal
 
 from .bm import (
     BmAlternativeProgram,
+    BmClass,
     BmLiteral,
     BmPattern,
     BmSemanticOperation,
@@ -72,6 +73,60 @@ class BmExecutionProgram:
             for node in self.invocations
             for operation in node.prefix
         )
+
+    def identity_class_choice_closed(
+        self,
+        *,
+        reader_kind: str | None,
+        identity_translation: bool,
+        worker_modes: tuple[int, ...] | None,
+        capture_enabled: bool | None,
+        matches_vector_supplied: bool | None,
+    ) -> bool:
+        """Close primary classes only in the proven fresh-invocation domain.
+
+        raw04 consumes a fixed class span; raw05 retries the complete suffix
+        on independent reader copies. Neither uses the invocation-entry reader
+        snapshot. With null backrefs, concat and child Boolean OR preserve
+        their forward languages. Resource failure and observable cursor/output
+        effects are excluded; an optional valid scalar is neutral.
+        """
+        if not (
+            self.complete
+            and self.profile == "1.443.903.0"
+            and self.preparation == "identity"
+            and reader_kind == "BUFFER"
+            and identity_translation
+            and worker_modes in ((1,), (3,), (1, 3))
+            and all(type(mode) is int for mode in worker_modes)
+            and capture_enabled is False
+            and matches_vector_supplied is False
+            and any(node.rewrite is not None for node in self.invocations)
+            and any(
+                isinstance(operation, BmClass)
+                for node in self.invocations
+                for operation in node.prefix
+            )
+        ):
+            return False
+        for node in self.invocations:
+            # Rewrites can join bytes into a new physical capture marker.
+            if not node.raw.endswith(b"\x90\x00") or b"\x90\x1b" in node.raw:
+                return False
+            for operation in node.prefix:
+                if isinstance(operation, BmLiteral) or operation.raw[:2] in (
+                    b"\x90\x01",
+                    b"\x90\x02",
+                ):
+                    continue
+                if not (
+                    isinstance(operation, BmClass)
+                    and operation.token.raw_id in (0x04, 0x05)
+                    and operation.token.dispatch_id == operation.token.raw_id
+                    and operation.token.descriptor_flags == 0x02
+                ):
+                    return False
+        return True
 
     @property
     def root_end_tail_closed(self) -> bool:

@@ -86,7 +86,8 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
         and graph.get("fidelity") == "exact"
     )
     if (graph.get("has_rewrites") or end_tail_closed) and not (
-        status == "confirmed_subset" and graph.get("fidelity") == "conditional"
+        status == "confirmed_subset"
+        and (graph.get("fidelity") == "conditional" or graph.get("class_choice_closed"))
     ):
         graph_fidelity = graph.get("fidelity")
         fidelity_basis = "execution_graph"

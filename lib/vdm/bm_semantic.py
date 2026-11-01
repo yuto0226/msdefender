@@ -137,6 +137,7 @@ def _operation_ir(
     *,
     context: BmSemanticContext | None = None,
     pattern: BmPattern | None = None,
+    class_choice_context: bool = False,
 ) -> dict[str, object]:
     raw = operation.raw
     fidelity: OperationFidelity = "exact"
@@ -214,7 +215,10 @@ def _operation_ir(
             and token.raw_id in (0x04, 0x05)
             and token.dispatch_id == token.raw_id
             and token.descriptor_flags == 0x02
-            and _primary_class_context_is_exact(context, pattern)
+            and (
+                _primary_class_context_is_exact(context, pattern)
+                or class_choice_context
+            )
         ):
             assert context is not None
             accepted = raw_04_05_byte_set(
@@ -255,14 +259,14 @@ def _operation_ir(
                     failed_suffix_reader_committed=False,
                     scope=(
                         "guarded BUFFER/identity mode1/3 Boolean acceptance; outputs excluded"
-                        if context.worker_modes == (1, 3)
+                        if context.worker_modes == (1, 3) or class_choice_context
                         else "BUFFER/mode1/capture disabled Boolean acceptance; offsets excluded"
                     ),
                     caller_address="0x1800EE352",
                     helper_address="0x1800F04C0",
                     engine_evidence=(
                         "primary raw05 caller; complete worker/helper mode dataflow and 3580 identity/null-output mode1/3 differential pairs"
-                        if context.worker_modes == (1, 3)
+                        if context.worker_modes == (1, 3) or class_choice_context
                         else "primary raw05 caller and complete original-worker differential"
                     ),
                 )
@@ -538,11 +542,18 @@ def _execution_graph(
         and context.matches_vector_supplied is False
         and b"\x90\x1b" not in pattern.raw
     )
+    class_choice_closed = context is not None and program.identity_class_choice_closed(
+        reader_kind=context.reader_kind,
+        identity_translation=context.translation == "identity",
+        worker_modes=context.worker_modes,
+        capture_enabled=context.capture_enabled,
+        matches_vector_supplied=context.matches_vector_supplied,
+    )
     fidelity = (
         "unsupported"
         if not program.complete
         else "exact"
-        if qualified and program.primitive_closed
+        if qualified and (program.primitive_closed or class_choice_closed)
         else "conditional"
     )
     return {
@@ -553,6 +564,7 @@ def _execution_graph(
         "structure_complete": program.complete,
         "fidelity": fidelity,
         "has_rewrites": any(node.rewrite is not None for node in program.invocations),
+        **({"class_choice_closed": True} if class_choice_closed else {}),
         **({"root_end_tail_closed": True} if program.root_end_tail_closed else {}),
         "scope": "same-start Boolean acceptance; valid disjoint backing and scalar output storage, and successful temporary allocation; child scratch is local and nonnull; outer scratch may be null; null backrefs and matches vector; scalar output may be null or nonnull; excludes first-success cursor, match end and reporting",
         "issues": list(program.issues),
@@ -565,6 +577,7 @@ def _execution_graph(
                         operation,
                         context=context,
                         pattern=node_pattern,
+                        class_choice_context=class_choice_closed,
                     )
                     for operation in node.prefix
                 ],
