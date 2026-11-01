@@ -32,6 +32,7 @@ from ..raw_ssl_cert import (
     compile_raw_ssl_byte_pattern,
     raw_ssl_yara_rhs,
 )
+from ..vfs_link import VfsLinkProjection, project_vfs_link
 
 NDAT_TYPE: Final = 0xA9
 PREVIEW_SIZE: Final = 16
@@ -47,6 +48,140 @@ class NdatPayload:
     callback_index: int
     record_id_suffix_raw: bytes | None
     trailing_raw: bytes
+
+
+class UnsupportedNdatVfsLink(ValueError):
+    """The NDAT record is not callback6 VFS linkage metadata."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatVfsLink:
+    """Raw-authoritative linkage projection, not a completed map insertion."""
+
+    raw: bytes
+    counted_data: bytes
+    projection: VfsLinkProjection
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+
+
+def project_ndat_vfs_link(parsed: NdatPayload) -> NdatVfsLink:
+    """Reparse callback6; unlike pattern callbacks, no last-NUL gate applies."""
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 6:
+        raise UnsupportedNdatVfsLink("requires callback decimal6 (0x06)")
+    return NdatVfsLink(
+        parsed.raw,
+        parsed.data_raw,
+        project_vfs_link(parsed.data_raw, parsed.data_length),
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _vfs_link_manifest(parsed: NdatPayload) -> JSONObject:
+    link = project_ndat_vfs_link(parsed)
+    p = link.projection
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.vfs-link-metadata.v1"),
+            ("kind", "engine_vfs_linkage_metadata_not_ioc"),
+            ("counted_data_hex", link.counted_data.hex()),
+            ("delimiter_offset", p.delimiter_offset),
+            ("registration_eligible", p.registration_eligible),
+            ("skip_reason", p.skip_reason),
+            (
+                "source_wchar_cstring_hex",
+                None if p.source_cstring is None else p.source_cstring.hex(),
+            ),
+            (
+                "target_wchar_cstring_hex",
+                None if p.target_cstring is None else p.target_cstring.hex(),
+            ),
+            ("crc_key_u32", p.source_key),
+            (
+                "record_name_raw_hex",
+                None
+                if link.record_id_suffix_raw is None
+                else link.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", link.trailing_raw.hex()),
+            ("last_nul_required", False),
+            ("runtime_recid_used_by_callback", False),
+            ("callback_return", None),
+            ("map_insertion_completed", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            (
+                "recipe",
+                JSONObject(
+                    (
+                        ("projector", "lib.vdm.types.ndat.project_ndat_vfs_link"),
+                        ("model_type", "lib.vdm.types.ndat.NdatVfsLink"),
+                        (
+                            "unsupported_type",
+                            "lib.vdm.types.ndat.UnsupportedNdatVfsLink",
+                        ),
+                        ("pair_projector", "lib.vdm.vfs_link.project_vfs_link"),
+                        ("projection_type", "lib.vdm.vfs_link.VfsLinkProjection"),
+                        ("crc_callable", "lib.vdm.vfs_link.crc_upper_string_w"),
+                        ("snapshot_type", "lib.vdm.vfs_link.VfsRedirectSnapshot"),
+                        ("entry_type", "lib.vdm.vfs_link.VfsRedirectEntry"),
+                        ("lookup", "lib.vdm.vfs_link.VfsRedirectSnapshot.lookup"),
+                        ("state_error_type", "lib.vdm.vfs_link.UnsupportedVfsLink"),
+                        (
+                            "copy",
+                            "first counted >; bounded first-NUL copies; signed byte-to-WCHAR; no unescape/normalization",
+                        ),
+                        (
+                            "crc",
+                            "CRCUpperStringW seedFFFFFFFF, ASCII00xx a-z uppercase, low/high bytes, no final XOR",
+                        ),
+                        (
+                            "runtime_order",
+                            "explicit successful runtime insertion order and active initial state required; wire arrival is not established runtime order",
+                        ),
+                        (
+                            "lookup_identity",
+                            "CRC DWORD only, first key wins; non-NULL empty target is distinct from miss",
+                        ),
+                        (
+                            "query",
+                            "actual selected WCHAR CString; VFS normalization/current directory/existence services external",
+                        ),
+                        (
+                            "native_scope",
+                            "original callback/map/CRC/lookup with owned object-store services; not full object storage or whole linked-exists chain",
+                        ),
+                        (
+                            "unknown",
+                            "allocation/exception partial state, reset/epoch/alias writers, complete VFS and final disposition",
+                        ),
+                    )
+                ),
+            ),
+        )
+    )
+
+
+def _export_vfs_link(parsed: NdatPayload) -> ArtifactExport:
+    link = project_ndat_vfs_link(parsed)
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("vfs-link-data.bin", "binary", link.counted_data),
+            Artifact(
+                "vfs-link-metadata.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_vfs_link_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode("utf-8")
+                + b"\n",
+            ),
+        ),
+    )
 
 
 class UnsupportedNdatHttpUrlPattern(ValueError):
@@ -1362,8 +1497,10 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 
 
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
-    """Export supported NDAT pattern inputs with their distinct backend contracts."""
+    """Export supported NDAT pattern inputs and linkage metadata."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 6:
+        return _export_vfs_link(parsed)
     if parsed.callback_index == 1:
         return _export_vbasic_path_pattern(parsed)
     if parsed.callback_index == 10:
@@ -1570,10 +1707,34 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
     if parsed.trailing_raw:
         rows.append(("ignored_trailing_length", f"{len(parsed.trailing_raw)} B"))
 
+    link_rows = ()
+    if parsed.callback_index == 6:
+        p = project_ndat_vfs_link(parsed).projection
+        link_rows = (
+            (
+                "source",
+                repr(p.source_cstring[:-2].decode("utf-16le"))
+                if p.source_cstring is not None
+                else "not selected",
+            ),
+            (
+                "target",
+                repr(p.target_cstring[:-2].decode("utf-16le"))
+                if p.target_cstring is not None
+                else "not selected",
+            ),
+            (
+                "registration",
+                "eligible; runtime insertion external"
+                if p.registration_eligible
+                else p.skip_reason,
+            ),
+        )
     return FormatResult(
         sections=(
             DisplaySection("NDAT Metadata", rows=tuple(rows)),
             DisplaySection("NDAT Data", rows=_preview_rows(parsed.data_raw)),
+            *((DisplaySection("VFS Link", rows=link_rows),) if link_rows else ()),
         )
     )
 
@@ -1613,6 +1774,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     has_raw_body_consumer = parsed.callback_index == 19
     has_pdb_path_consumer = parsed.callback_index == 10
     has_vbasic_path_consumer = parsed.callback_index == 1
+    has_vfs_link_consumer = parsed.callback_index == 6
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
@@ -1628,10 +1790,19 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         if has_pdb_path_consumer
         else "boost_w32_vbasic_path_pattern_ingest_and_projectinfo_utf8_search"
         if has_vbasic_path_consumer
+        else "crc_keyed_vfs_redirect_metadata"
+        if has_vfs_link_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_vfs_link_consumer:
+        issues.append(
+            SemanticIssue(
+                "vfs_link_runtime_map_order_required",
+                "Pair eligibility is not callback success or completed insertion; active map history, object-store resources and query normalization remain external. This is linkage metadata, not an IoC.",
+            )
+        )
     if has_vbasic_path_consumer:
         issues.append(
             SemanticIssue(
@@ -1817,6 +1988,11 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
                 *(
+                    (("vfs_link", _vfs_link_manifest(parsed)),)
+                    if has_vfs_link_consumer
+                    else ()
+                ),
+                *(
                     (("vbasic_path_pattern", _vbasic_path_manifest(parsed)),)
                     if has_vbasic_path_consumer
                     else (("pdb_path_pattern", _pdb_path_manifest(parsed)),)
@@ -1902,6 +2078,25 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-vfs-link-metadata",
+                        "runtime_consumer",
+                        "Callback6 projects the counted first-> pair via bounded copies and signed-byte WCHAR widening, without terminal-NUL requirement or unescaping. Four identical native insertion attempts use CRCUpperStringW as the sole key; the successful map keeps the first value. RuntimeRecID is unused. pe_getvfslink returns the target pointer; linkedVfsFileExists checks original existence first, then normalization and non-NULL redirect presence without rechecking the target.",
+                        "subset",
+                        ("ndat-vfs-link-static", "ndat-vfs-link-native"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Portable pair eligibility is not callback success or completed insertion. Successful runtime order/initial map, real object storage, allocation/exception partial state, normalization/current directory, reset/alias writers and full VFS remain external. CRC collisions and the complete linked-exists chain are static attribution, not covered by the bounded native fixtures. This is linkage metadata, not a detection/allowlist IoC or final verdict.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_vfs_link_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -2148,6 +2343,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     if has_pdb_path_consumer
                     else "The VBProjectInfo/parser-field UTF8 true-query and pattern contract are exported separately; low-byte recovery is not a regex subject and complete loader/reporting policy remain external."
                     if has_vbasic_path_consumer
+                    else "The counted VFS redirect pair and CRC-keyed map contract are exported separately; successful runtime insertion order and full VFS services remain external."
+                    if has_vfs_link_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -2180,6 +2377,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             if has_pdb_path_consumer
                             else "Original VB/PE mapping/version/parser and worker execution, native resources, Boost traits and ShouldContinueScanning/reporting remain external."
                             if has_vbasic_path_consumer
+                            else "Actual map history/epoch, resource failures, query normalization and complete VFS effects remain external."
+                            if has_vfs_link_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -2251,6 +2450,28 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-vfs-link-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine1.443.903.0",
+                        ("ndat-vfs-link-metadata",),
+                        "VdllNdatVfsLinkCallback180429B00/287 -> CRCUpperStringW180704FE0/8F, kpushobject(flags0)/kpopobject and _Emplace180429D88/10D; g_Redirects1812748B8. pe_getvfslink18034B9A4/6C; linkedVfsFileExists18034C764/99 -> VFS_NormalisePath1800C2C60/5E4. docs/mpengine.dll/1.443.903.0/ndat_vfs_link_contract_private.md. Distinct-source CRC collision identity and linked-exists call-chain behavior are static only.",
+                    ),
+                    SemanticEvidence(
+                        "ndat-vfs-link-native",
+                        "consumer",
+                        "engine_runtime",
+                        "Original host-DLL callback/map/CRC/query with object-store services; separate normalization controls",
+                        ("ndat-vfs-link-metadata",),
+                        "tests/local_cb6_native_v1.py SHA256 3e8f1503ee9e4d237e7767522965efef202016d546715ad6e2608f26ef705bfb; manifest5a5698db3020865b78185f56e63af2693fdc03b61e10433ef3e6a4feb287d8e6; results e6b19f62258947aa410b6484bb55136316f2b662aa3acfe7c454dc46efd14b85: 19 isolated children, 18 callback fixtures plus CRC/normalizer child. Owned kpush/kpop storage seams; global pointer restored, patches isolated by child exit, not full DLL restore/PC or nonvolatile tracing. No allocation failure, multikey tree or complete linked-exists execution. Offline current bridges: tests/local_vfs_link_bridge.py SHA256 e6b2338c82e9c1ed5d16fd196d303df17513fe30b1e28ef08fa5459a94c57493; tests/local_ndat_vfs_link_bridge.py SHA256 c205d5d4be890fba9cf88f174cc276910f7622b1c768da1179d97db179a6da1f.",
+                    ),
+                )
+                if has_vfs_link_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
