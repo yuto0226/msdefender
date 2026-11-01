@@ -21,6 +21,7 @@ from .bm import (
     parse_bm_alternative_program,
     raw_04_05_byte_set,
 )
+from .bm_program import build_bm_execution_program
 from .core import JSONArray, JSONObject, SemanticIssue
 
 
@@ -521,6 +522,83 @@ def _program_structure(pattern: BmPattern) -> dict[str, object]:
     }
 
 
+def _execution_graph(
+    pattern: BmPattern, context: BmSemanticContext | None
+) -> dict[str, object]:
+    program = build_bm_execution_program(
+        pattern, preparation=context.pattern_preparation if context else None
+    )
+    qualified = bool(
+        context is not None
+        and context.reader_kind == "BUFFER"
+        and context.translation == "identity"
+        and context.pattern_preparation == "identity"
+        and context.worker_modes in ((1,), (3,), (1, 3))
+        and context.capture_enabled is False
+        and context.match_offset_output_supplied is False
+        and context.matches_vector_supplied is False
+        and b"\x90\x1b" not in pattern.raw
+    )
+    fidelity = (
+        "unsupported"
+        if not program.complete
+        else "exact"
+        if qualified and program.primitive_closed
+        else "conditional"
+    )
+    return {
+        "view": "fresh_worker_invocation_dag",
+        "profile": program.profile,
+        "pattern_preparation": program.preparation,
+        "root": program.root,
+        "structure_complete": program.complete,
+        "fidelity": fidelity,
+        "has_rewrites": any(node.rewrite is not None for node in program.invocations),
+        "scope": "same-start Boolean acceptance; valid backing and successful temporary allocation; child scratch is local and nonnull; outer scratch may be null; null backrefs and external outputs; excludes first-success cursor, match end and reporting",
+        "issues": list(program.issues),
+        "invocations": [
+            {
+                "id": node.id,
+                "raw_hex": node.raw.hex(),
+                "prefix": [
+                    _operation_ir(
+                        operation,
+                        context=context,
+                        pattern=node_pattern,
+                    )
+                    for operation in node.prefix
+                ],
+                "terminal": node.terminal,
+                "issue": node.issue,
+                "ignored_after_end_hex": node.ignored_after_end.hex(),
+                "rewrite": None
+                if node.rewrite is None
+                else {
+                    "offset": node.rewrite.offset,
+                    "raw_id": node.rewrite.raw_id,
+                    "descriptor_length": node.rewrite.descriptor_length,
+                    "widths": list(node.rewrite.widths),
+                    "reader_on_failure": "parent unchanged",
+                    "reader_on_success": "adopt successful child scratch",
+                    "choice_order": "first success",
+                    "choices": [
+                        {
+                            "index": edge.index,
+                            "source_span": list(edge.source_span),
+                            "suffix_span": list(edge.suffix_span),
+                            "invocation": edge.invocation,
+                            "fresh_invocation": True,
+                        }
+                        for edge in node.choices
+                    ],
+                },
+            }
+            for node in program.invocations
+            for node_pattern in (decode_bm_pattern(node.raw, profile=program.profile),)
+        ],
+    }
+
+
 def serialize_bm_pattern(
     pattern: BmPattern,
     *,
@@ -599,6 +677,7 @@ def serialize_bm_pattern(
             "ended": pattern.ended,
             "operations": operations,
             "program_structure": program_structure,
+            "execution_graph": _execution_graph(pattern, context),
             "remaining_raw": remaining,
             "issues": issues,
         }
