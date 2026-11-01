@@ -310,6 +310,71 @@ class BmControlFlow(BmOperation):
 
 
 @dataclass(frozen=True, slots=True)
+class BmRelativeInstructionTransition:
+    """BUFFER raw13 decode state, before the recursive suffix is executed."""
+
+    suffix_reachable: bool
+    cursor: int
+    displacement: int | None = None
+    instruction_end: int | None = None
+
+
+def _buffer_relative_instruction_target(instruction_end: int, displacement: int) -> int:
+    # NEG ebx overflows for INT32_MIN, then MOVSXD keeps it negative before SUB.
+    delta = 0x80000000 if displacement == -0x80000000 else displacement
+    return (instruction_end + delta) & ((1 << 64) - 1)
+
+
+def buffer_relative_instruction_transition(
+    subject: bytes | bytearray | memoryview, cursor: int
+) -> BmRelativeInstructionTransition:
+    """Decode raw13 from unmodified BUFFER bytes with null backrefs, modes1/3.
+
+    No translation applies to opcode/displacement reads. A failed opcode or
+    truncated displacement preserves the bytes already consumed. A decoded
+    target always reaches the suffix, even beyond EOF or after u64 underflow;
+    suffix acceptance and its child-reader commit are separate operations.
+    The subject is snapshotted with bytes(subject); the declared size is the
+    byte length of that snapshot, including for typed or strided memoryviews.
+    independent declared sizes/backing storage are outside this model. Opcode,
+    rel8 and rel32 reads follow the worker's explicit size gates. This models
+    raw13 only, not the shared raw18 handler or captures.
+    """
+    if type(cursor) is not int or not 0 <= cursor < 1 << 64:
+        raise ValueError("raw13 requires a u64 cursor")
+    if not isinstance(subject, (bytes, bytearray, memoryview)):
+        raise TypeError("raw13 requires supplied bytes-like subject storage")
+    source = bytes(subject)
+    size = len(source)
+    if cursor >= size:
+        return BmRelativeInstructionTransition(False, cursor)
+    opcode = source[cursor]
+    cursor += 1
+    if opcode == 0x0F:
+        if cursor >= size:
+            return BmRelativeInstructionTransition(False, cursor)
+        opcode = source[cursor]
+        cursor += 1
+        if not 0x80 <= opcode <= 0x8F:
+            return BmRelativeInstructionTransition(False, cursor)
+        width = 4
+    elif 0x70 <= opcode <= 0x7F or 0xE0 <= opcode <= 0xE3 or opcode == 0xEB:
+        width = 1
+    elif opcode in (0xE8, 0xE9):
+        width = 4
+    else:
+        return BmRelativeInstructionTransition(False, cursor)
+    if size - cursor < width:
+        return BmRelativeInstructionTransition(False, cursor)
+    displacement = int.from_bytes(
+        source[cursor : cursor + width], "little", signed=True
+    )
+    instruction_end = cursor + width
+    target = _buffer_relative_instruction_target(instruction_end, displacement)
+    return BmRelativeInstructionTransition(True, target, displacement, instruction_end)
+
+
+@dataclass(frozen=True, slots=True)
 class BmOpaque(BmOperation):
     token: BmToken
 
