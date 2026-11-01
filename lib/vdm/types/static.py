@@ -22,6 +22,7 @@ from ..core import (
     semantic_json_to_data,
 )
 from ..recid import RecIdTail, parse_recid_tail
+from ..static_runtime import static_runtime_recipes
 
 STATIC_TYPE: Final = 0x67
 HEADER_SIZE: Final = 18
@@ -389,6 +390,7 @@ def _stage_profile(parsed: StaticPayload) -> JSONObject:
                         else None
                     ),
                     long_target_post_hash_gate=obj(
+                        valid_signed_meaning="IsValidSigned policy-helper result; fixed IsSignedFile(reply,false,&local_id,&local_sha1,true,false,true,true); cache/friendly/trust paths; no provider offset/size; not hash-slice Authenticode validity",
                         when=expr("greater_than", "provider_size", "record_file_size"),
                         predicate=expr(
                             "or", "threat_exception_name", expr("not", "valid_signed")
@@ -491,6 +493,7 @@ def export_static(parsed: StaticPayload) -> ArtifactExport:
     manifest = {
         "format": "vdm.static.record.v2",
         "stage_profile": semantic_json_to_data(_stage_profile(parsed)),
+        "runtime_recipes": semantic_json_to_data(static_runtime_recipes()),
         "record": {
             "type": STATIC_TYPE,
             "type_hex": f"0x{STATIC_TYPE:02X}",
@@ -592,6 +595,45 @@ def _recid_tail_semantics(tail: RecIdTail | None, offset: int) -> JSONObject | N
 
 def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
     """Export the confirmed STATIC receiver and staged hash-match subset."""
+    runtime_recipe_claim = SemanticClaim(
+        id="static_runtime_input_recipes",
+        scope="runtime_consumer",
+        statement=(
+            "STATIC runtime recipes describe externally selected troj_scan_entry or "
+            "rpf_check_static provider ranges and ordered narrow-CString CFG calls "
+            "projected only from an explicitly coherent immutable snapshot; they "
+            "do not identify the caller or resolve runtime inputs from a record."
+        ),
+        coverage="subset",
+        evidence_refs=("static_runtime_recipe_sources",),
+        unknowns=(
+            SemanticUnknown(
+                "runtime_consumer",
+                "Actual caller, reply_size writer, UFS identity, first-page buffer producer, config/state/attribute producers and same-epoch provenance remain external.",
+            ),
+            SemanticUnknown(
+                "detection_predicate",
+                "IsValidSigned is a reply policy-helper result with cache/friendly/trust paths, not provider-slice Authenticode validity; trust policy remains external.",
+            ),
+            SemanticUnknown(
+                "final_verdict",
+                "Symbolic recipes do not establish a record-local match or final scan verdict.",
+            ),
+        ),
+    )
+    runtime_recipe_evidence = SemanticEvidence(
+        id="static_runtime_recipe_sources",
+        axis="consumer",
+        kind="engine_static",
+        source_ref="mpengine 1.443.903.0; existing per-function reverse-engineering documentation",
+        locator=(
+            "troj_scan@0x180B02760 (call 0x180B027CB); RpfAPI_CheckStaticSignatures@0x1802D87A0 "
+            "(call 0x1802D87EF); initialize@0x1802D88A4; static_scan_worker@0x1800F94A0; "
+            "CompareValues@0x1800F8490; CheckConfig@0x18009685C; "
+            "IsSenseScan@0x180096984; IsReportLowfiScan@0x1800969A0; IsValidSigned@0x18058EA18"
+        ),
+        supports=(runtime_recipe_claim.id,),
+    )
     issues = [
         SemanticIssue(
             "outer_verdict_not_determined",
@@ -812,6 +854,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                     ),
                     ("comparison_supported", False),
                     ("stage_profile", _stage_profile(parsed)),
+                    ("runtime_recipes", static_runtime_recipes()),
                     ("hash", None),
                     (
                         "opaque_after_header",
@@ -844,6 +887,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 ),
             ),
             claims=(
+                runtime_recipe_claim,
                 corpus_claim,
                 crc_primitive_claim,
                 hash_comparison_claim,
@@ -889,6 +933,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 ),
             ),
             claim_evidence=common_evidence
+            + (runtime_recipe_evidence,)
             + (
                 SemanticEvidence(
                     id="static_consumer",
@@ -1289,6 +1334,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 ),
                 ("hash", hash_data),
                 ("stage_profile", _stage_profile(parsed)),
+                ("runtime_recipes", static_runtime_recipes()),
                 (
                     "match_pipeline",
                     JSONArray(
@@ -1329,6 +1375,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            runtime_recipe_claim,
             corpus_claim,
             crc_primitive_claim,
             hash_comparison_claim,
@@ -1365,6 +1412,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=common_evidence
+        + (runtime_recipe_evidence,)
         + (
             SemanticEvidence(
                 id="static_tail_receiver",
