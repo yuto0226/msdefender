@@ -1,5 +1,6 @@
 """Parser and renderer for NDAT (0xA9) payloads."""
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Final
@@ -18,6 +19,12 @@ from ..core import (
     SemanticIssue,
     SemanticUnknown,
     semantic_json_to_data,
+)
+from ..raw_ssl_cert import (
+    RawSslBytePattern,
+    UnsupportedRawSslPattern,
+    compile_raw_ssl_byte_pattern,
+    raw_ssl_yara_rhs,
 )
 
 NDAT_TYPE: Final = 0xA9
@@ -515,9 +522,246 @@ def _export_ssl_cert_pattern(parsed: NdatPayload) -> ArtifactExport:
     )
 
 
+class UnsupportedNdatRawSslPattern(ValueError):
+    """Outside callback-20 non-NULL pattern-registration framing."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatRawSslPattern:
+    raw: bytes
+    counted_data: bytes
+    effective_pattern: bytes
+    after_pattern_terminator: bytes
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+    portable_pattern: RawSslBytePattern | None
+    portable_reason: str | None
+    syntax_flags: int = 0x400000
+
+
+def project_ndat_raw_ssl_pattern(parsed: NdatPayload) -> NdatRawSslPattern:
+    """Reparse callback20; preserve Boost bytes even outside portable grammar.
+
+    Nonempty counted data must end in NUL. Constructor input excludes its first
+    NUL, with later counted bytes preserved separately from suffix/trailing.
+    This framing is not compile validation or a NULL-finalize classification.
+    """
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 20:
+        raise UnsupportedNdatRawSslPattern("requires callback decimal 20 (0x14)")
+    data = parsed.data_raw
+    if not data or data[-1] != 0:
+        raise UnsupportedNdatRawSslPattern(
+            "requires nonempty counted data ending in NUL"
+        )
+    first = data.index(0)
+    effective = data[:first]
+    try:
+        portable = compile_raw_ssl_byte_pattern(effective)
+        reason = None
+    except UnsupportedRawSslPattern as exc:
+        portable, reason = None, str(exc)
+    return NdatRawSslPattern(
+        parsed.raw,
+        data,
+        effective,
+        data[first + 1 :],
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+        portable,
+        reason,
+    )
+
+
+def _raw_ssl_manifest(parsed: NdatPayload) -> JSONObject:
+    try:
+        pattern = project_ndat_raw_ssl_pattern(parsed)
+    except UnsupportedNdatRawSslPattern as exc:
+        return JSONObject(
+            (
+                ("format", "vdm.ndat.raw-ssl-cert.boost-pattern.v1"),
+                ("framing_supported", False),
+                ("reason", str(exc)),
+            )
+        )
+    portable = pattern.portable_pattern
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.raw-ssl-cert.boost-pattern.v1"),
+            ("framing_supported", True),
+            ("callback_decimal", 20),
+            ("counted_data_hex", pattern.counted_data.hex()),
+            ("effective_pattern_hex", pattern.effective_pattern.hex()),
+            ("after_pattern_terminator_hex", pattern.after_pattern_terminator.hex()),
+            (
+                "record_id_suffix_hex",
+                None
+                if pattern.record_id_suffix_raw is None
+                else pattern.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_hex", pattern.trailing_raw.hex()),
+            ("syntax_flags_u32", 0x400000),
+            ("search_match_flags_u32", 0x400),
+            (
+                "backend",
+                "original Boost re_detail_500 w32_regex_traits<char>; unsigned-char iterator regex_search, not BM or CString subject",
+            ),
+            (
+                "locale_dependency",
+                "runtime default LCID traits; host LCID/ACP evidence is environment only, not internal traits readback",
+            ),
+            (
+                "subject_recipe",
+                JSONObject(
+                    (
+                        ("projector", "lib.vdm.raw_ssl_cert.project_raw_ssl_subject"),
+                        ("view_type", "lib.vdm.raw_ssl_cert.RawSslMetadataView"),
+                        ("result_type", "lib.vdm.raw_ssl_cert.RawSslSubject"),
+                        (
+                            "unsupported_error",
+                            "lib.vdm.raw_ssl_cert.UnsupportedRawSslSubject",
+                        ),
+                        (
+                            "source",
+                            "metadata+0x40 resolved view; u32 size+4, physical buffer pointer+8",
+                        ),
+                        (
+                            "gates",
+                            "NULL view/buffer, size<6 or BE24 buffer[3:6]>size-6 skip this local branch; insufficient physical bytes are unsupported",
+                        ),
+                        (
+                            "subject",
+                            "buffer[6:size], including declared-certificate suffix bytes and embedded NUL; parser_span=buffer[6:6+BE24] is separate",
+                        ),
+                        (
+                            "boundary",
+                            "prefix[0:3] semantics/upstream mapping/global patterns/resources/post-policy are external; no TLS/DER parser",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "portable_projection",
+                JSONObject(
+                    (
+                        ("supported", portable is not None),
+                        ("reason", pattern.portable_reason),
+                        (
+                            "language",
+                            "nonempty fixed-width ASCII \\xHH, literal H and [^\\xHH] tokens only; case-sensitive bytes",
+                        ),
+                        (
+                            "atoms",
+                            None
+                            if portable is None
+                            else JSONArray(
+                                tuple(
+                                    JSONObject(
+                                        (("value", a.value), ("negated", a.negated))
+                                    )
+                                    for a in portable.atoms
+                                )
+                            ),
+                        ),
+                        (
+                            "yara_rhs",
+                            None if portable is None else raw_ssl_yara_rhs(portable),
+                        ),
+                        (
+                            "rule_name",
+                            None
+                            if portable is None
+                            else "ndat_raw_ssl_"
+                            + hashlib.sha256(pattern.raw).hexdigest(),
+                        ),
+                        (
+                            "compiler",
+                            "lib.vdm.raw_ssl_cert.compile_raw_ssl_byte_pattern",
+                        ),
+                        ("pattern_type", "lib.vdm.raw_ssl_cert.RawSslBytePattern"),
+                        ("atom_type", "lib.vdm.raw_ssl_cert.RawSslByteAtom"),
+                        ("predicate", "lib.vdm.raw_ssl_cert.search_raw_ssl_bytes"),
+                        ("rhs_exporter", "lib.vdm.raw_ssl_cert.raw_ssl_yara_rhs"),
+                        (
+                            "unsupported_error",
+                            "lib.vdm.raw_ssl_cert.UnsupportedRawSslPattern",
+                        ),
+                        (
+                            "scope",
+                            "Boolean predicate/YARA applied only to identical explicit subject slice; not complete Boost grammar or policy",
+                        ),
+                        ("yara_compile_valid", None),
+                        (
+                            "yara_minimum_version",
+                            "4.3.0"
+                            if portable is not None
+                            and any(a.negated for a in portable.atoms)
+                            else None,
+                        ),
+                        (
+                            "validated_yara_version",
+                            "4.5.4 (frozen corpus/recorded-span differential only)",
+                        ),
+                    )
+                ),
+            ),
+            ("projector", "lib.vdm.types.ndat.project_ndat_raw_ssl_pattern"),
+            ("pattern_type", "lib.vdm.types.ndat.NdatRawSslPattern"),
+            ("unsupported_error", "lib.vdm.types.ndat.UnsupportedNdatRawSslPattern"),
+            (
+                "query",
+                "RegExBinaryMatch searches every row, then ProcessMatchedSignature consumes runtime RecID/SigSeq/context; regex hit is not policy success",
+            ),
+            ("runtime_record_id", None),
+            ("runtime_signature_sequence", None),
+            ("compile_valid", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+        )
+    )
+
+
+def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
+    try:
+        pattern = project_ndat_raw_ssl_pattern(parsed)
+    except UnsupportedNdatRawSslPattern as exc:
+        return ArtifactExport("unsupported", reason=str(exc))
+    artifacts = [
+        Artifact("raw-ssl-cert-pattern.boost.bin", "binary", pattern.effective_pattern),
+        Artifact(
+            "raw-ssl-cert-pattern.json",
+            "json",
+            json.dumps(
+                semantic_json_to_data(_raw_ssl_manifest(parsed)),
+                ensure_ascii=True,
+                indent=2,
+            ).encode()
+            + b"\n",
+        ),
+    ]
+    if pattern.portable_pattern is not None:
+        rhs = raw_ssl_yara_rhs(pattern.portable_pattern)
+        artifacts.append(
+            Artifact(
+                "raw-ssl-cert-pattern.yar",
+                "yara",
+                (
+                    "// Apply only to the selected explicit raw subject span; no engine policy.\nrule ndat_raw_ssl_"
+                    + hashlib.sha256(pattern.raw).hexdigest()
+                    + " {\n strings:\n  $a = "
+                    + rhs
+                    + "\n condition:\n  $a\n}\n"
+                ).encode("ascii"),
+            )
+        )
+    return ArtifactExport("ready", tuple(artifacts))
+
+
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs with their distinct backend contracts."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 20:
+        return _export_raw_ssl_pattern(parsed)
     if parsed.callback_index == 18:
         return _export_ssl_cert_pattern(parsed)
     if parsed.callback_index == 13:
@@ -755,6 +999,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     has_http_url_consumer = parsed.callback_index == 15
     has_generic_regex_consumer = parsed.callback_index == 13
     has_ssl_cert_consumer = parsed.callback_index == 18
+    has_raw_ssl_consumer = parsed.callback_index == 20
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
@@ -762,10 +1007,26 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         if has_generic_regex_consumer
         else "boost_w32_pattern_ingest_and_formatted_certificate_search"
         if has_ssl_cert_consumer
+        else "boost_w32_binary_pattern_ingest_and_explicit_raw_span_search"
+        if has_raw_ssl_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_raw_ssl_consumer:
+        issues.append(
+            SemanticIssue(
+                "raw_ssl_explicit_span_and_policy_boundary",
+                "A strict fixed-byte subset supplies local predicate/YARA on the exact selected raw remaining span; original compiler/resources/namespace and ProcessMatchedSignature remain external.",
+            )
+        )
+        if not parsed.data_raw or parsed.data_raw[-1] != 0:
+            issues.append(
+                SemanticIssue(
+                    "raw_ssl_nonnull_pattern_profile_unsupported",
+                    "Outside non-NULL pattern registration, without declaring generic wire malformed or NULL finalize.",
+                )
+            )
     if has_ssl_cert_consumer:
         issues.append(
             SemanticIssue(
@@ -895,7 +1156,9 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
                 *(
-                    (("ssl_cert_pattern", _ssl_cert_manifest(parsed)),)
+                    (("raw_ssl_pattern", _raw_ssl_manifest(parsed)),)
+                    if has_raw_ssl_consumer
+                    else (("ssl_cert_pattern", _ssl_cert_manifest(parsed)),)
                     if has_ssl_cert_consumer
                     else ()
                 ),
@@ -972,6 +1235,25 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-raw-ssl-byte-predicate",
+                        "runtime_consumer",
+                        "Callback20 constructs first-NUL Boost w32 patterns with syntax flags0x400000; binary Search uses explicit pointer+length. A nonempty fixed byte/negated-single-byte subset provides Boolean search and hex YARA on the same selected span. The metadata view selects buffer[6:size]; BE24 length gates bounds and selects a separate parser span, not the raw remaining range.",
+                        "subset",
+                        ("ndat-raw-ssl-static", "ndat-raw-ssl-native-differential"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Complete regex acceptance, native exceptions/resources, upstream metadata, runtime RecID/SigSeq and ProcessMatchedSignature remain outside the local predicate; no certificate trust or final verdict.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_raw_ssl_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -1134,6 +1416,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     if has_generic_regex_consumer
                     else "The formatted-certificate pattern/subject contract is exported separately; complete parser, NRI and query policy are not projected."
                     if has_ssl_cert_consumer
+                    else "The raw binary pattern/explicit remaining-span contract and strict byte predicate are exported separately; compiler and post-match policy remain external."
+                    if has_raw_ssl_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -1158,6 +1442,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             if has_generic_regex_consumer
                             else "Full certificate parser, non-ASCII CRT conversion and regex/NRI/post-match state are external."
                             if has_ssl_cert_consumer
+                            else "Whole Boost grammar, upstream metadata and native exception/resource/namespace/post-match state remain external."
+                            if has_raw_ssl_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -1229,6 +1515,29 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-raw-ssl-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine 1.443.903.0",
+                        ("ndat-raw-ssl-byte-predicate",),
+                        "RawSSLCertNdatCallback1804B4DA0/C8 -> append1804B4F30/5A or reallocate1804B4F8C/18F -> ctor1801FBFE4 syntax400000; row32 regex16/RecID+16/SigSeq+24. NetworkHipsMatch18008EB33 reads metadata+40 view, NULL buffer gate8EB44, size+4; 8EC2F sends buffer+6,size-6 before ParsePkcs6Certificate; RegExBinaryMatch1801F10D0 -> Search1801F1170/1F -> unsigned iterator regex_search1801F1190/180, matchflags400/find_imp; docs/mpengine.dll/1.443.903.0/ndat_raw_ssl_cert_contract_private.md",
+                    ),
+                    SemanticEvidence(
+                        "ndat-raw-ssl-native-differential",
+                        "consumer",
+                        "engine_runtime",
+                        "Pinned original Windows DLL binary Search and YARA4.5.4 recorded-span differential",
+                        ("ndat-raw-ssl-byte-predicate",),
+                        "DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; tests/local_cb20_binary_search_native_v1.py SHA256 8fdb76348d8e63aa76ae158229cc7bcb6e1683bf6f4d1f24b0a7221680526191; manifest bc7a0635b2680ffc8249f4b2e08cd89a0fa96d73ca8a4f76bc5f24e37f3ed731; results 391e6529ddf531ce65b2693f310ea8b5e1b2cc6dfdc30eb233f83579b8d96732. 118 constructors (117 corpus),1320 Search calls; tests/local_cb20_yara_differential.py SHA256 c1a657eea4cf2da36bc9b41af90b93917676f834d1044ac9a46bcca8500deaf7; .tmp/local_cb20_yara_differential_final_v2.json SHA256 3981dceb6d0d799407851e8bdd2e7edd98a34105b08406d668d388a03823b135: 117 corpus+synthetic compiled,1320 same-span comparisons/0 mismatch. Host code pins/canaries/isolated children; no Unicorn trace, metadata caller/DER parser or full policy execution. "
+                        "Current offline production bridge tests/local_ndat_raw_ssl_bridge.py SHA256 fe3b290bf6d64f250118f1b4c0ddef185d8ac3d5d44b4baad4ee4d673d081839.",
+                    ),
+                )
+                if has_raw_ssl_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
