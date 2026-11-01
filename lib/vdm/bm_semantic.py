@@ -21,7 +21,7 @@ from .bm import (
     parse_bm_alternative_program,
     raw_04_05_byte_set,
 )
-from .bm_program import build_bm_execution_program
+from .bm_program import BmExecutionProgram, build_bm_execution_program
 from .core import JSONArray, JSONObject, SemanticIssue
 
 
@@ -62,6 +62,18 @@ def _pattern_preparation_is_exact(context: BmSemanticContext) -> bool:
     ) or (
         context.translation == "ascii_lowercase"
         and context.pattern_preparation == "ascii_lowercase"
+    )
+
+
+def _snapshot_context_is_exact(
+    program: BmExecutionProgram, context: BmSemanticContext | None
+) -> bool:
+    return context is not None and program.identity_snapshot_closed(
+        reader_kind=context.reader_kind,
+        identity_translation=context.translation == "identity",
+        worker_modes=context.worker_modes,
+        capture_enabled=context.capture_enabled,
+        matches_vector_supplied=context.matches_vector_supplied,
     )
 
 
@@ -138,6 +150,7 @@ def _operation_ir(
     context: BmSemanticContext | None = None,
     pattern: BmPattern | None = None,
     class_choice_context: bool = False,
+    snapshot_context: bool = False,
 ) -> dict[str, object]:
     raw = operation.raw
     fidelity: OperationFidelity = "exact"
@@ -208,6 +221,18 @@ def _operation_ir(
                 "requires the worker-invocation entry snapshot, not the current cursor",
                 "only the mode1/3 byte-count transition is modeled; suffix acceptance and capture effects remain separate",
             ]
+            if snapshot_context:
+                result["fidelity"] = "exact"
+                result["requirements"] = [
+                    "finite literal/raw01/raw09/END invocation; limit == len(subject backing), valid storage and successful resources; null backrefs/vector",
+                    "same-start Boolean acceptance only; wrapper scalar output values, match end and reporting excluded",
+                ]
+                decoded["engine_transition"].update(
+                    suffix_and_capture_effects_modeled=True,
+                    evaluator="evaluate_bm_snapshot_finite",
+                    capture_scope="null backrefs; physical 90 1B excluded",
+                    backing_domain="immutable bytes at reader.base; limit == len(subject); cursor is base-relative u64",
+                )
     elif isinstance(operation, BmClass):
         decoded.update(count=operation.count, spec_hex=operation.spec.hex())
         if (
@@ -549,11 +574,13 @@ def _execution_graph(
         capture_enabled=context.capture_enabled,
         matches_vector_supplied=context.matches_vector_supplied,
     )
+    snapshot_closed = _snapshot_context_is_exact(program, context)
     fidelity = (
         "unsupported"
         if not program.complete
         else "exact"
-        if qualified and (program.primitive_closed or class_choice_closed)
+        if qualified
+        and (program.primitive_closed or class_choice_closed or snapshot_closed)
         else "conditional"
     )
     return {
@@ -565,6 +592,20 @@ def _execution_graph(
         "fidelity": fidelity,
         "has_rewrites": any(node.rewrite is not None for node in program.invocations),
         **({"class_choice_closed": True} if class_choice_closed else {}),
+        **({"snapshot_finite_closed": True} if snapshot_closed else {}),
+        **(
+            {
+                "snapshot_finite_domain": {
+                    "grammar": "literal/escaped90/raw01/raw09/END; one invocation, no tail or rewrites",
+                    "backing": "immutable subject bytes at reader.base; limit == len(subject)",
+                    "entry": "caller-supplied base/limit/start cursor; all raw09 restore this same entry",
+                    "evaluator": "evaluate_bm_snapshot_finite",
+                    "outputs": "worker reader and END scratch only; wrapper scalar output value, match end and reporting excluded",
+                }
+            }
+            if snapshot_closed
+            else {}
+        ),
         **({"root_end_tail_closed": True} if program.root_end_tail_closed else {}),
         "scope": "same-start Boolean acceptance; valid disjoint backing and scalar output storage, and successful temporary allocation; child scratch is local and nonnull; outer scratch may be null; null backrefs and matches vector; scalar output may be null or nonnull; excludes first-success cursor, match end and reporting",
         "issues": list(program.issues),
@@ -578,6 +619,7 @@ def _execution_graph(
                         context=context,
                         pattern=node_pattern,
                         class_choice_context=class_choice_closed,
+                        snapshot_context=snapshot_closed,
                     )
                     for operation in node.prefix
                 ],
@@ -620,11 +662,18 @@ def serialize_bm_pattern(
     """Serialize one decoder view, including its exact unparsed remainder."""
     pattern = decode_bm_pattern(pattern.raw, profile=pattern.profile)
     semantic_pattern = interpret_bm_pattern(pattern)
+    snapshot_closed = _snapshot_context_is_exact(
+        build_bm_execution_program(
+            pattern, preparation=context.pattern_preparation if context else None
+        ),
+        context,
+    )
     operations = [
         _operation_ir(
             operation,
             context=context,
             pattern=pattern,
+            snapshot_context=snapshot_closed,
         )
         for operation in semantic_pattern.operations
     ]

@@ -85,7 +85,11 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
         and graph.get("structure_complete")
         and graph.get("fidelity") == "exact"
     )
-    if (graph.get("has_rewrites") or end_tail_closed) and not (
+    if (
+        graph.get("has_rewrites")
+        or end_tail_closed
+        or graph.get("snapshot_finite_closed")
+    ) and not (
         status == "confirmed_subset"
         and (graph.get("fidelity") == "conditional" or graph.get("class_choice_closed"))
     ):
@@ -108,6 +112,11 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
             ("framing_complete", framing_complete),
             ("execution_graph_fidelity", graph.get("fidelity")),
             ("fidelity_basis", fidelity_basis),
+            *(
+                (("snapshot_finite_domain", graph["snapshot_finite_domain"]),)
+                if graph.get("snapshot_finite_closed")
+                else ()
+            ),
             *(
                 (
                     (
@@ -814,18 +823,23 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                     "handler at 0x1800EEA02. Modes1/3 restore the worker-entry "
                     "snapshot and apply byte-count/cursor/bounds logic; successful cases "
                     "disprove unconditional rejection. Full acceptance and "
-                    "suffix behavior remain reader-specific and are not lowered."
+                    "suffix behavior remain reader-specific and are not lowered to YARA. "
+                    "Only the explicitly gated single-invocation identity literal/raw01/"
+                    "raw09/END domain has a portable evaluator; its limit equals the "
+                    "supplied subject byte length. Other compositions remain conditional."
                 ),
                 coverage="subset",
                 evidence_refs=(
                     "pebmpat_backward_scan_consumer",
                     "pebmpat_backward_scan_counterexamples",
                     "pebmpat_backward_scan_transition_model",
+                    "pebmpat_backward_scan_finite_model",
                 ),
                 unknowns=(
                     SemanticUnknown(
                         "runtime_consumer",
-                        "Suffix/capture composition, mode0/2 mapped-zero behavior "
+                        "Composition outside the gated finite grammar, capture "
+                        "lifecycle, mode0/2 mapped-zero behavior "
                         "and outer candidate selection remain unmodeled; the "
                         "mode1/3 cursor transition alone is not full acceptance.",
                     ),
@@ -1059,6 +1073,27 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             )
         )
     if 0x09 in operation_raw_ids:
+        claim_evidence.append(
+            SemanticEvidence(
+                id="pebmpat_backward_scan_finite_model",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref=(
+                    "local_raw09_snapshot_v1: production finite evaluator compared "
+                    "with the pre-existing independent Python reference; existing "
+                    "original-machinecode Unicorn evidence in local_bm_raw09_model_engine "
+                    "(3148 comparisons) and local_bm_raw09_u64_slice_engine "
+                    "(250 comparisons), not host-native DLL execution"
+                ),
+                locator=(
+                    "evaluate_bm_snapshot_finite; one literal/raw01/raw09/END "
+                    "invocation, identity modes1/3, null backrefs/vector, no "
+                    "physical 90 1B; limit == len(supplied subject bytes); "
+                    "worker reader/END scratch only, no wrapper scalar output value"
+                ),
+                supports=("pebmpat_buffer_backward_scan",),
+            )
+        )
         claim_evidence.append(
             SemanticEvidence(
                 id="pebmpat_backward_scan_consumer",
