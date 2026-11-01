@@ -33,6 +33,11 @@ from ..raw_ssl_cert import (
     raw_ssl_yara_rhs,
 )
 from ..vdll_api_membership import VdllApiProjection, project_vdll_api
+from ..vdll_fire_event import (
+    FireEventRecipe,
+    UnsupportedFireEvent,
+    project_fire_event_recipe,
+)
 from ..vfs_link import VfsLinkProjection, project_vfs_link
 
 NDAT_TYPE: Final = 0xA9
@@ -49,6 +54,236 @@ class NdatPayload:
     callback_index: int
     record_id_suffix_raw: bytes | None
     trailing_raw: bytes
+
+
+class UnsupportedNdatFireEvent(ValueError):
+    """The raw record is not callback4 VDLL event metadata."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatFireEvent:
+    """Wire API input and a conditional name candidate, not a runtime binding."""
+
+    raw: bytes
+    counted_data: bytes
+    api_projection: VdllApiProjection
+    name_recipe_candidate: FireEventRecipe | None
+    candidate_issue: str | None
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+
+
+def project_ndat_fire_event(parsed: NdatPayload) -> NdatFireEvent:
+    """Reparse callback4 raw bytes without inventing getter or map state."""
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 4:
+        raise UnsupportedNdatFireEvent("requires callback decimal4 (0x04)")
+    candidate, issue = None, None
+    if parsed.record_id_suffix_raw is not None:
+        try:
+            # The named object copy ends at its first NUL: trailing wire bytes
+            # are not established readable runtime padding for malformed formats.
+            candidate = project_fire_event_recipe(parsed.record_id_suffix_raw)
+        except UnsupportedFireEvent as exc:
+            issue = str(exc)
+    return NdatFireEvent(
+        parsed.raw,
+        parsed.data_raw,
+        project_vdll_api(parsed.data_raw, parsed.data_length),
+        candidate,
+        issue,
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _fire_event_manifest(parsed: NdatPayload) -> JSONObject:
+    model = project_ndat_fire_event(parsed)
+    api, candidate = model.api_projection, model.name_recipe_candidate
+    ordinal = api.ordinal
+    data = None if candidate is None else candidate.data
+    candidate_status = (
+        "unsupported"
+        if model.candidate_issue is not None
+        else "absent"
+        if candidate is None
+        else "parsed_skip"
+        if candidate.skip_reason is not None
+        else "parsed"
+    )
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.vdll-fire-event-metadata.v1"),
+            ("kind", "engine_vdll_event_metadata_not_ioc"),
+            ("counted_data_hex", model.counted_data.hex()),
+            (
+                "module_raw_hex",
+                None if api.module_name is None else api.module_name.hex(),
+            ),
+            ("selector_raw_hex", None if api.selector is None else api.selector.hex()),
+            ("selector_copy_hresult", api.selector_copy_hresult),
+            ("api_skip_reason", api.skip_reason),
+            ("api_route", api.route),
+            ("api_delimiter_offset", api.delimiter_offset),
+            (
+                "api_ordinal",
+                None
+                if ordinal is None
+                else JSONObject(
+                    (
+                        ("value_u32", ordinal.value),
+                        ("hresult", ordinal.hresult),
+                        ("end_offset", ordinal.end_offset),
+                    )
+                ),
+            ),
+            ("name_crc_u32", api.name_crc),
+            (
+                "record_name_raw_hex",
+                None
+                if model.record_id_suffix_raw is None
+                else model.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", model.trailing_raw.hex()),
+            (
+                "wire_name_recipe_candidate",
+                JSONObject(
+                    (
+                        ("status", candidate_status),
+                        (
+                            "evaluation_scope",
+                            "independent wire candidate parse, not an executed callback stage or resolved getter value",
+                        ),
+                        ("issue", model.candidate_issue),
+                        ("post", None if candidate is None else candidate.post),
+                        (
+                            "skip_reason",
+                            None if candidate is None else candidate.skip_reason,
+                        ),
+                        ("packed_hex", None if data is None else data.pack().hex()),
+                        ("event_id_u32", None if data is None else data.event_id),
+                        (
+                            "consumer_event_id_u16",
+                            None if data is None else data.event_id & 0xFFFF,
+                        ),
+                        ("param1_index", None if data is None else data.param1_index),
+                        ("param1_type", None if data is None else data.param1_type),
+                        ("param2_index", None if data is None else data.param2_index),
+                        ("param2_type", None if data is None else data.param2_type),
+                        (
+                            "condition",
+                            "wire suffix is only a candidate; exact runtime name requires successful named-object publication and no shadow/redirect/override; absent candidate is not getter NULL",
+                        ),
+                    )
+                ),
+            ),
+            ("runtime_name_state", "unknown"),
+            ("runtime_recid_used_by_callback", True),
+            ("last_nul_required_for_api_data", False),
+            ("callback_return", None),
+            ("registration_completed", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            (
+                "recipe",
+                JSONObject(
+                    (
+                        ("projector", "lib.vdm.types.ndat.project_ndat_fire_event"),
+                        ("model_type", "lib.vdm.types.ndat.NdatFireEvent"),
+                        (
+                            "unsupported_type",
+                            "lib.vdm.types.ndat.UnsupportedNdatFireEvent",
+                        ),
+                        (
+                            "api_projector",
+                            "lib.vdm.vdll_api_membership.project_vdll_api",
+                        ),
+                        (
+                            "runtime_name_type",
+                            "lib.vdm.vdll_fire_event.ResolvedEventName",
+                        ),
+                        (
+                            "name_projector",
+                            "lib.vdm.vdll_fire_event.project_fire_event_recipe",
+                        ),
+                        (
+                            "name_projection_type",
+                            "lib.vdm.vdll_fire_event.FireEventRecipe",
+                        ),
+                        ("event_data_type", "lib.vdm.vdll_fire_event.FireEventData"),
+                        ("resolver", "lib.vdm.vdll_fire_event.resolve_fire_event"),
+                        ("host_type", "lib.vdm.vdll_api_membership.VdllApiHost"),
+                        ("map_type", "lib.vdm.vdll_fire_event.FireEventMapSnapshot"),
+                        ("map_entry_type", "lib.vdm.vdll_fire_event.FireEventMapEntry"),
+                        (
+                            "map_lookup",
+                            "lib.vdm.vdll_fire_event.FireEventMapSnapshot.lookup",
+                        ),
+                        (
+                            "parameter_requests",
+                            "lib.vdm.vdll_fire_event.fire_event_parameter_requests",
+                        ),
+                        (
+                            "parameter_outcome_type",
+                            "lib.vdm.vdll_fire_event.FireEventParamOutcome",
+                        ),
+                        (
+                            "attribute_projector",
+                            "lib.vdm.vdll_fire_event.project_fire_event_attribute",
+                        ),
+                        (
+                            "index0_numeric_projector",
+                            "lib.vdm.vdll_fire_event.project_fire_event_index0_parameter",
+                        ),
+                        (
+                            "state_error_type",
+                            "lib.vdm.vdll_fire_event.UnsupportedFireEvent",
+                        ),
+                        (
+                            "lazy_order",
+                            "NULLdata/disabledhost/getterNULL skip before API reads; name bytes parsed only after a nonzero resolved export",
+                        ),
+                        (
+                            "runtime_maps",
+                            "explicit active epoch and successful insertion order; first wins per pre/post,host,normalizedVA; query rawVA is not bit-cleared",
+                        ),
+                        (
+                            "consumer",
+                            "event DWORD stored, low16 sent to attribute; both parameter-request gates test param1_type; confirmed failures supply empty CString, unknown outcomes are unsupported",
+                        ),
+                        (
+                            "numeric_scope",
+                            "index0 pre returnsfalse; post reads supplied u32reg50 before type; numeric3..10 projected, unknown type false only after read; gueststrings/indexN remain external",
+                        ),
+                        (
+                            "unknown",
+                            "actual RecID/getter binding, real VDLL namespace, publication/epoch/shadow state, allocation/exception, guest memory/strings/CRT and __siga_check/whole policy",
+                        ),
+                    )
+                ),
+            ),
+        )
+    )
+
+
+def _export_fire_event(parsed: NdatPayload) -> ArtifactExport:
+    model = project_ndat_fire_event(parsed)
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("vdll-fire-event-data.bin", "binary", model.counted_data),
+            Artifact(
+                "vdll-fire-event-metadata.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_fire_event_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode("utf-8")
+                + b"\n",
+            ),
+        ),
+    )
 
 
 class UnsupportedNdatVdllApi(ValueError):
@@ -1684,6 +1919,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs and linkage metadata."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 4:
+        return _export_fire_event(parsed)
     if parsed.callback_index == 3:
         return _export_vdll_api(parsed)
     if parsed.callback_index == 6:
@@ -1936,6 +2173,26 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
                     f"0x{p.selector_copy_hresult:08x}; runtime binding required",
                 ),
             )
+    fire_rows = ()
+    if parsed.callback_index == 4:
+        model = project_ndat_fire_event(parsed)
+        api, candidate = model.api_projection, model.name_recipe_candidate
+        candidate_text = (
+            "absent; runtime name unknown"
+            if candidate is None
+            else "skip: " + candidate.skip_reason
+            if candidate.data is None
+            else f"{'post' if candidate.post else 'pre'} event {candidate.data.event_id}; params {candidate.data.param1_index}:{candidate.data.param1_type}, {candidate.data.param2_index}:{candidate.data.param2_type}"
+        )
+        fire_rows = (
+            (
+                "module!selector",
+                f"{api.module_name!r}!{api.selector!r}"
+                if api.skip_reason is None
+                else "skip: " + api.skip_reason,
+            ),
+            ("wire name candidate", model.candidate_issue or candidate_text),
+        )
     return FormatResult(
         sections=(
             DisplaySection("NDAT Metadata", rows=tuple(rows)),
@@ -1944,6 +2201,11 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
             *(
                 (DisplaySection("VDLL API Membership", rows=api_rows),)
                 if api_rows
+                else ()
+            ),
+            *(
+                (DisplaySection("VDLL Event Metadata", rows=fire_rows),)
+                if fire_rows
                 else ()
             ),
         )
@@ -1987,6 +2249,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     has_vbasic_path_consumer = parsed.callback_index == 1
     has_vfs_link_consumer = parsed.callback_index == 6
     has_vdll_api_consumer = parsed.callback_index == 3
+    has_fire_event_consumer = parsed.callback_index == 4
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
@@ -2006,10 +2269,19 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         if has_vfs_link_consumer
         else "vdll_resolved_api_membership_metadata"
         if has_vdll_api_consumer
+        else "vdll_runtime_name_event_recipe_metadata"
+        if has_fire_event_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_fire_event_consumer:
+        issues.append(
+            SemanticIssue(
+                "fire_event_resolved_runtime_name_required",
+                "Wire suffix is only a name-recipe candidate; actual getter binding, VDLL namespace, successful publication/epoch and resource state remain external. It is not a registered event map, generic IoC or final policy.",
+            )
+        )
     if has_vdll_api_consumer:
         issues.append(
             SemanticIssue(
@@ -2209,6 +2481,11 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
                 *(
+                    (("vdll_fire_event", _fire_event_manifest(parsed)),)
+                    if has_fire_event_consumer
+                    else ()
+                ),
+                *(
                     (("vdll_api_membership", _vdll_api_manifest(parsed)),)
                     if has_vdll_api_consumer
                     else ()
@@ -2304,6 +2581,25 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-vdll-fire-event-metadata",
+                        "runtime_consumer",
+                        "Callback4 uses runtimeRecID through namefromrecid before copied DLL/API resolution. A resolved name selects optional# and case-sensitive E post phase, a fullDWORD event and two typed/u8-index recipes. Phase/host/API-VA maps keep first value. The traced consumer sends event low16 and gates both parameter requests on param1_type; known retrieval failure becomes empty CString without canceling the attribute call. Wire suffix is only a conditional candidate, not a confirmed getter result or registration.",
+                        "subset",
+                        ("ndat-fire-event-static", "ndat-fire-event-native"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "True RecID/getter roundtrip, successful publication/no-shadow/epoch, actual VDLL namespace and allocation/exception state are external. Native callback/type/map, controlled45suffix recipes and index0 numeric getters are separate from static whole-consumer attribution; no gueststrings/indexN, __siga_check execution or final policy is projected.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_fire_event_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -2592,6 +2888,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     if has_vfs_link_consumer
                     else "The copied module/selector and selected runtime VDLL export/membership algorithms are exported separately; active bindings, resources and full trust-switch effects remain external."
                     if has_vdll_api_consumer
+                    else "The copied API and conditional wire-name event recipe are exported separately; resolved getter/VDLL bindings, publication and whole consumer policy remain external."
+                    if has_fire_event_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -2628,6 +2926,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             if has_vfs_link_consumer
                             else "Real module resolution, active VDLL/membership state and complete trust-counter/resource policy are external."
                             if has_vdll_api_consumer
+                            else "Actual runtime name, map/guest state, allocations and __siga_check policy are external; wire candidate is not a confirmed getter value."
+                            if has_fire_event_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -2699,6 +2999,29 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-fire-event-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine1.443.903.0",
+                        ("ndat-vdll-fire-event-metadata",),
+                        "VdllNdatFireEventCallback180CA5850/48C -> namefromrecid1800A9AE0; original copied API lookup, GetParamTypeFromSpecifier1805A84C8/43, insert4001E0/2B -> Emplace40020C/DC. pre600/postA00 maps in g_hashtables1812748A0. pe_notify_api_call1800B1C50/635 uses low16event and double param1_type gate; pe_GetParamData1803D22F8/3A6 gets runtime parameters. ReceiveNewTemplate322983 passes raw suffix to createrecidz, but publication/no-shadow/getter binding remains conditional. docs/mpengine.dll/1.443.903.0/ndat_fire_event_contract_private.md.",
+                    ),
+                    SemanticEvidence(
+                        "ndat-fire-event-native",
+                        "consumer",
+                        "engine_runtime",
+                        "Original callback/map/type plus separate controlled candidate and index0 numeric getter jobs",
+                        ("ndat-vdll-fire-event-metadata",),
+                        "tests/local_cb4_native_v1.py SHA745b79424ed6d07dd0ceacfeb630c4c712a4f7514b62e58f9cfe13f402b616cb resultsb2f5747f6b8fcdcbe7855935ec0e669757a79c02a5ef7a09ac5a70163f96705c:90children/89fixtures,512typecalls,282primaryentries; 45actualdata used one independent runtime-name fixture, no suffixroundtrip. local_cb4_corpus_recipe_native_v1.py SHA1c4c87d668d6cced3cedc0238dba4ee4a556e2ebdfd0438bdf7da20b120bcfe1 results9deaf488cd84a42478d28f84e5371dd47ee608a8ed032345a547c0f33b9cb4bc:45controlled name services/180entries, still not trueRecIDroundtrip. local_cb4_param_getter_native_v1.py SHAedfb32a6f096320043c66891841d63779ec95474da4fa037a7596d6c2890b900 results5a48a2a4cfcf42635bb0b1196095e3f346141dca9653b295f1ec55324e7178ef:132index0calls/66u32reg50services, no gueststrings or wholeconsumer. Backend services and fakeVDLL tables are explicit; old main job globals had writeback without readback assertions, new45 job adds readback. Hooks isolated by childexit, not fullrestore/PCtrace."
+                        " Current offline bridges: tests/local_vdll_fire_event_bridge.py SHA5f2fe77464030b2e79aced70039660de93eb8a8434b0ecd64fe15617fc548141; tests/local_ndat_fire_event_bridge.py SHA1ee32146c8dff69128dd29376160b57a35c74aa65061d77dd4003978750ff316.",
+                    ),
+                )
+                if has_fire_event_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
