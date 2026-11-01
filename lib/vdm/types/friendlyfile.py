@@ -14,11 +14,54 @@ from ..core import (
     SemanticEvidence,
     SemanticIssue,
     SemanticUnknown,
+    semantic_json_to_data,
 )
 from ..recid import RecIdTail, parse_recid_tail
 
 FRIENDLYFILE_SHA256_TYPE: Final = 0xA0
 SHA256_SIZE: Final = 32
+_CACHE_PRECONDITION: Final = (
+    "GetHashes may return a provided cache without hashing/I/O; caller must confirm "
+    "cache/source consistency; success alone is insufficient"
+)
+_PORTABLE_CANDIDATE: Final = JSONObject(
+    (
+        ("callable", "lib.vdm.friendlyfile_match.evaluate_friendlyfile_sha256"),
+        ("result_type", "lib.vdm.friendlyfile_match.FriendlyFileSha256Candidate"),
+        (
+            "caller_profiles",
+            JSONArray(
+                (
+                    "IsSignedFile.full_current_ufs_object",
+                    "troj_scan.full_current_ufs_object",
+                )
+            ),
+        ),
+        (
+            "profile_selection",
+            "explicit statically observed caller use; native tests execute shared GetHashes/Lookup/IsFriendlyFileEntry, not whole IsSignedFile or troj_scan",
+        ),
+        (
+            "input",
+            "complete immutable current UFS scan object bytes; not necessarily an on-disk container/file identity",
+        ),
+        (
+            "byte_projection",
+            "cold full-object SHA256 computation or caller-confirmed source-consistent cache value; no normalization",
+        ),
+        ("cache_precondition", _CACHE_PRECONDITION),
+        (
+            "output",
+            "computed_sha256 bytes and record_local_friendly_candidate boolean; raw A0 digest reparsed; tail not a digest input",
+        ),
+        (
+            "policy_boundary",
+            "does not establish record admission, store result1, NID108/133, namespace, reply flag, TTL, friendly attributes or final allow/bypass/verdict",
+        ),
+        ("provides_allow_or_bypass_decision", False),
+        ("malicious_ioc", False),
+    )
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +151,8 @@ def export_friendlyfile_sha256(parsed: FriendlyFileSha256) -> ArtifactExport:
             "observed_digest_profile": {
                 "producer": "troj_scan @ 0x180B03685..0x180B036D6",
                 "hash": "SHA-256",
-                "input": "complete current UFS scan object bytes [0, SCAN_REPLY+0x50) when GetHashes succeeds",
+                "input": "complete current UFS scan object bytes [0, SCAN_REPLY+0x50) for cold computation or caller-confirmed source-consistent cache",
+                "cache_precondition": _CACHE_PRECONDITION,
                 "normalization": "none_observed_in_analyzed_chain",
                 "length_producer": "UfsFile::GetSize via UfsClientRequest::SyncScanReplyFileSize; writes reply+0x50",
                 "disk_file_identity": None,
@@ -123,6 +167,7 @@ def export_friendlyfile_sha256(parsed: FriendlyFileSha256) -> ArtifactExport:
                 "final_allow_or_bypass": None,
             },
             "final_policy": None,
+            "portable_candidate": semantic_json_to_data(_PORTABLE_CANDIDATE),
             "portable_allowlist": None,
             "standalone_detection": False,
             "limitations": [
@@ -303,8 +348,9 @@ def export_friendlyfile_sha256_semantics(
                         ("algorithm", "sha256"),
                         (
                             "input",
-                            "complete_current_ufs_scan_object_when_GetHashes_succeeds",
+                            "complete_current_ufs_scan_object_for_cold_or_source_consistent_cache_projection",
                         ),
+                        ("cache_precondition", _CACHE_PRECONDITION),
                         ("raw_span", "[0, SCAN_REPLY+0x50)"),
                         ("normalization", "none_observed_in_analyzed_chain"),
                         (
@@ -332,6 +378,7 @@ def export_friendlyfile_sha256_semantics(
                     )
                 ),
             ),
+            ("portable_candidate", _PORTABLE_CANDIDATE),
         )
     )
     return RuleSemantics(
@@ -446,9 +493,11 @@ def export_friendlyfile_sha256_semantics(
                 id="friendlyfile_sha256_caller_digest_profile",
                 scope="runtime_consumer",
                 statement=(
-                    "In the analyzed troj_scan caller slice, when GetHashes succeeds, "
-                    "SHA-256 is computed over the complete current UFS scan object "
-                    "bytes [0, SCAN_REPLY+0x50); UfsFile::GetSize supplies the length "
+                    "The analyzed caller slices request the complete current UFS "
+                    "object range [0, SCAN_REPLY+0x50) for SHA-256. GetHashes can "
+                    "compute it or return a provided cache without hashing/I/O; a "
+                    "full-byte projection requires cold computation or confirmed "
+                    "cache/source consistency. UfsFile::GetSize supplies the length "
                     "through UfsClientRequest::SyncScanReplyFileSize, and no "
                     "normalization is observed in this chain."
                 ),
@@ -456,11 +505,32 @@ def export_friendlyfile_sha256_semantics(
                 evidence_refs=(
                     "friendlyfile_sha256_caller",
                     "friendlyfile_sha256_length_producer",
+                    "friendlyfile_sha256_native_candidate_test",
                 ),
                 unknowns=(
                     SemanticUnknown(
                         "runtime_consumer",
-                        "Other provider callers are not globally closed, and the current UFS object is not established as the on-disk file.",
+                        "Other provider callers and cache lifetime are not globally closed; "
+                        "GetHashes success alone does not prove recomputation or source consistency. "
+                        "The current UFS object is not established as the on-disk file.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
+                id="friendlyfile_sha256_native_candidate",
+                scope="runtime_consumer",
+                statement=(
+                    "In bounded cold full-UFS byte cases, original GetHashes SHA256 and "
+                    "the A0 equal-range/full32 comparison agree with the record-local "
+                    "friendly digest candidate. Native IsFriendlyFileEntry separately "
+                    "rejects Lookup2, NID133 raw1 and the reply blocking flag."
+                ),
+                coverage="subset",
+                evidence_refs=("friendlyfile_sha256_native_candidate_test",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Caller-profile selection is a static-use assertion, not whole IsSignedFile/troj_scan execution. Ufs I/O, namespace, NID, actions, continuation and locks are services; source/cache consistency, full TTL/attribute/allow/bypass and final verdict are not inferred from a digest candidate.",
                     ),
                 ),
             ),
@@ -495,13 +565,36 @@ def export_friendlyfile_sha256_semantics(
         ),
         claim_evidence=(
             SemanticEvidence(
+                id="friendlyfile_sha256_native_candidate_test",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref="mpengine 1.443.903.0 DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                locator=(
+                    "tests/local_a0_friendly_native.py (29 cases/57 calls; SHA256 "
+                    "53031f925e3681fe4c0c299471f0980a717d93bf13f5e8132089cd3e91c5cc9a); "
+                    "report SHA256 1c91d1f9c391ac39db331291f44d762882b20acc17e131799a0c128c345574ba; "
+                    "tests/local_a0_friendly_differential.py (18 source cases; SHA256 0160a231c92fc55431ca210d8664b1d057f46d07d01f50052a3f3ae24c2c8af1); "
+                    "native GetHashes@0x1803B9F7C(mask10h)/SymCryptSha256 portable ul1 -> "
+                    "store/subtype Lookup@0x1802D6D24/0x1802D6E60/equal_range@0x1802D6C20 -> "
+                    "IsFriendlyFileEntry@0x1802D855C; original MakeSigSha SHA1/ScanInfoAuto restore; "
+                    "docs/mpengine.dll/1.443.903.0/a0_friendly_candidate_private.md; "
+                    "IsSignedFile@0x1802D799C and troj_scan@0x180B02760 caller profiles "
+                    "remain static callsite evidence, not whole-caller native execution; "
+                    "provided-cache case is not recomputation; policy services are explicit"
+                ),
+                supports=(
+                    "friendlyfile_sha256_native_candidate",
+                    "friendlyfile_sha256_caller_digest_profile",
+                ),
+            ),
+            SemanticEvidence(
                 id="friendlyfile_sha256_caller",
                 axis="consumer",
                 kind="engine_static",
                 source_ref="mpengine 1.443.903.0",
                 locator=(
                     "troj_scan @ 0x180B03685..0x180B036D6; "
-                    "IsFriendlyFileEntry @ 0x1802D7AB0"
+                    "IsFriendlyFileEntry @ 0x1802D855C; IsSignedFile GetHashes callsite @ 0x1802D7AB0"
                 ),
                 supports=(
                     "friendlyfile_sha256_caller_digest_profile",
