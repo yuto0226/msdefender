@@ -1,9 +1,12 @@
 """Parser and concise renderer for KCRCE (0x80) payloads."""
 
+import json
 from dataclasses import dataclass
 from typing import Final
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -195,6 +198,61 @@ def _raw_frame(kind: str, offset: int, raw: bytes) -> JSONObject:
     )
 
 
+def build_kcrce_oep_recipe_profile() -> JSONObject:
+    """One shared conditional recipe for semantic and match-artifact exports."""
+    return JSONObject(
+        (
+            ("representation", "kcrce.oep_adddata_recipe.v1"),
+            ("evidence_tier", "engine_static"),
+            ("callable", "lib.vdm.kcrce_oep.project_kcrce_oep_request"),
+            ("context_type", "lib.vdm.kcrce_oep.KcrceOepContext"),
+            ("result_type", "lib.vdm.kcrce_oep.KcrceOepRequest"),
+            ("fresh_crc2_callable", "lib.vdm.kcrce_oep.project_kcrce_oep_fresh_crc2"),
+            ("callback", "oepkcrc_callback@0x18003F0D0"),
+            (
+                "initial_candidate_key_mapping",
+                "dynkcrc_check caller initial key request: start=candidate (not zero), length=0x20, flags=0x40000000; successful mapping feeds CRC_32 into provider key; separate from callback windows and does not establish mapped bytes",
+            ),
+            (
+                "applicability",
+                "external explicit callback family, kind0/1, candidate:u64, callback mode0/1/2, epoch and opaque same-epoch mapper profile; never inferred from wire",
+            ),
+            ("packed_low28", "length_flags & 0x0fffffff"),
+            ("kind0_mode1", "start=u64(candidate-0x100); length=0x100"),
+            (
+                "kind0_mode2",
+                "offset=bits16..27; nonzero offset skips mapping/AddData; otherwise start=u64(candidate-low16), length=low16",
+            ),
+            ("kind1_mode1", "start=candidate; length=0x100"),
+            ("kind1_mode2", "start=u64(candidate+bits16..27); length=low16"),
+            ("mode0", "no mapping or AddData in kind0/1; not a whole-record mismatch"),
+            ("map_flags", 0x40000000),
+            ("conditional_callback_entry_writes", "userdata+0x85=0; pe+0x83fd0=1"),
+            ("conditional_mapping_null", "userdata+0x85=1; no AddData"),
+            (
+                "conditional_mapping_success",
+                "AddData(mapped_pointer, requested_length); no local unmap",
+            ),
+            (
+                "mapping_outcome",
+                "unknown without separate resolved same-epoch mapper snapshot; zero length and u64 wrap still request mapping",
+            ),
+            (
+                "fresh_crc2_boundary",
+                "fresh get_crc2 Reset plus known no-AddData retains FFFFFFFF and can satisfy local stage2 equality; not whole Lookup or final verdict",
+            ),
+            (
+                "unknown_boundary",
+                "kind2 unsupported; candidate origin/coordinate, VMM/mapper outcomes, bytes, successful AddData, crc1/fastcrc arbitration, weak fallback and final verdict remain outside",
+            ),
+            (
+                "high_flags_boundary",
+                "stage2 masks low28; global bits28-29 remain unresolved and existing status/issues stay unchanged",
+            ),
+        )
+    )
+
+
 def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
     """Export the confirmed KCRCE comparison pipeline, not a final verdict."""
     tail = parsed.recid_tail
@@ -316,6 +374,7 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
                     "common_pe_crc2_profile",
                     _COMMON_PE_CRC2,
                 ),
+                ("oep_adddata_recipe_profile", build_kcrce_oep_recipe_profile()),
                 (
                     "packed_range",
                     JSONObject(
@@ -402,6 +461,25 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            SemanticClaim(
+                id="kcrce_oep_adddata_recipe",
+                scope="runtime_consumer",
+                statement=(
+                    "With explicit OEP callback kind0/1 and caller mapping candidate, "
+                    "mode1/2 project conditional u64 backward/forward mapping requests; "
+                    "kind0 mode2 nonzero offset and mode0 do not AddData."
+                ),
+                coverage="subset",
+                evidence_refs=("kcrce_oep_recipe_static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Callback identity is not encoded; candidate origin and mapping outcome, "
+                        "kind2, successful bytes/AddData and final verdict are not modeled. "
+                        "Fresh reset no-AddData can still equal record.crc2 locally.",
+                    ),
+                ),
+            ),
             SemanticClaim(
                 id="kcrce_wire_layout",
                 scope="wire_layout",
@@ -527,6 +605,20 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
         ),
         claim_evidence=(
             SemanticEvidence(
+                id="kcrce_oep_recipe_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0",
+                locator=(
+                    "dynkcrc_check@0x180140788; oepkcrc_callback@0x18003F0D0 "
+                    "kind0@0x18003F589/kind1@0x18003F662; "
+                    "get_fwdepcrc@0x1804833FC; Reset@0x180142080; "
+                    "get_crc2@0x1801422D0; CompareValues@0x1801421D4; "
+                    "docs/signature/KCRCE_consumer_next_private.md; saved static source evidence only"
+                ),
+                supports=("kcrce_oep_adddata_recipe",),
+            ),
+            SemanticEvidence(
                 id="kcrce_common_pe_crc2_differential",
                 axis="engine_equivalent_test",
                 kind="engine_equivalent_test",
@@ -591,10 +683,28 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
     )
 
 
+def export_kcrce(parsed: KcrcePayload) -> ArtifactExport:
+    """Export portable conditional IR; ready means an artifact is available."""
+    parsed = parse_kcrce(parsed.raw)
+    document = {
+        "format": "kcrce.record.ir.v1",
+        "payload_raw_hex": parsed.raw.hex(),
+        "runtime_inputs_resolved": False,
+        "record_local_match": None,
+        "final_verdict": None,
+        "semantics": export_kcrce_semantics(parsed).to_json(),
+    }
+    data = (json.dumps(document, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    return ArtifactExport(
+        status="ready", artifacts=(Artifact("kcrce.json", "kcrce_rule_ir", data),)
+    )
+
+
 SPEC = FamilySpec(
     KCRCE_TYPE,
     "KCRCE",
     parse_kcrce,
     render_kcrce,
+    exporter=export_kcrce,
     semantic_exporter=export_kcrce_semantics,
 )
