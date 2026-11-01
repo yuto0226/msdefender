@@ -66,6 +66,59 @@ class BmExecutionProgram:
         return not self.issues
 
     @property
+    def fixed_skip_finite_grammar(self) -> bool:
+        """Canonical flat literal/raw01/primary-raw07/END, without rewrites.
+
+        This separate domain deliberately does not enlarge primitive_closed or
+        the snapshot/retry grammar. Raw07 consumes a LE16 byte count.
+        """
+        if (
+            not self.complete
+            or self.profile != "1.443.903.0"
+            or self.root != 0
+            or len(self.invocations) != 1
+        ):
+            return False
+        node = self.invocations[0]
+        if node.terminal != "end" or node.ignored_after_end or b"\x90\x1b" in node.raw:
+            return False
+        try:
+            validate_bm_framing(node.raw)
+        except ValueError:
+            return False
+        if self != build_bm_execution_program(
+            decode_bm_pattern(node.raw, profile=self.profile),
+            preparation=self.preparation,
+        ):
+            return False
+        # Canonical equality above also rejects forged operations and tokens.
+        return any(op.raw[:2] == b"\x90\x07" for op in node.prefix) and all(
+            isinstance(op, BmLiteral) or op.raw[:2] in (b"\x90\x01", b"\x90\x07")
+            for op in node.prefix
+        )
+
+    def identity_fixed_skip_closed(
+        self,
+        *,
+        reader_kind: str | None,
+        identity_translation: bool,
+        worker_modes: tuple[int, ...] | None,
+        capture_enabled: bool | None,
+        matches_vector_supplied: bool | None,
+    ) -> bool:
+        """Same-start acceptance for the canonical linear raw07 domain."""
+        return bool(
+            self.fixed_skip_finite_grammar
+            and self.preparation == "identity"
+            and reader_kind == "BUFFER"
+            and identity_translation is True
+            and worker_modes in ((1,), (3,), (1, 3))
+            and all(type(mode) is int for mode in worker_modes)
+            and capture_enabled is False
+            and matches_vector_supplied is False
+        )
+
+    @property
     def snapshot_finite_grammar(self) -> bool:
         """Framed finite snapshot grammar; raw02 retries exclude class/rewrite."""
         if (

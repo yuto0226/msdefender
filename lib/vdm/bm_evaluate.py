@@ -1,4 +1,4 @@
-"""Finite BUFFER/identity snapshot evaluator, including raw02 child retries.
+"""Finite BUFFER/identity evaluators for separately qualified grammars.
 
 This is not a general BM matcher. Unsupported grammar/context raises ValueError;
 ordinary matching failure returns a result with the mutated reader preserved.
@@ -82,6 +82,44 @@ def evaluate_bm_snapshot_finite(
         or not program.snapshot_finite_grammar
     ):
         raise ValueError("outside finite BUFFER/identity modes1/3 snapshot grammar")
+    return _evaluate_bm_finite(program, entry, budget=budget, trace=trace)
+
+
+def evaluate_bm_fixed_skip_finite(
+    program: BmExecutionProgram,
+    entry: BmBufferReader,
+    *,
+    mode: int,
+    budget: BmEvaluationBudget = DEFAULT_BM_EVALUATION_BUDGET,
+    trace: Callable[[tuple[object, ...]], None] | None = None,
+) -> BmFiniteMatchResult:
+    """Execute flat literal/raw01/primary-raw07/END with identity bytes.
+
+    Null backrefs/vector, immutable finite backing, modes1/3. Raw07 counts
+    bytes, mutating the cursor per checked step; short input preserves partial
+    progress. Count zero does not read the subject. END writes scratch before
+    its cursor <= limit check. This is a static-derived local evaluator, not
+    new original-engine execution evidence or PE/caller equivalence.
+    """
+    if type(mode) is not int or not program.identity_fixed_skip_closed(
+        reader_kind="BUFFER",
+        identity_translation=True,
+        worker_modes=(mode,),
+        capture_enabled=False,
+        matches_vector_supplied=False,
+    ):
+        raise ValueError("outside finite BUFFER/identity modes1/3 fixed-skip grammar")
+    return _evaluate_bm_finite(program, entry, budget=budget, trace=trace)
+
+
+def _evaluate_bm_finite(
+    program: BmExecutionProgram,
+    entry: BmBufferReader,
+    *,
+    budget: BmEvaluationBudget,
+    trace: Callable[[tuple[object, ...]], None] | None,
+) -> BmFiniteMatchResult:
+    """Shared executor; callers qualify disjoint closed grammars first."""
     if any(type(x) is not int or x < 0 for x in (budget.steps, budget.depth)):
         raise ValueError("invalid local analyzer evaluation budget")
     operations = program.invocations[program.root].prefix
@@ -159,13 +197,13 @@ def evaluate_bm_snapshot_finite(
                     ):
                         return finish(False)
                     reader = replace(reader, cursor=reader.cursor + 1)
-            elif operation.raw[:2] == b"\x90\x01":
-                for _ in range(operation.raw[2]):
+            elif operation.raw[:2] in (b"\x90\x01", b"\x90\x07"):
+                for _ in range(int.from_bytes(operation.raw[2:], "little")):
                     tick()
                     if reader.cursor >= reader.limit:
                         return finish(False)
                     reader = replace(reader, cursor=reader.cursor + 1)
-            else:
+            elif operation.raw[:2] == b"\x90\x09":
                 emit("raw09", depth, entry.cursor, entry.limit)
                 step = buffer_backward_scan_transition(
                     entry.cursor,
@@ -175,6 +213,8 @@ def evaluate_bm_snapshot_finite(
                 reader = replace(entry, cursor=step.cursor)
                 if not step.suffix_reachable:
                     return finish(False)
+            else:
+                raise ValueError("unqualified finite operation")
         tick()
         return finish(reader.cursor <= reader.limit, reader)
 
