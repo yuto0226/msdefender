@@ -184,6 +184,16 @@ def _operation_ir(
             maximum=operation.maximum,
             bounded=operation.bounded,
         )
+        if snapshot_context and raw[:2] == b"\x90\x02":
+            decoded["engine_retry"] = {
+                "early_trials": "fresh invocation of complete suffix at each candidate",
+                "literal_prefilter": "peek only; never consumes before child entry",
+                "failed_child": "discard child reader and scratch; advance parent candidate",
+                "successful_child": "adopt child scratch and return success",
+                "endpoint": "continue suffix in parent invocation with parent entry snapshot",
+                "evaluator": "evaluate_bm_snapshot_finite",
+                "analyzer_budget": "explicit steps/depth rejection; never ordinary match false",
+            }
     elif isinstance(operation, BmAlternatives):
         decoded.update(
             widths=list(operation.widths),
@@ -230,7 +240,15 @@ def _operation_ir(
                         and any(
                             t.kind == "OPCODE" and t.raw_id == 4 for t in pattern.tokens
                         )
-                        else "finite literal/raw01/raw09/END invocation; limit == len(subject backing), valid storage and successful resources; null backrefs/vector"
+                        else (
+                            "finite literal/raw01/raw02/raw09/END recursive invocations; limit == len(subject backing), valid storage and successful resources; null backrefs/vector"
+                            if pattern is not None
+                            and any(
+                                t.kind == "OPCODE" and t.raw_id == 2
+                                for t in pattern.tokens
+                            )
+                            else "finite literal/raw01/raw09/END invocation; limit == len(subject backing), valid storage and successful resources; null backrefs/vector"
+                        )
                     ),
                     "same-start Boolean acceptance only; wrapper scalar output values, match end and reporting excluded",
                 ]
@@ -610,10 +628,24 @@ def _execution_graph(
                             isinstance(operation, BmClass)
                             for operation in program.invocations[program.root].prefix
                         )
-                        else "literal/escaped90/raw01/raw09/END; one invocation, no tail or rewrites"
+                        else (
+                            "literal/escaped90/raw01/raw02/raw09/END; early retry fresh suffix, endpoint parent continuation; no classes, tail or rewrites"
+                            if any(
+                                op.raw[:2] == b"\x90\x02"
+                                for op in program.invocations[program.root].prefix
+                            )
+                            else "literal/escaped90/raw01/raw09/END; one invocation, no tail or rewrites"
+                        )
                     ),
                     "backing": "immutable subject bytes at reader.base; limit == len(subject)",
-                    "entry": "caller-supplied base/limit/start cursor; all raw09 restore this same entry",
+                    "entry": (
+                        "each invocation owns base/limit/start cursor; early raw02 child snapshots candidate; endpoint retains parent entry; raw09 restores current invocation entry"
+                        if any(
+                            op.raw[:2] == b"\x90\x02"
+                            for op in program.invocations[program.root].prefix
+                        )
+                        else "caller-supplied base/limit/start cursor; all raw09 restore this same entry"
+                    ),
                     "evaluator": "evaluate_bm_snapshot_finite",
                     "outputs": "worker reader and END scratch only; wrapper scalar output value, match end and reporting excluded",
                 }

@@ -814,6 +814,14 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         ),
     ]
     if 0x09 in operation_raw_ids:
+        snapshot_retry_closed = bool(
+            parsed.pattern is not None
+            and any(
+                t.kind == "OPCODE" and t.raw_id == 0x02 for t in parsed.pattern.tokens
+            )
+            and pattern_data is not None
+            and dict(serialized["execution_graph"].items).get("snapshot_finite_closed")
+        )
         snapshot_class_closed = (
             0x04 in operation_raw_ids
             and pattern_data is not None
@@ -830,8 +838,18 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                     "snapshot and apply byte-count/cursor/bounds logic; successful cases "
                     "disprove unconditional rejection. Full acceptance and "
                     "suffix behavior remain reader-specific and are not lowered to YARA. "
-                    "Only the explicitly gated single-invocation identity literal/"
-                    + ("raw01/primary-raw04/" if snapshot_class_closed else "raw01/")
+                    + (
+                        "Only the explicitly gated recursive-invocation identity literal/"
+                        if snapshot_retry_closed
+                        else "Only the explicitly gated single-invocation identity literal/"
+                    )
+                    + (
+                        "raw01/raw02/"
+                        if snapshot_retry_closed
+                        else "raw01/primary-raw04/"
+                        if snapshot_class_closed
+                        else "raw01/"
+                    )
                     + "raw09/END domain has a portable evaluator; its limit equals the "
                     "supplied subject byte length. Other compositions remain conditional."
                 ),
@@ -841,6 +859,11 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                     "pebmpat_backward_scan_counterexamples",
                     "pebmpat_backward_scan_transition_model",
                     "pebmpat_backward_scan_finite_model",
+                    *(
+                        ("pebmpat_raw02_snapshot_retry",)
+                        if snapshot_retry_closed
+                        else ()
+                    ),
                     *(
                         ("pebmpat_backward_scan_class_composition",)
                         if snapshot_class_closed
@@ -1085,6 +1108,28 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             )
         )
     if 0x09 in operation_raw_ids:
+        if snapshot_retry_closed:
+            claim_evidence.append(
+                SemanticEvidence(
+                    id="pebmpat_raw02_snapshot_retry",
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref=(
+                        "local_raw02_snapshot_probe_v1: 536 original-machine-code Unicorn cases, "
+                        "5280 ordered events; independent recursive reference; 156 counterexamples "
+                        "to fresh endpoint snapshot. Manifest SHA256 "
+                        "e924a838f0f6cd0b3a52a7beb059d116a889aa9098b03a0e9e022e31410f29ac; not host-native"
+                    ),
+                    locator=(
+                        "raw02 child call 0x1800EDFF0; endpoint 0x1800EDF25 to 0x1800EDE81; "
+                        "literal prefilter 0x1800EE031; success scratch adoption 0x1800EE43E..0x1800EE479. "
+                        "Finite literal/raw01/raw02/raw09/END, BUFFER identity modes1/3, null backrefs/vector; "
+                        "each early child owns candidate snapshot, endpoint retains parent entry; "
+                        "excludes classes, alternatives, aliases, resource failures and wrapper reporting"
+                    ),
+                    supports=("pebmpat_buffer_backward_scan",),
+                )
+            )
         if snapshot_class_closed:
             claim_evidence.append(
                 SemanticEvidence(
