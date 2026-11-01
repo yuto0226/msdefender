@@ -595,6 +595,36 @@ def _recid_tail_semantics(tail: RecIdTail | None, offset: int) -> JSONObject | N
 
 def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
     """Export the confirmed STATIC receiver and staged hash-match subset."""
+    exception_recipe_claim = SemanticClaim(
+        id="static_exception_name_recipe",
+        scope="runtime_consumer",
+        statement=(
+            "IsExceptionName reads the raw first byte (# or ~) and, only for "
+            "those prefixes, requires resolved GetCmdlineFlags bit34 clear. "
+            "CFG and long-target projections share this derived same-epoch result; "
+            "NULL is rejected by the caller before the helper."
+        ),
+        coverage="subset",
+        evidence_refs=("static_exception_name_sources",),
+        unknowns=(
+            SemanticUnknown(
+                "runtime_consumer",
+                "Name provenance, global/selected/default flags writers, GetOpt TLS selection and epoch coherence remain external; no command-line text parser or THREAT_BEGIN bridge is established here.",
+            ),
+            SemanticUnknown(
+                "final_verdict",
+                "The helper projection establishes neither record-local match nor final verdict.",
+            ),
+        ),
+    )
+    exception_recipe_evidence = SemanticEvidence(
+        id="static_exception_name_sources",
+        axis="consumer",
+        kind="engine_static",
+        source_ref="mpengine 1.443.903.0; docs/mpengine.dll/IsExceptionName.md; docs/mpengine.dll/GetCmdlineFlags.md",
+        locator="IsExceptionName@0x180185370 (0x25 bytes); GetCmdlineFlags@0x180185894 (0x33 bytes); CompareValues@0x1800F8490; saved decompile and byte verification, not engine execution",
+        supports=(exception_recipe_claim.id,),
+    )
     runtime_recipe_claim = SemanticClaim(
         id="static_runtime_input_recipes",
         scope="runtime_consumer",
@@ -888,6 +918,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             ),
             claims=(
                 runtime_recipe_claim,
+                exception_recipe_claim,
                 corpus_claim,
                 crc_primitive_claim,
                 hash_comparison_claim,
@@ -933,7 +964,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 ),
             ),
             claim_evidence=common_evidence
-            + (runtime_recipe_evidence,)
+            + (runtime_recipe_evidence, exception_recipe_evidence)
             + (
                 SemanticEvidence(
                     id="static_consumer",
@@ -1376,6 +1407,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         issues=tuple(issues),
         claims=(
             runtime_recipe_claim,
+            exception_recipe_claim,
             corpus_claim,
             crc_primitive_claim,
             hash_comparison_claim,
@@ -1412,7 +1444,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=common_evidence
-        + (runtime_recipe_evidence,)
+        + (runtime_recipe_evidence, exception_recipe_evidence)
         + (
             SemanticEvidence(
                 id="static_tail_receiver",
