@@ -376,6 +376,85 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
                 ),
                 ("oep_adddata_recipe_profile", build_kcrce_oep_recipe_profile()),
                 (
+                    "high_flags_known_uses",
+                    JSONObject(
+                        (
+                            ("evidence_tier", "engine_static"),
+                            ("raw_length_flags", parsed.length_flags),
+                            ("unresolved_bits28_29", parsed.unresolved_flags),
+                            (
+                                "known_uses",
+                                JSONArray(
+                                    (
+                                        "runtime_storage",
+                                        "offline_cache_record_bytes",
+                                        "full_length_flags_sort_tiebreak",
+                                        "signature_identity_input",
+                                    )
+                                ),
+                            ),
+                            (
+                                "crc2_argument",
+                                JSONObject(
+                                    (
+                                        ("value", parsed.length_flags & 0x0FFFFFFF),
+                                        ("mask", 0x0FFFFFFF),
+                                        (
+                                            "scope",
+                                            "CompareValues<kcrce_t> stage2 -> get_crc2 callback argument and this path's cache key; bits28-29 excluded",
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "sort_tiebreak",
+                                JSONObject(
+                                    (
+                                        ("field_offset", 12),
+                                        ("value", parsed.length_flags),
+                                        ("mask", 0xFFFFFFFF),
+                                        (
+                                            "comparison",
+                                            "unsigned_u32_ascending_after_offset_and_length",
+                                        ),
+                                        (
+                                            "scope",
+                                            "analyzed kcrce_t insertion-sort comparator; includes bits28-29 after crc1, fastcrc, packed offset and length ties",
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "identity_input",
+                                JSONObject(
+                                    (
+                                        ("offset", 0),
+                                        ("length", 16),
+                                        ("raw_hex", parsed.raw[:BASE_SIZE].hex()),
+                                        (
+                                            "consumers",
+                                            JSONArray(
+                                                (
+                                                    "GetSigSeq -> CRC_1",
+                                                    "Lookup -> MakeSigSha(type=0x80,length=16)",
+                                                )
+                                            ),
+                                        ),
+                                        (
+                                            "scope",
+                                            "original four DWORD prefix including full length_flags; excludes runtime threat_ref and wire RecID tail; no hash implementation or collision claim",
+                                        ),
+                                    )
+                                ),
+                            ),
+                            (
+                                "unknown_boundary",
+                                "no global ignored-bit, dedup-absence, resolved predicate or equal report/final-verdict claim; preserve raw bytes and existing unresolved flags/status/issues",
+                            ),
+                        )
+                    ),
+                ),
+                (
                     "packed_range",
                     JSONObject(
                         (
@@ -461,6 +540,26 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            SemanticClaim(
+                id="kcrce_high_flags_scoped_uses",
+                scope="runtime_consumer",
+                statement=(
+                    "In the analyzed KCRCE paths, bits28-29 are excluded from the stage2 "
+                    "CRC2 callback argument/cache key but retained in record/cache bytes, "
+                    "the full-DWORD unsigned sort tie-break and the original 16-byte "
+                    "GetSigSeq/MakeSigSha input; the identity input excludes the RecID tail."
+                ),
+                coverage="subset",
+                evidence_refs=("kcrce_high_flags_static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Global predicate behavior and other consumers remain unresolved. "
+                        "Different raw inputs do not establish distinct hashes or final verdicts; "
+                        "no full-engine absence of deduplication is claimed.",
+                    ),
+                ),
+            ),
             SemanticClaim(
                 id="kcrce_oep_adddata_recipe",
                 scope="runtime_consumer",
@@ -604,6 +703,25 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                id="kcrce_high_flags_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                locator=(
+                    "RecordPush@0x1800FACD4 copy@0x1800FAD94; "
+                    "PostProcessRecordsWorker@0x1802C6770 cache WriteFile@0x1802C6EE3; "
+                    "LoadCache@0x1802C62B4 map@0x1802C6646; "
+                    "Insertion_sort_unchecked@0x1803A5A98 full-DWORD unsigned cmp@0x1803A5B9B "
+                    "bytes 44 3b c8 72 b3 77 0d; "
+                    "CompareValues@0x1801421EC..0x1801421FA low28 -> get_crc2@0x1801422D0; "
+                    "GetSigSeq@0x1804F88F0 input length16@0x1804F8905 and full flags@0x1804F891C; "
+                    "Lookup MakeSigSha calls@0x180141A29/0x180141BE9, "
+                    "original prefix copies@0x1801419F0/0x180141BB3 and length16@0x180141A13/0x180141BD6; "
+                    "docs/signature/KCRCE_bits28_29_scope_private.md; saved static callsite/byte evidence only"
+                ),
+                supports=("kcrce_high_flags_scoped_uses",),
+            ),
             SemanticEvidence(
                 id="kcrce_oep_recipe_static",
                 axis="consumer",
