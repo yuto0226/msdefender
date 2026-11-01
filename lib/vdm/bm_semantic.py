@@ -16,6 +16,7 @@ from .bm import (
     BmPattern,
     BmScan,
     BmSemanticOperation,
+    decode_bm_pattern,
     interpret_bm_pattern,
     parse_bm_alternative_program,
     raw_04_05_byte_set,
@@ -454,6 +455,7 @@ def serialize_bm_pattern(
     context: BmSemanticContext | None = None,
 ) -> tuple[JSONObject, tuple[SemanticIssue, ...]]:
     """Serialize one decoder view, including its exact unparsed remainder."""
+    pattern = decode_bm_pattern(pattern.raw, profile=pattern.profile)
     semantic_pattern = interpret_bm_pattern(pattern)
     operations = [
         _operation_ir(

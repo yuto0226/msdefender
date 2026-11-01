@@ -158,6 +158,8 @@ def parse_pebmpat(payload: bytes) -> PEBMPat:
 
 def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     """Export raw PEBMPAT framing and a non-authoritative BM decoder view."""
+    # Runtime claims and framing must derive from the authoritative wire bytes.
+    parsed = parse_pebmpat(parsed.raw)
     name_start = 4
     pattern_start = name_start + len(parsed.name)
     framing = JSONArray(
