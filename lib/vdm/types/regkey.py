@@ -197,8 +197,8 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
         ),
         SemanticIssue(
             "regkey_expansion_producer_external",
-            "REG_SZ/REG_EXPAND_SZ path equality is computed from explicit resolved "
-            "lists; offline patch and resolver output production remain external.",
+            "REG_SZ/REG_EXPAND_SZ offline patch and path equality are computed from "
+            "explicit physical inputs or observations; seven-filter resolver outputs remain external.",
         ),
     ]
     if not selector_accepted:
@@ -293,6 +293,7 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                 ("trailing_hex", parsed.tail_raw.hex()),
                 ("query_recipe", _query_recipe_contract(selector_accepted)),
                 ("resolved_path_comparison_profile", _resolved_path_profile()),
+                ("offline_patch_recipe_profile", _offline_patch_profile()),
                 (
                     "storage_routing",
                     JSONObject(
@@ -342,6 +343,46 @@ def _regkey_claims(
     parsed: RegKeyPayload, selector_accepted: bool
 ) -> tuple[SemanticClaim, ...]:
     return (
+        SemanticClaim(
+            id="regkey_offline_patch_instruction_profile",
+            scope="runtime_consumer",
+            statement=(
+                "Under explicit per-call towupper EAX observations and disabled WPP, "
+                "18 concrete outcomes from the original 226-byte direct patcher agree "
+                "on status, full physical postpatch bytes and reached table/call/write "
+                "traces. Six additional bounded unknown cases remain unknown, "
+                "not engine-returned statuses."
+            ),
+            coverage="subset",
+            evidence_refs=("regkey_offline_patch_instruction_test",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "The instruction profile executes only CallistoPatchPathFromOffline "
+                    "with towupper hooks and WPP disabled, not host-native DLL, LUM or "
+                    "member wrappers, CRT internals/locale, uint32 scan-cycle behavior, "
+                    "arbitrary memory aliases, seven resolver services or final verdict.",
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="regkey_offline_patch_values",
+            scope="runtime_consumer",
+            statement=(
+                "Invocation-bound wrapper gates, physical WCHAR bytes, offline-relative "
+                "BYTE window and independent engine CRT towupper observations compute "
+                "patch status and at most one WCHAR write. The caller ignores patch status."
+            ),
+            coverage="subset",
+            evidence_refs=("regkey_offline_patch_static",),
+            unknowns=(
+                SemanticUnknown(
+                    "runtime_consumer",
+                    "Wrapper state, physical image and CRT observations are explicit inputs; "
+                    "seven-filter resolver services, report and final verdict remain external.",
+                ),
+            ),
+        ),
         SemanticClaim(
             id="regkey_path_comparison_instruction_profile",
             scope="detection_predicate",
@@ -532,6 +573,37 @@ def _regkey_claims(
 def _regkey_evidence() -> tuple[SemanticEvidence, ...]:
     return (
         SemanticEvidence(
+            id="regkey_offline_patch_instruction_test",
+            axis="engine_equivalent_test",
+            kind="engine_equivalent_test",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "Original CallistoPatchPathFromOffline @ 0x1804A1DD0 (226 bytes), "
+                "Unicorn 2.1.4; 18 concrete agreements plus 6 bounded unknown cases; "
+                "tests/local_regkey_offline_instruction_differential_v1.py SHA256 "
+                "8c45010ed7cc0dd38bc577eb5f2c42a03472a07d55b6f00a9367ee0b18879a44; "
+                "tests/local_regkey_offline_instruction_differential_v1.json SHA256 "
+                "ad01a117ec79d377536940ed9125875732c4a0e2aa07df8d96eb1317751cc2f9; "
+                "per-call towupper raw EAX hooks, WPP disabled; no wrapper/host-native "
+                "or resolver execution; docs/signature/REGKEY_offline_patcher_instruction_differential_private.md"
+            ),
+            supports=("regkey_offline_patch_instruction_profile",),
+        ),
+        SemanticEvidence(
+            id="regkey_offline_patch_static",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "CallistoPatchPathFromOffline @ 0x1804A1DD0 (226 bytes); "
+                "LUM_ResolveOfflineFile @ 0x180221A20 (49 bytes); "
+                "CProfileMgr::ResolveOfflineFile @ 0x180D01240 (89 bytes); "
+                "DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                "docs/signature/REGKEY_offline_patch_value_contract_private.md"
+            ),
+            supports=("regkey_offline_patch_values",),
+        ),
+        SemanticEvidence(
             id="regkey_path_comparison_instruction_test",
             axis="engine_equivalent_test",
             kind="engine_equivalent_test",
@@ -709,6 +781,7 @@ def _resolved_path_profile() -> JSONObject:
                         "crt_profile_identity",
                         "left",
                         "right",
+                        "offline_patch",
                     )
                 ),
             ),
@@ -723,8 +796,9 @@ def _resolved_path_profile() -> JSONObject:
             (
                 "postpatch",
                 (
-                    "Explicit observed bytes after LUM_ResolveOfflineFile; caller ignores "
-                    "patch status. No unchanged-buffer assumption or offline patch service runs."
+                    "Explicit observed bytes or local offline patch result from physical "
+                    "inputs; caller ignores patch status. Known computed and observed bytes "
+                    "must agree. No unchanged-buffer assumption or host patch service runs."
                 ),
             ),
             (
@@ -759,8 +833,82 @@ def _resolved_path_profile() -> JSONObject:
             (
                 "unresolved",
                 (
-                    "Offline patch producer, seven ordered path filters/environment/filesystem "
-                    "services, registry binding, outer report and final verdict remain external."
+                    "Offline wrapper gates and engine CRT observations are explicit inputs; "
+                    "seven ordered resolver filters/environment/filesystem outputs, registry "
+                    "binding, outer report and final verdict remain external."
+                ),
+            ),
+        )
+    )
+
+
+def _offline_patch_profile() -> JSONObject:
+    return JSONObject(
+        (
+            ("representation", "regkey.offline-patch-values.v1"),
+            ("projector", "lib.vdm.regkey_offline.project_regkey_offline_patch"),
+            ("snapshot_type", "lib.vdm.regkey_offline.RegKeyOfflinePatchSnapshot"),
+            ("memory_type", "lib.vdm.regkey_offline.RegKeyOfflineByteWindow"),
+            (
+                "crt_observation_type",
+                "lib.vdm.regkey_offline.RegKeyTowupperObservation",
+            ),
+            ("result_type", "lib.vdm.regkey_offline.RegKeyOfflinePatchResult"),
+            ("error_type", "lib.vdm.regkey_offline.RegKeyOfflineSnapshotError"),
+            ("runtime_inputs_resolved", False),
+            ("patch_status", None),
+            ("postpatch_utf16", None),
+            ("final_verdict", None),
+            (
+                "binding",
+                (
+                    "One invocation epoch, exact payload raw and physical original buffer. "
+                    "CRT facts bind epoch/profile, previous index, call1 or call2 and input WCHAR. "
+                    "No host Unicode folding or same-epoch stable-locale assumption."
+                ),
+            ),
+            (
+                "wrapper",
+                (
+                    "Manager absent:87; online:0; offline context absent:87; NULL offline data "
+                    "or path:87; these branches read no path/table. Unknown reached gate stays unknown."
+                ),
+            ),
+            (
+                "physical_inputs",
+                (
+                    "offline_flags BYTE at +0x34 or physical window byte, conflicts rejected. "
+                    "Bit0 skips path reads. Immutable offline-relative BYTE window supports "
+                    "negative offsets. Mapping offset=zeroextend16(towupper_EAX)-12, -12..65523, "
+                    "without A-Z guard. Outside supplied readable bytes is unknown, not zero."
+                ),
+            ),
+            (
+                "loop",
+                (
+                    "uint32 scan reads WCHAR through NUL. A noninitial colon followed by / or "
+                    "backslash reads previous WCHAR: call1 AX -> map1, zero continues; nonzero "
+                    "executes independent call2 AX -> map2, zeroextends BYTE to WCHAR and writes "
+                    "previous position then returns0. Second map may be zero/different. No suffix "
+                    "NUL read after write. No stable CRT locale inferred from epoch."
+                ),
+            ),
+            (
+                "outputs",
+                (
+                    "patch_status, postpatch physical bytes, changed, written_index, changed_position, "
+                    "written_unit, fold_calls and table_reads are separate. Identical write still "
+                    "returns0; zero can introduce NUL. Missing reached read is unknown; malformed "
+                    "or conflicting facts raise RegKeyOfflineSnapshotError."
+                ),
+            ),
+            (
+                "integration",
+                (
+                    "ExpansionSnapshot.offline_patch may compute bytes or use independently "
+                    "observed postpatch; known byte conflicts raise error. Caller ignores patch "
+                    "status including87. Direct string equality skips patch facts. Seven ordered "
+                    "resolver filters/environment/filesystem outputs remain external. No verdict."
                 ),
             ),
         )
@@ -780,6 +928,9 @@ def export_regkey(parsed: RegKeyPayload) -> ArtifactExport:
             "resolved_path_comparison_profile"
         ],
         "record_local_match": None,
+        "offline_patch_recipe_profile": semantics["data"][
+            "offline_patch_recipe_profile"
+        ],
         "final_verdict": None,
         "claims": semantics["claims"],
         "claim_evidence": semantics["claim_evidence"],

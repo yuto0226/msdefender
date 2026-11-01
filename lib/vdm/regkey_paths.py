@@ -5,7 +5,13 @@ readable bytes, including any terminator/trailing bytes; missing reads remain
 unknown. The final comparator uses code units, never host Unicode casefold.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from .regkey_offline import (
+    RegKeyOfflinePatchResult,
+    RegKeyOfflinePatchSnapshot,
+    project_regkey_offline_patch,
+)
 
 
 class RegKeyPathSnapshotError(ValueError):
@@ -99,9 +105,10 @@ def _epoch(value: str) -> None:
 class RegKeyExpansionSnapshot:
     """Independent post-offline-patch and resolver facts for this invocation.
 
-    The caller ignores patch status. No patch success/no-change inference is
-    made: postpatch must be observed explicitly. expected_utf16 is NUL-free
-    content; original_value_utf16/postpatch/resolved paths are physical bytes.
+    The caller ignores patch status. postpatch is independently observed or
+    computed from offline_patch inputs; known conflicts are rejected.
+    expected_utf16 is NUL-free content; original_value_utf16/postpatch/resolved
+    paths are physical bytes.
     """
 
     epoch: str
@@ -114,6 +121,7 @@ class RegKeyExpansionSnapshot:
     crt_profile_identity: bytes | None = None
     left: RegKeyResolvedPathList | None = None
     right: RegKeyResolvedPathList | None = None
+    offline_patch: RegKeyOfflinePatchSnapshot | None = None
 
     def __post_init__(self) -> None:
         _epoch(self.epoch)
@@ -135,6 +143,11 @@ class RegKeyExpansionSnapshot:
         for value in (self.left, self.right):
             if value is not None and type(value) is not RegKeyResolvedPathList:
                 raise RegKeyPathSnapshotError("resolver facts have the wrong type")
+        if (
+            self.offline_patch is not None
+            and type(self.offline_patch) is not RegKeyOfflinePatchSnapshot
+        ):
+            raise RegKeyPathSnapshotError("wrong offline patch snapshot type")
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +161,7 @@ class RegKeyPathComparison:
     matched_left_friendly_utf16: bytes | None = None
     matched_right_friendly_utf16: bytes | None = None
     matched_comparison_utf16: bytes | None = None
+    offline_patch: RegKeyOfflinePatchResult | None = None
 
 
 def _unit(path: RegKeyPathValue, index: int) -> int | None:
@@ -234,7 +248,7 @@ def _matched_content(path: RegKeyPathValue, snapshot: RegKeyExpansionSnapshot) -
     return b"".join(unit.to_bytes(2, "little") for unit in units)
 
 
-def project_regkey_expansion(
+def _project_regkey_expansion(
     payload_raw: bytes,
     original_value_utf16: bytes,
     expected_utf16: bytes,
@@ -340,3 +354,67 @@ def project_regkey_expansion(
         left_paths=left,
         right_paths=right,
     )
+
+
+def project_regkey_expansion(
+    payload_raw: bytes,
+    original_value_utf16: bytes,
+    expected_utf16: bytes,
+    expand_left: bool,
+    snapshot: RegKeyExpansionSnapshot | None,
+) -> RegKeyPathComparison:
+    """Compare actual paths after an observed or locally computed offline patch.
+
+    Patch status never gates path comparison. Independent observed postpatch
+    values can resolve an unknown producer; known computed/observed bytes must
+    agree exactly. Patch and resolver facts identify the same invocation.
+    """
+    if type(expand_left) is not bool:
+        raise RegKeyPathSnapshotError("expand_left must be bool")
+    for value in (payload_raw, original_value_utf16, expected_utf16):
+        _bytes(value)
+    if snapshot is None:
+        return _project_regkey_expansion(
+            payload_raw, original_value_utf16, expected_utf16, expand_left, snapshot
+        )
+    if type(snapshot) is not RegKeyExpansionSnapshot:
+        raise RegKeyPathSnapshotError("wrong expansion snapshot type")
+    if (
+        snapshot.payload_raw != payload_raw
+        or snapshot.original_value_utf16 != original_value_utf16
+        or snapshot.expected_utf16 != expected_utf16
+    ):
+        raise RegKeyPathSnapshotError("expansion input binding mismatch")
+    facts = snapshot.offline_patch
+    patch = None
+    if facts is not None:
+        if (
+            facts.epoch != snapshot.epoch
+            or facts.payload_raw != payload_raw
+            or facts.original_value_utf16 != original_value_utf16
+        ):
+            raise RegKeyPathSnapshotError(
+                "offline patch invocation/input binding mismatch"
+            )
+        patch = project_regkey_offline_patch(facts)
+        if patch.postpatch_utf16 is not None:
+            observed = snapshot.postpatch
+            if (
+                observed is not None
+                and observed.readable_utf16 is not None
+                and observed.readable_utf16 != patch.postpatch_utf16
+            ):
+                raise RegKeyPathSnapshotError(
+                    "computed and observed postpatch bytes conflict"
+                )
+            snapshot = replace(
+                snapshot,
+                postpatch=RegKeyPathValue(
+                    patch.postpatch_utf16,
+                    None if observed is None else observed.unc_prefix,
+                ),
+            )
+    result = _project_regkey_expansion(
+        payload_raw, original_value_utf16, expected_utf16, expand_left, snapshot
+    )
+    return replace(result, offline_patch=patch)
