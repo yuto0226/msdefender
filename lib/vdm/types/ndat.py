@@ -44,7 +44,15 @@ from ..http_header_subject import (
     compile_http_header_literal,
     http_header_literal_yara_rhs,
 )
-from ..mcp_pattern import McpPatternReceiverProjection, project_mcp_pattern_receiver
+from ..mcp_pattern import (
+    MCP_ACTUAL2_SCOPE,
+    McpActual2Pattern,
+    McpPatternReceiverProjection,
+    UnsupportedMcpPattern,
+    compile_mcp_actual2_pattern,
+    mcp_actual2_yara_rhs,
+    project_mcp_pattern_receiver,
+)
 from ..raw_body import (
     RawBodyPattern,
     UnsupportedRawBodyPattern,
@@ -93,6 +101,7 @@ class NdatMcpPattern:
     raw: bytes
     counted_data: bytes
     projection: McpPatternReceiverProjection
+    portable_pattern: McpActual2Pattern | None
     record_id_suffix_raw: bytes | None
     trailing_raw: bytes
 
@@ -103,10 +112,18 @@ def project_ndat_mcp_pattern(parsed: NdatPayload) -> NdatMcpPattern:
     parsed = parse_ndat(parsed.raw)
     if parsed.callback_index != 23:
         raise UnsupportedNdatMcpPattern("requires callback decimal23 (0x17)")
+    projection = project_mcp_pattern_receiver(parsed.data_raw, parsed.data_length)
+    portable = None
+    if projection.effective_pattern is not None:
+        try:
+            portable = compile_mcp_actual2_pattern(projection.effective_pattern)
+        except UnsupportedMcpPattern:
+            pass
     return NdatMcpPattern(
         parsed.raw,
         parsed.data_raw,
-        project_mcp_pattern_receiver(parsed.data_raw, parsed.data_length),
+        projection,
+        portable,
         parsed.record_id_suffix_raw,
         parsed.trailing_raw,
     )
@@ -115,6 +132,7 @@ def project_ndat_mcp_pattern(parsed: NdatPayload) -> NdatMcpPattern:
 def _mcp_pattern_manifest(parsed: NdatPayload) -> JSONObject:
     model = project_ndat_mcp_pattern(parsed)
     p = model.projection
+    portable = model.portable_pattern
     return JSONObject(
         (
             ("format", "vdm.ndat.mcp-pattern.recipe.v1"),
@@ -243,7 +261,34 @@ def _mcp_pattern_manifest(parsed: NdatPayload) -> JSONObject:
                     )
                 ),
             ),
-            ("regex_evaluator", None),
+            (
+                "regex_evaluator",
+                None
+                if portable is None
+                else "lib.vdm.mcp_pattern.search_mcp_actual2_pattern",
+            ),
+            *(
+                (
+                    ("portable_profile", "mpengine-1.443.903.0.mcp-actual2.boolean.v1"),
+                    ("effective_pattern_sha256", portable.sha256),
+                    ("compiler", "lib.vdm.mcp_pattern.compile_mcp_actual2_pattern"),
+                    ("pattern_type", "lib.vdm.mcp_pattern.McpActual2Pattern"),
+                    ("compiled_profile_type", "lib.vdm.mcp_pattern.McpActual2Profile"),
+                    ("yara_rhs_helper", "lib.vdm.mcp_pattern.mcp_actual2_yara_rhs"),
+                    ("yara_rhs", mcp_actual2_yara_rhs(portable)),
+                    ("boolean_scope", MCP_ACTUAL2_SCOPE),
+                    (
+                        "closure_evidence_sha256",
+                        portable.profile.closure_evidence_sha256,
+                    ),
+                    (
+                        "compiled_snapshot_results_sha256",
+                        portable.profile.compiled_snapshot_results_sha256,
+                    ),
+                )
+                if portable is not None
+                else ()
+            ),
             ("engine_compile_accepted", None),
             ("callback_completed", None),
             ("vector_append_completed", None),
@@ -270,11 +315,29 @@ def _export_mcp_pattern(parsed: NdatPayload) -> ArtifactExport:
                 ).encode("utf8")
                 + b"\n",
             ),
+            *(
+                (
+                    Artifact(
+                        "mcp-pattern.yara-string.txt",
+                        "yara_string_fragment",
+                        (
+                            "// "
+                            + MCP_ACTUAL2_SCOPE
+                            + "\n$mcp_pattern = "
+                            + mcp_actual2_yara_rhs(model.portable_pattern)
+                            + "\n"
+                        ).encode("ascii"),
+                    ),
+                )
+                if model.portable_pattern is not None
+                else ()
+            ),
         ),
     )
 
 
 def _mcp_pattern_semantics(parsed: NdatPayload) -> RuleSemantics:
+    portable = project_ndat_mcp_pattern(parsed).portable_pattern
     return RuleSemantics(
         status="confirmed_subset",
         representation="ndat.mcp-pattern.recipe.v1",
@@ -286,14 +349,37 @@ def _mcp_pattern_semantics(parsed: NdatPayload) -> RuleSemantics:
         issues=(
             SemanticIssue(
                 "mcp_pattern_external_runtime",
-                "Raw pattern and bounded linkage recipe only; regex evaluator, original JSON serializer, compile acceptance, actual runtime order/RecID, consumer result and final policy remain external.",
+                "The separately closed actual2 Boolean subset requires original VM completion without resource/exception paths; arbitrary regex evaluator, original JSON serializer, compile acceptance, actual runtime order/RecID, consumer result and final policy remain external."
+                if portable is not None
+                else "Raw pattern and bounded linkage recipe only; regex evaluator, original JSON serializer, compile acceptance, actual runtime order/RecID, consumer result and final policy remain external.",
             ),
         ),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-mcp-actual2-boolean",
+                        "runtime_consumer",
+                        MCP_ACTUAL2_SCOPE,
+                        "subset",
+                        ("ndat-mcp-actual2-closure",),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Actual runtime RecID/order, resource/exception outcomes including caught Search exceptions, serializer, report/cleanup and policy remain external.",
+                            ),
+                        ),
+                    ),
+                )
+                if portable is not None
+                else ()
+            ),
             SemanticClaim(
                 "ndat-mcp-pattern-recipe",
                 "runtime_consumer",
-                "Callback23 gates counted last-NUL data and compiles first-NUL CString with Boost0x400000, appends regex16B/RecID/padding rows24B; explicit-size regex_search returns first matching runtime row. No domain IoC projection or portable regex equivalence.",
+                "Callback23 gates counted last-NUL data and compiles first-NUL CString with Boost0x400000, appends regex16B/RecID/padding rows24B; explicit-size regex_search returns first matching runtime row. Actual2 conditional Boolean equivalence is separately closed; no domain IoC projection or arbitrary portable regex equivalence."
+                if portable is not None
+                else "Callback23 gates counted last-NUL data and compiles first-NUL CString with Boost0x400000, appends regex16B/RecID/padding rows24B; explicit-size regex_search returns first matching runtime row. No domain IoC projection or portable regex equivalence.",
                 "subset",
                 ("ndat-mcp-pattern-static", "ndat-mcp-pattern-native"),
                 (
@@ -305,6 +391,22 @@ def _mcp_pattern_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-mcp-actual2-closure",
+                        "consumer",
+                        "engine_static",
+                        "docs/mpengine.dll/1.443.903.0/ndat_cb23_actual2_boolean_closure_private.md",
+                        ("ndat-mcp-actual2-boolean",),
+                        "Compiled actual2 graphs/reachable unsigned-char VM closure; pinned evidence "
+                        + portable.profile.closure_evidence_sha256
+                        + "; finite2206 native cases only cross-check; no arbitrary-regex or resource/exception-path equivalence",
+                    ),
+                )
+                if portable is not None
+                else ()
+            ),
             SemanticEvidence(
                 "ndat-mcp-pattern-static",
                 "consumer",
@@ -3709,7 +3811,12 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
                         ),
                         (
                             "Boost",
-                            "Boost byte pattern; syntax0x400000; search flags0x400; evaluator external",
+                            "Boost byte pattern; syntax0x400000; search flags0x400; "
+                            + (
+                                "actual2 conditional byte evaluator available"
+                                if model.portable_pattern is not None
+                                else "evaluator external"
+                            ),
                         ),
                         (
                             "runtime",
