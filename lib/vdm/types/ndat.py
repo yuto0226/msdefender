@@ -44,6 +44,7 @@ from ..http_header_subject import (
     compile_http_header_literal,
     http_header_literal_yara_rhs,
 )
+from ..mcp_pattern import McpPatternReceiverProjection, project_mcp_pattern_receiver
 from ..raw_body import (
     RawBodyPattern,
     UnsupportedRawBodyPattern,
@@ -79,6 +80,249 @@ class NdatPayload:
     callback_index: int
     record_id_suffix_raw: bytes | None
     trailing_raw: bytes
+
+
+class UnsupportedNdatMcpPattern(ValueError):
+    """The authoritative raw payload does not select callback23."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatMcpPattern:
+    """Raw pattern recipe; native compilation and runtime RecID remain external."""
+
+    raw: bytes
+    counted_data: bytes
+    projection: McpPatternReceiverProjection
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+
+
+def project_ndat_mcp_pattern(parsed: NdatPayload) -> NdatMcpPattern:
+    if not isinstance(parsed, NdatPayload):
+        raise TypeError("parsed must be NdatPayload")
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 23:
+        raise UnsupportedNdatMcpPattern("requires callback decimal23 (0x17)")
+    return NdatMcpPattern(
+        parsed.raw,
+        parsed.data_raw,
+        project_mcp_pattern_receiver(parsed.data_raw, parsed.data_length),
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _mcp_pattern_manifest(parsed: NdatPayload) -> JSONObject:
+    model = project_ndat_mcp_pattern(parsed)
+    p = model.projection
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.mcp-pattern.recipe.v1"),
+            ("type", "NDAT"),
+            ("kind", "mcp_pattern_recipe"),
+            (
+                "callback",
+                JSONObject(
+                    (
+                        ("index", 23),
+                        ("dispatch_target", "McpServersNdatCallback"),
+                        ("is_final_detection", False),
+                    )
+                ),
+            ),
+            ("raw_hex", model.raw.hex()),
+            ("data_count", p.count),
+            ("counted_data_hex", model.counted_data.hex()),
+            ("wire_data_pointer", "non_null_storage; count0 is not NULL no-op"),
+            ("receiver_branch", p.branch),
+            ("receiver_known_return_u32", p.known_return_u32),
+            (
+                "effective_pattern_hex",
+                None if p.effective_pattern is None else p.effective_pattern.hex(),
+            ),
+            (
+                "after_terminator_hex",
+                None if p.after_terminator is None else p.after_terminator.hex(),
+            ),
+            (
+                "record_name_raw_hex",
+                None
+                if model.record_id_suffix_raw is None
+                else model.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", model.trailing_raw.hex()),
+            ("syntax_flags_u32", 0x400000),
+            ("match_flags_u32", 0x400),
+            (
+                "match_operation",
+                "boost::regex_search(begin,end,regex); explicit byte range",
+            ),
+            ("runtime_recid", None),
+            (
+                "runtime_recid_source",
+                "deferred entry+4; not wire DWORD, suffix, ordinal or pattern",
+            ),
+            (
+                "runtime_layout",
+                JSONObject(
+                    (
+                        ("vector_size_bytes", 24),
+                        ("begin_offset", 0),
+                        ("end_offset", 8),
+                        ("capacity_offset", 16),
+                        ("row_stride", 24),
+                        ("regex_offset", 0),
+                        ("regex_size_bytes", 16),
+                        ("record_id_offset", 16),
+                        ("padding_offset", 20),
+                        ("padding_size_bytes", 4),
+                        ("padding_value", None),
+                    )
+                ),
+            ),
+            (
+                "storage_contract",
+                "lazy vector; append duplicates; actual successful compiled runtime order external",
+            ),
+            (
+                "first_match_contract",
+                "first true Search stops even for RecID0; matched, record_id and row_index remain distinct",
+            ),
+            (
+                "subject_contract",
+                "externally supplied bytes storage[:size], including NUL; no decoding or normalization",
+            ),
+            (
+                "json_subject_recipe",
+                "select JSON object mcpServers preferentially, otherwise servers; boost::json::serialize each value; original serializer unverified",
+            ),
+            (
+                "recipe",
+                JSONObject(
+                    (
+                        ("projector", "lib.vdm.types.ndat.project_ndat_mcp_pattern"),
+                        (
+                            "receiver_projector",
+                            "lib.vdm.mcp_pattern.project_mcp_pattern_receiver",
+                        ),
+                        ("subject_type", "lib.vdm.mcp_pattern.McpSubject"),
+                        (
+                            "runtime_row_type",
+                            "lib.vdm.mcp_pattern.McpCompiledRuntimeRow",
+                        ),
+                        ("vector_type", "lib.vdm.mcp_pattern.McpRuntimeVectorSnapshot"),
+                        ("first_match", "lib.vdm.mcp_pattern.first_match_mcp_pattern"),
+                    )
+                ),
+            ),
+            (
+                "native_recipe",
+                JSONObject(
+                    (
+                        ("engine_version", "1.443.903.0"),
+                        (
+                            "engine_sha256",
+                            "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                        ),
+                        ("receiver", "mpengine.dll+0xBDF100"),
+                        (
+                            "constructor",
+                            "mpengine.dll+0xBDE990; boost CString constructor+0x1FBFE4",
+                        ),
+                        ("global_slot", "mpengine.dll+0x128AFA8"),
+                        (
+                            "matcher",
+                            "mpengine.dll+0xBDF1AC; initialized vector required",
+                        ),
+                        (
+                            "search",
+                            "mpengine.dll+0xBE0140; std::exception returns false",
+                        ),
+                        ("regex_error_return_u32", 32780),
+                        ("std_exception_return_u32", 32775),
+                    )
+                ),
+            ),
+            ("regex_evaluator", None),
+            ("engine_compile_accepted", None),
+            ("callback_completed", None),
+            ("vector_append_completed", None),
+            ("consumer_result", None),
+            ("effective_policy", None),
+            ("final_verdict", None),
+        )
+    )
+
+
+def _export_mcp_pattern(parsed: NdatPayload) -> ArtifactExport:
+    model = project_ndat_mcp_pattern(parsed)
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("mcp-pattern-data.bin", "binary", model.counted_data),
+            Artifact(
+                "mcp-pattern-metadata.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_mcp_pattern_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode("utf8")
+                + b"\n",
+            ),
+        ),
+    )
+
+
+def _mcp_pattern_semantics(parsed: NdatPayload) -> RuleSemantics:
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="ndat.mcp-pattern.recipe.v1",
+        data=_mcp_pattern_manifest(parsed),
+        profile="mpengine-1.443.903.0",
+        evidence=(
+            "McpServersNdatCallback; CString Boost flags0x400000; RegExMcpPatternMatch first-match; explicit-size Search",
+        ),
+        issues=(
+            SemanticIssue(
+                "mcp_pattern_external_runtime",
+                "Raw pattern and bounded linkage recipe only; regex evaluator, original JSON serializer, compile acceptance, actual runtime order/RecID, consumer result and final policy remain external.",
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                "ndat-mcp-pattern-recipe",
+                "runtime_consumer",
+                "Callback23 gates counted last-NUL data and compiles first-NUL CString with Boost0x400000, appends regex16B/RecID/padding rows24B; explicit-size regex_search returns first matching runtime row. No domain IoC projection or portable regex equivalence.",
+                "subset",
+                ("ndat-mcp-pattern-static", "ndat-mcp-pattern-native"),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Native fixture supplies serialized bytes; original JSON serializer, corpus compile acceptance, actual RecID/order, full scanner/cleanup consumer execution and policy remain unknown.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "ndat-mcp-pattern-static",
+                "consumer",
+                "engine_static",
+                "docs/mpengine.dll/1.443.903.0/ndat_mcp_servers_contract_private.md",
+                ("ndat-mcp-pattern-recipe",),
+                "first-NUL compiler; flags400000; row24/RecID+16/padding+20; matcher/Search; mcpServers otherwise servers value serialization recipe",
+            ),
+            SemanticEvidence(
+                "ndat-mcp-pattern-native",
+                "engine_equivalent_test",
+                "engine_runtime",
+                "tests/local_cb21_23_native_v1_manifest.json",
+                ("ndat-mcp-pattern-recipe",),
+                "manifest SHA256 2f85115ef67fc5ff7eabae63b6a77163736d5da5b24942053dbc8e89367b6d59; results SHA256 84bfa23a49751f5fe42ba8e625449e6a7d38faaf8a9e507dd3a930ef174ae353; bounded original compiler/vector/matcher with supplied RecIDs and serialized bytes; actual2, duplicates, first-match0, first-NUL, explicit-size NUL; no original serializer/scanner/report/cleanup/policy",
+            ),
+        ),
+    )
 
 
 class UnsupportedNdatAsrAutoEnable(ValueError):
@@ -3233,6 +3477,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs and linkage metadata."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 23:
+        return _export_mcp_pattern(parsed)
     if parsed.callback_index == 21:
         return _export_asr_auto_enable(parsed)
     if parsed.callback_index in (16, 17):
@@ -3445,6 +3691,39 @@ def _preview_rows(data: bytes) -> tuple[tuple[str, str], ...]:
 
 def render_ndat(parsed: NdatPayload) -> FormatResult:
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 23:
+        model = project_ndat_mcp_pattern(parsed)
+        p = model.projection
+        return FormatResult(
+            sections=(
+                DisplaySection(
+                    "MCP Pattern Recipe",
+                    rows=(
+                        ("receiver", p.branch),
+                        ("counted_bytes", str(p.count)),
+                        (
+                            "pattern",
+                            "not selected"
+                            if p.effective_pattern is None
+                            else repr(p.effective_pattern),
+                        ),
+                        (
+                            "Boost",
+                            "Boost byte pattern; syntax0x400000; search flags0x400; evaluator external",
+                        ),
+                        (
+                            "runtime",
+                            "actual compiled vector order/RecID external; padding+20 unknown",
+                        ),
+                        (
+                            "subject",
+                            "explicit bytes+size including NUL; original JSON serializer unverified",
+                        ),
+                        ("policy", "consumer result and final policy unknown"),
+                    ),
+                ),
+            )
+        )
     if parsed.callback_index == 21:
         model = project_ndat_asr_auto_enable(parsed)
         candidate = model.portable_candidate
@@ -3691,6 +3970,8 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
 def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     """Export only NDAT callbacks tied to a static registration and consumer."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 23:
+        return _mcp_pattern_semantics(parsed)
     if parsed.callback_index == 21:
         return _asr_auto_enable_semantics(parsed)
     if parsed.callback_index in (16, 17):
