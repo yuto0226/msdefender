@@ -1,9 +1,12 @@
 """Lossless parser for REGKEY (0x63) records."""
 
+import json
 from dataclasses import dataclass
 from typing import Final
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -166,7 +169,8 @@ def _project_receiver_fields(parsed: RegKeyPayload) -> JSONObject:
                 if 1 <= parsed.key_type <= len(REGKEY_HIVES)
                 else None,
             ),
-            ("prefix_index", prefix_index),
+            ("ingest_prefix_index", prefix_index),
+            ("prefix_index", prefix_index if storage == "general" else 0xFFFF),
             (
                 "prefix",
                 None if prefix_index is None else REGKEY_PREFIXES[prefix_index],
@@ -287,6 +291,7 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                     ),
                 ),
                 ("trailing_hex", parsed.tail_raw.hex()),
+                ("query_recipe", _query_recipe_contract(selector_accepted)),
                 (
                     "storage_routing",
                     JSONObject(
@@ -406,8 +411,28 @@ def _regkey_claims(
                     (
                         "Ignored selectors do not reach this registered-record consumer."
                         if not selector_accepted
-                        else "All registry value-type comparison branches are not projected into portable IR."
+                        else "ASEP requires actual caller bindings; registry/LUM state and expansion remain external."
                     ),
+                ),
+            ),
+        ),
+        SemanticClaim(
+            id="regkey_typed_local_predicate",
+            scope="detection_predicate",
+            statement=(
+                "A raw-authoritative query recipe and prebound registry snapshot "
+                "support key/value existence, ASCII-only WCHAR comparison, exact "
+                "binary bytes and unsigned decimal numeric predicates. Runtime "
+                "type 5 formats the first byte shifted left 24, not a standard "
+                "big-endian DWORD. Missing readable bytes or expansion are unknown."
+            ),
+            coverage="subset" if selector_accepted else "unknown",
+            evidence_refs=("regkey_query_native",) if selector_accepted else (),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Valid UTF-8 successful conversion and unchanged CRT locale profile only; "
+                    "ASEP selection, actual LUM/root binding, expansion and final report are external.",
                 ),
             ),
         ),
@@ -461,6 +486,24 @@ def _regkey_claims(
 def _regkey_evidence() -> tuple[SemanticEvidence, ...]:
     return (
         SemanticEvidence(
+            id="regkey_query_native",
+            axis="consumer",
+            kind="engine_equivalent_test",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "tests/local_regkey_query_native.py SHA256 "
+                "c9bb5b795fb386bd65ae774f035ee12d95718884e9fcfeaa5dfd3dc79df3afb0; "
+                "62 cases / 77 calls; tests/local_regkey_query_native.json SHA256 "
+                "d8e0a03b2b5a5c97e8fa32625ff0656442b13301d1c26d6d8e109c15a285e0f2; "
+                "current source bridge tests/local_regkey_query_bridge.py SHA256 "
+                "c509880c005700eb581c25ef44973a2d0118f0ef8aaa04084d472a2cb4adb60c; "
+                "receiver, GetRegKeyFromRecord and ResutilsRegKeyInHive original code; "
+                "typed registry services, real host Win32 UTF-8 / C-locale UCRT oracles; "
+                "docs/mpengine.dll/1.443.903.0/regkey_query_native_private.md"
+            ),
+            supports=("regkey_typed_local_predicate",),
+        ),
+        SemanticEvidence(
             id="regkey_receiver",
             axis="receiver",
             kind="engine_static",
@@ -506,10 +549,83 @@ def _regkey_evidence() -> tuple[SemanticEvidence, ...]:
     )
 
 
+def _query_recipe_contract(applicable: bool) -> JSONObject:
+    return JSONObject(
+        (
+            ("applicable", applicable),
+            (
+                "projector",
+                "lib.vdm.regkey_match.project_regkey_query" if applicable else None,
+            ),
+            (
+                "evaluator",
+                "lib.vdm.regkey_match.evaluate_regkey" if applicable else None,
+            ),
+            (
+                "recipe_type",
+                "lib.vdm.regkey_match.RegKeyQueryRecipe" if applicable else None,
+            ),
+            (
+                "snapshot_type",
+                "lib.vdm.regkey_match.RegKeyQuerySnapshot" if applicable else None,
+            ),
+            (
+                "value_type",
+                "lib.vdm.regkey_match.RegKeyValueSnapshot" if applicable else None,
+            ),
+            (
+                "asep_binding_type",
+                "lib.vdm.regkey_match.RegKeyAsepBinding" if applicable else None,
+            ),
+            (
+                "unsupported_error",
+                "lib.vdm.regkey_match.UnsupportedRegKeyQuery" if applicable else None,
+            ),
+            (
+                "scope",
+                (
+                    "Valid UTF-8 successful conversion; logical general key or actual "
+                    "caller-resolved ASEP binding; prebound query statuses/type/physical bytes/declared "
+                    "size are external. NULL differs from empty. Expansion unknown unless supplied. "
+                    "No registry event or final verdict."
+                ),
+            ),
+        )
+    )
+
+
+def export_regkey(parsed: RegKeyPayload) -> ArtifactExport:
+    """Export a query recipe manifest, not a registry event or detection rule."""
+    parsed = parse_regkey(parsed.raw)
+    semantics = export_regkey_semantics(parsed).to_json()
+    manifest = {
+        "format": "vdm.regkey.query-recipe.v1",
+        "raw_hex": parsed.raw.hex(),
+        "query_recipe": dict(_query_recipe_contract(1 <= parsed.key_type <= 4).items),
+        "receiver_projection": dict(_project_receiver_fields(parsed).items),
+        "record_local_match": None,
+        "final_verdict": None,
+        "claims": semantics["claims"],
+        "claim_evidence": semantics["claim_evidence"],
+    }
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact(
+                "regkey-query.json",
+                "json",
+                json.dumps(manifest, ensure_ascii=True, indent=2).encode("utf-8")
+                + b"\n",
+            ),
+        ),
+    )
+
+
 SPEC = FamilySpec(
     REGKEY_TYPE,
     "REGKEY",
     parse_regkey,
     render_regkey,
+    exporter=export_regkey,
     semantic_exporter=export_regkey_semantics,
 )
