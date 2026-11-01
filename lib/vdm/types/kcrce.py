@@ -22,6 +22,51 @@ BASE_SIZE: Final = 16
 UNRESOLVED_FLAGS_MASK: Final = 0x30000000
 REQUIRE_FASTCRC_WHEN_PROVIDER_KEY_MISSING: Final = 0x40000000
 SUPPRESS_WEAK_FASTCRC_FALLBACK: Final = 0x80000000
+_COMMON_PE_CRC2: Final = JSONObject(
+    (
+        ("callable", "lib.vdm.kcrce_match.evaluate_kcrce_pe_crc2"),
+        ("decode_callable", "lib.vdm.kcrce_match.decode_kcrce_pe_range"),
+        ("context_type", "lib.vdm.kcrce_match.KcrcePeContext"),
+        ("section_type", "lib.vdm.kcrce_match.KcrcePeSection"),
+        ("range_type", "lib.vdm.kcrce_match.KcrcePeRange"),
+        ("result_type", "lib.vdm.kcrce_match.KcrcePeCrc2Result"),
+        (
+            "applicability",
+            "only when the actual scanner selects kcrc_callback@0x18044C1E0; never inferred from this record",
+        ),
+        (
+            "scanner_source",
+            "DO_KCRCE_SCAN selects normalized section index; raw offset/size are scanner fields pe+4048h/4044h+40*index, not an arbitrary unnormalized PE header",
+        ),
+        ("start", "u32(selected_section.raw_offset + ((length_flags >> 16) & 0xfff))"),
+        ("length", "length_flags & 0xffff"),
+        ("end", "u64(start) + length; not clamped to section size"),
+        (
+            "cold_gate",
+            "index < section_count, raw_size >=512, successful prefetch yields at least512 bytes; prefetch requests min(raw_size,1024)",
+        ),
+        (
+            "crc",
+            "CRC_0 seed FFFFFFFF, no final XOR; successful short/EOF reads add only available bytes",
+        ),
+        (
+            "match",
+            "record_local_crc2_match compares record.crc2 even for reset-default or partial CRC; range_complete is independent",
+        ),
+        (
+            "inputs",
+            "complete immutable source bytes, actual normalized sections tuple and selected index; fresh provider and cold window",
+        ),
+        (
+            "unknown_boundary",
+            "no negative HRESULT, warm/cache origin, OEP/VMM/other callback domain, crc1/fastcrc arbitration, weak fallback, attribute/NID108 or final verdict model",
+        ),
+        (
+            "high_flags_boundary",
+            "only the analyzed stage2/common-PE path masks high four bits; global bits28-29 remain unresolved",
+        ),
+    )
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +252,7 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
 
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
-        representation="kcrce.match_pipeline.ir.v1",
+        representation="kcrce.match_pipeline.ir.v2",
         data=JSONObject(
             (
                 ("type", "kcrce_match_pipeline"),
@@ -219,22 +264,24 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
                         (
                             JSONObject(
                                 (
-                                    ("stage", 0),
+                                    ("compare_stage", 0),
+                                    ("callback_mode", 1),
                                     ("field", "crc1"),
                                     ("expected", parsed.crc1),
-                                    ("source", "provider_callback_stage_0"),
+                                    ("source", "provider_callback_mode_1"),
                                     ("comparison", "exact"),
                                     ("index_role", "primary_equal_range"),
                                 )
                             ),
                             JSONObject(
                                 (
-                                    ("stage", 1),
+                                    ("compare_stage", 1),
+                                    ("callback_mode", 0),
                                     ("field", "fastcrc"),
                                     ("expected", parsed.fastcrc),
                                     (
                                         "source",
-                                        "cached_provider_key_or_fastcrc_callback",
+                                        "cached_provider_key_or_callback_mode_0",
                                     ),
                                     (
                                         "comparison",
@@ -244,10 +291,11 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
                             ),
                             JSONObject(
                                 (
-                                    ("stage", 2),
+                                    ("compare_stage", 2),
+                                    ("callback_mode", 2),
                                     ("field", "crc2"),
                                     ("expected", parsed.crc2),
-                                    ("source", "provider_callback_stage_2"),
+                                    ("source", "provider_callback_mode_2"),
                                     ("comparison", "exact"),
                                 )
                             ),
@@ -263,6 +311,10 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
                             ("range_interpretation", "callback_specific"),
                         )
                     ),
+                ),
+                (
+                    "common_pe_crc2_profile",
+                    _COMMON_PE_CRC2,
                 ),
                 (
                     "packed_range",
@@ -404,6 +456,28 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
                 ),
             ),
             SemanticClaim(
+                id="kcrce_common_pe_crc2_projection",
+                scope="runtime_consumer",
+                statement=(
+                    "When the scanner selects the common PE callback, a fresh/cold provider "
+                    "decodes low16 length and bits16-27 section-relative offset, wraps the initial "
+                    "raw-offset sum at32 bits and hashes actual available bytes without clamping "
+                    "to the section end. Skipped gates and partial reads retain comparable CRC values."
+                ),
+                coverage="subset",
+                evidence_refs=("kcrce_common_pe_crc2_differential",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The callback family and normalized section view must be supplied by "
+                        "the actual scanner. This complete immutable-byte model covers successful "
+                        "EOF/short reads, not negative HRESULTs, warm/cache origin or OEP/VMM. "
+                        "Bits28-29 global semantics, other compare stages, weak fallback, "
+                        "attribute/NID policy and final verdict remain outside this projection.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
                 id="kcrce_candidate_predicate",
                 scope="detection_predicate",
                 statement=(
@@ -452,6 +526,26 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                id="kcrce_common_pe_crc2_differential",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref="mpengine 1.443.903.0 DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                locator=(
+                    "tests/local_kcrce_pe_range_native.py (25 cases/34 native calls; SHA256 "
+                    "daea4cd24b5d1425afdf16707045d26e7c5cf33d12688ef0b89e39dc9e47e6b5); "
+                    "report SHA256 23ddfacffe03b5b62359ab8fe74792383a02c977142d81e8035a643020f73885; "
+                    "tests/local_kcrce_pe_range_differential.py (22 source cases; SHA256 "
+                    "06c1d0e77c27fc2d617f5e253bb302dc8e26ff776af0a53c32446892cd9dc5c0); "
+                    "DO_KCRCE_SCAN@0x18022E260 -> common callback@0x18044C1E0 -> "
+                    "HashOnFile@0x18044C380 -> CRCHashContext::Update@0x180415A70/CRC_0; "
+                    "CompareValues@0x1801421D4/get_crc2@0x1801422D0; "
+                    "docs/mpengine.dll/1.443.903.0/kcrce_pe_range_private.md; "
+                    "explicit Ufs byte services, fresh/cold CRC2 value projection only; "
+                    "warm-wrap fixture proves arithmetic, not cold source reconstruction"
+                ),
+                supports=("kcrce_common_pe_crc2_projection",),
+            ),
             SemanticEvidence(
                 id="kcrce_receiver",
                 axis="receiver",
