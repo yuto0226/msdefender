@@ -1,9 +1,12 @@
 """Parser and renderer for NDAT (0xA9) payloads."""
 
+import json
 from dataclasses import dataclass
 from typing import Final
 
 from ..core import (
+    Artifact,
+    ArtifactExport,
     DisplaySection,
     FamilySpec,
     FormatResult,
@@ -29,6 +32,144 @@ class NdatPayload:
     callback_index: int
     record_id_suffix_raw: bytes | None
     trailing_raw: bytes
+
+
+class UnsupportedNdatHttpUrlPattern(ValueError):
+    """The record is outside the non-null callback-15 pattern framing profile."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatHttpUrlPattern:
+    """Byte pattern input for the engine Boost backend, not a portable regex."""
+
+    raw: bytes
+    counted_data: bytes
+    effective_pattern: bytes
+    after_pattern_terminator: bytes
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+    syntax_flags: int = 0x500000
+
+
+def project_ndat_http_url_pattern(parsed: NdatPayload) -> NdatHttpUrlPattern:
+    """Project decimal callback 15 (0x0F), reparsing authoritative wire bytes.
+
+    Only nonempty counted data ending in NUL is accepted by this projector.
+    The constructor reads through the first NUL; later counted bytes still
+    participate in the callback's final-byte check. Framing does not establish
+    that an arbitrary pattern compiles or matches. No regex engine is invoked.
+    """
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 15:
+        raise UnsupportedNdatHttpUrlPattern("requires callback decimal 15 (0x0F)")
+    data = parsed.data_raw
+    if not data or data[-1] != 0:
+        raise UnsupportedNdatHttpUrlPattern(
+            "requires nonempty counted data ending in NUL"
+        )
+    first_nul = data.index(0)
+    return NdatHttpUrlPattern(
+        parsed.raw,
+        data,
+        data[:first_nul],
+        data[first_nul + 1 :],
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _http_url_manifest(parsed: NdatPayload) -> JSONObject:
+    try:
+        pattern = project_ndat_http_url_pattern(parsed)
+    except UnsupportedNdatHttpUrlPattern as exc:
+        return JSONObject((("framing_supported", False), ("reason", str(exc))))
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.http-url.boost-pattern.v1"),
+            ("callback_decimal", 15),
+            ("callback_hex", "0x0F"),
+            ("framing_supported", True),
+            ("raw_hex", pattern.raw.hex()),
+            ("counted_data_length", len(pattern.counted_data)),
+            ("counted_data_hex", pattern.counted_data.hex()),
+            ("effective_pattern_hex", pattern.effective_pattern.hex()),
+            ("first_nul_offset", len(pattern.effective_pattern)),
+            ("after_pattern_terminator_hex", pattern.after_pattern_terminator.hex()),
+            (
+                "record_id_suffix_hex",
+                None
+                if pattern.record_id_suffix_raw is None
+                else pattern.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", pattern.trailing_raw.hex()),
+            ("syntax_flags_u32", pattern.syntax_flags),
+            ("syntax_flags_hex", "0x500000"),
+            (
+                "backend",
+                "engine Boost regex; boost::re_detail_500; narrow char w32_regex_traits<char>",
+            ),
+            (
+                "grammar_dispatch",
+                "raw flags low two bits 0 select parse_extended; no portable grammar equivalence claimed",
+            ),
+            (
+                "locale_dependency",
+                "GetUserDefaultLCID at traits construction; cached LCID-dependent w32 narrow-byte traits",
+            ),
+            ("traits_internal_lcid", None),
+            (
+                "subject",
+                "Original input+8 URI WCHAR CString converted by CP_UTF8/flags0 through first WCHAR NUL; upstream canonicalization unknown",
+            ),
+            (
+                "query",
+                "RegExState::Match CString through first byte NUL -> perl_matcher::find_imp; backend search, not fullmatch",
+            ),
+            (
+                "post_match",
+                "RegExStringMatch separately invokes ProcessMatchedSignature with runtime RecID/SigSeq; outer policy not evaluated",
+            ),
+            ("runtime_record_id", None),
+            ("runtime_sigseq", None),
+            (
+                "record_id_source",
+                "loader createrecid/createrecidz, separate from counted pattern bytes",
+            ),
+            ("compile_valid", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            ("projector", "lib.vdm.types.ndat.project_ndat_http_url_pattern"),
+            ("projection_type", "lib.vdm.types.ndat.NdatHttpUrlPattern"),
+            ("unsupported_error", "lib.vdm.types.ndat.UnsupportedNdatHttpUrlPattern"),
+            ("evaluator", None),
+            (
+                "validation_scope",
+                "Pinned DLL host compiled frozen corpus 226 patterns and completed 686 queries; not arbitrary-pattern compile validity, full URI caller execution or portable regex conformance",
+            ),
+        )
+    )
+
+
+def export_ndat(parsed: NdatPayload) -> ArtifactExport:
+    """Export only callback-15 Boost input and its required backend contract."""
+    parsed = parse_ndat(parsed.raw)
+    try:
+        pattern = project_ndat_http_url_pattern(parsed)
+    except UnsupportedNdatHttpUrlPattern as exc:
+        return ArtifactExport("unsupported", reason=str(exc))
+    manifest = dict(_http_url_manifest(parsed).items)
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("http-url-pattern.boost.bin", "binary", pattern.effective_pattern),
+            Artifact(
+                "http-url-pattern.json",
+                "json",
+                json.dumps(manifest, ensure_ascii=True, indent=2).encode("utf-8")
+                + b"\n",
+            ),
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,9 +383,22 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         22: "custom_asr_not_allowed_rule_ingest",
     }
     callback_target = callback_targets.get(parsed.callback_index)
-    business_semantics = callback_semantics.get(parsed.callback_index, "unknown")
+    has_http_url_consumer = parsed.callback_index == 15
+    business_semantics = (
+        "boost_w32_byte_pattern_ingest_and_uri_search"
+        if has_http_url_consumer
+        else callback_semantics.get(parsed.callback_index, "unknown")
+    )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_http_url_consumer:
+        issues.append(
+            SemanticIssue(
+                "http_url_backend_required",
+                "The manifest requires the engine Boost w32 byte-regex backend; "
+                "there is no portable regex evaluator or final network verdict.",
+            )
+        )
     if callback_target is None:
         issues.append(
             SemanticIssue(
@@ -291,6 +445,13 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         if callback_target is not None
         else "observed_only"
     )
+    if has_http_url_consumer and (not parsed.data_raw or parsed.data_raw[-1] != 0):
+        issues.append(
+            SemanticIssue(
+                "http_url_nonnull_pattern_framing_unsupported",
+                "The manifest requires nonempty counted data ending in NUL; it does not model NULL finalize or compile failure.",
+            )
+        )
     return RuleSemantics(
         status=status,
         representation="ndat.counted_data_callback_suffix.v4",
@@ -326,6 +487,10 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     else None,
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                (
+                    "http_url_pattern",
+                    _http_url_manifest(parsed) if has_http_url_consumer else None,
+                ),
                 (
                     "process_stage_contract",
                     _process_stage_contract() if has_logskip_consumer else None,
@@ -390,6 +555,34 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-http-url-pattern-contract",
+                        "runtime_consumer",
+                        "Callback decimal 15 (0x0F) stores a first-NUL byte pattern "
+                        "for the engine Boost w32 narrow-char backend with raw flags "
+                        "0x500000. The original URI WCHAR CString is converted to UTF8 "
+                        "for find_imp search; RecID/SigSeq post-match policy is separate. "
+                        "Pinned-host validation compiled the frozen 226 corpus patterns "
+                        "and completed 686 queries, not arbitrary-pattern validation.",
+                        "subset",
+                        ("ndat-http-url-static", "ndat-http-url-native-host"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Traits depend on runtime default LCID; its internal cached "
+                                "value was not read. Compile/API/resource failure, arbitrary "
+                                "grammar portability, upstream URI canonicalization, actual "
+                                "NetworkHipsMatch execution and ProcessMatchedSignature policy "
+                                "remain outside the manifest projector.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_http_url_consumer
+                else ()
+            ),
             SemanticClaim(
                 "ndat-wire-framing",
                 "wire_layout",
@@ -448,6 +641,10 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     "prefixes, not the loader DWORD. This traces ingestion and "
                     "record-ID provenance, not a complete matching predicate."
                     if has_logskip_consumer
+                    else "The backend-specific HttpUrl pattern and URI contract "
+                    "is exported separately; complete compiler and post-match "
+                    "policy are not projected."
+                    if has_http_url_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -464,6 +661,9 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             "also has an early-success "
                             "path that does not write out_record_id."
                             if has_logskip_consumer
+                            else "Complete compiler acceptance, caller context "
+                            "and post-match policy are not modeled."
+                            if has_http_url_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -535,6 +735,48 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-http-url-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine 1.443.903.0",
+                        ("ndat-http-url-pattern-contract",),
+                        "HttpUrlNdatCallback@180526C00; construct@180549304; "
+                        "basic_regex ctor@1801FBFE4; parse@1801FE260; "
+                        "regex_data@1801FC5F0 GetUserDefaultLCID; "
+                        "NetworkHipsProcess@18008D8CC -> NetworkHipsMatch@18008E460 "
+                        "URI input+8 -> UtilWideCharToUtf8@18066895C -> "
+                        "RegExStringMatch@18002E528 -> Match@1800B6D64/find_imp@1800B55EC; "
+                        "docs/mpengine.dll/1.443.903.0/NetworkHipsMatch.md",
+                    ),
+                    SemanticEvidence(
+                        "ndat-http-url-native-host",
+                        "consumer",
+                        "engine_runtime",
+                        "Pinned mpengine 1.443.903.0 native_host; isolated Windows child processes",
+                        ("ndat-http-url-pattern-contract",),
+                        "DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                        "tests/local_boost_native_corpus_probe_v1.py SHA256 "
+                        "82f614c3374a14dfbbf9d03d13adb3bf116fdeb6209a996145a8f44fb42ca475; "
+                        ".tmp/local_boost_native_corpus_probe_v1_manifest.json SHA256 "
+                        "51757058c8164cbe4eb3b185289853cfc5a4c83a40050d68855b8f7cd3dab259; "
+                        ".tmp/local_boost_native_corpus_probe_v1_results.jsonl SHA256 "
+                        "7509a8dca0ae53df6d6fb69ea21e1ccda716300521fada2284190da1b6c47093; "
+                        ".tmp/local_boost_native_corpus_probe_v1_summary.json SHA256 "
+                        "d9c87becb08685f1519b324fef48e592c1a344083b0a4ad3617ee0db20b5bae1; "
+                        "offline manifest/native-input bridge tests/local_ndat_httpurl_manifest_bridge.py SHA256 "
+                        "a4c76ec9c16942831ccd4a12f4cd298d6d62ed6ed308a6c12974d7dd8fd02ee8; "
+                        "226 constructors / 686 completed Match AL queries; loaded-code pins/canaries/"
+                        "timeouts/child exits, no Unicorn PC/GPR/XMM trace; observed host LCID1033 "
+                        "ACP1252 environment, not direct traits-internal locale measurement; "
+                        "no full NetworkHipsMatch or ProcessMatchedSignature execution",
+                    ),
+                )
+                if has_http_url_consumer
+                else ()
+            ),
             SemanticEvidence(
                 "ndat-wire-evidence",
                 "wire_parser",
@@ -641,5 +883,6 @@ NDAT_SPEC = FamilySpec(
     "NDAT",
     parse_ndat,
     render_ndat,
+    exporter=export_ndat,
     semantic_exporter=export_ndat_semantics,
 )
