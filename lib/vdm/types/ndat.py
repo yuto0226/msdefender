@@ -27,6 +27,16 @@ from ..dns_cache_info import (
     compile_dns_cache_info_pattern,
     project_dns_cache_info_receiver,
 )
+from ..http_header_subject import (
+    CAPTURED_FOLD256,
+    ENGINE_SHA256,
+    PROFILE_CODE_SHA256,
+    TRAITS_FINGERPRINT,
+    HttpHeaderLiteralProfile,
+    UnsupportedHttpHeaderPattern,
+    compile_http_header_literal,
+    http_header_literal_yara_rhs,
+)
 from ..raw_body import (
     RawBodyPattern,
     UnsupportedRawBodyPattern,
@@ -1171,6 +1181,581 @@ def _http_url_manifest(parsed: NdatPayload) -> JSONObject:
                 "Pinned DLL host compiled frozen corpus 226 patterns and completed 686 queries; not arbitrary-pattern compile validity, full URI caller execution or portable regex conformance",
             ),
         )
+    )
+
+
+class UnsupportedNdatHttpHeaderPattern(ValueError):
+    """Outside callback16 non-NULL counted CString registration."""
+
+
+class UnsupportedNdatMsgBodyPattern(ValueError):
+    """Outside callback17 non-NULL registration; consumer remains unknown."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatHttpHeaderPattern:
+    raw: bytes
+    counted_data: bytes
+    effective_pattern: bytes
+    after_pattern_terminator: bytes
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+    portable_profile: HttpHeaderLiteralProfile | None
+    portable_reason: str | None
+    syntax_flags: int = 0x500000
+
+
+@dataclass(frozen=True, slots=True)
+class NdatMsgBodyPattern:
+    raw: bytes
+    counted_data: bytes
+    effective_pattern: bytes
+    after_pattern_terminator: bytes
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+    syntax_flags: int = 0x500000
+
+
+def project_ndat_http_header_pattern(parsed: NdatPayload) -> NdatHttpHeaderPattern:
+    """Reparse authoritative raw; framing and local support are not Boost validity.
+
+    Portable profiles are conditional on the captured traits fingerprint and
+    code profile; this projection does not discover a runtime machine's locale.
+    """
+    if not isinstance(parsed, NdatPayload):
+        raise TypeError("parsed must be NdatPayload")
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 16:
+        raise UnsupportedNdatHttpHeaderPattern("requires callback decimal16 (0x10)")
+    data = parsed.data_raw
+    if not data or data[-1] != 0:
+        raise UnsupportedNdatHttpHeaderPattern(
+            "requires nonempty counted data ending in NUL; NULL finalize is not inferred"
+        )
+    first = data.index(0)
+    portable, reason = None, None
+    try:
+        portable = compile_http_header_literal(
+            data, traits_fingerprint=TRAITS_FINGERPRINT
+        )
+    except UnsupportedHttpHeaderPattern as exc:
+        reason = str(exc)
+    return NdatHttpHeaderPattern(
+        parsed.raw,
+        data,
+        data[:first],
+        data[first + 1 :],
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+        portable,
+        reason,
+    )
+
+
+def project_ndat_msg_body_pattern(parsed: NdatPayload) -> NdatMsgBodyPattern:
+    """Project original callback17 constructor input without inventing a subject."""
+    if not isinstance(parsed, NdatPayload):
+        raise TypeError("parsed must be NdatPayload")
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 17:
+        raise UnsupportedNdatMsgBodyPattern("requires callback decimal17 (0x11)")
+    data = parsed.data_raw
+    if not data or data[-1] != 0:
+        raise UnsupportedNdatMsgBodyPattern(
+            "requires nonempty counted data ending in NUL; NULL finalize is not inferred"
+        )
+    first = data.index(0)
+    return NdatMsgBodyPattern(
+        parsed.raw,
+        data,
+        data[:first],
+        data[first + 1 :],
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _http_header_subject_recipe() -> JSONObject:
+    return JSONObject(
+        (
+            ("projector", "lib.vdm.http_header_subject.project_http_header_queries"),
+            ("pair_type", "lib.vdm.http_header_subject.HttpHeaderPair"),
+            ("group_type", "lib.vdm.http_header_subject.HttpHeaderGroup"),
+            ("lists_type", "lib.vdm.http_header_subject.HttpHeaderLists"),
+            ("query_type", "lib.vdm.http_header_subject.HttpHeaderQuery"),
+            ("formatter_outcome_type", "lib.vdm.http_header_subject.FormatterOutcome"),
+            ("metadata_container_offset", 0x28),
+            ("pair_stride", 16),
+            (
+                "groups",
+                JSONArray(
+                    (
+                        JSONObject(
+                            (
+                                ("count_offset", 0x18),
+                                ("pairs_offset", 0x20),
+                                ("policy_byte", 0),
+                            )
+                        ),
+                        JSONObject(
+                            (
+                                ("count_offset", 0x28),
+                                ("pairs_offset", 0x30),
+                                ("policy_byte", 1),
+                            )
+                        ),
+                    )
+                ),
+            ),
+            (
+                "order",
+                "all selected group0 entries then group1; independent, not fallback",
+            ),
+            ("format", "%ls: %ls"),
+            (
+                "encoding",
+                "original NewSprintfA narrow CRT; no explicit UTF8 conversion",
+            ),
+            (
+                "formal_domain",
+                "ASCII physically terminated WCHAR pairs in normal formatting success, or explicit external uint32 HRESULT/materialized CString outcome",
+            ),
+            (
+                "failure",
+                "known HRESULT bit31 set skips only that entry; unknown outcome/input is typed unsupported, not mismatch; no inference that failure clears existing output",
+            ),
+            (
+                "query",
+                "each successful formatted narrow CString through first byte NUL",
+            ),
+            (
+                "gates",
+                "known absent vector or actual NULL container skips; selected missing/unresolved pair storage is unsupported",
+            ),
+            (
+                "roles",
+                "group request/response roles and upstream normalization remain unknown",
+            ),
+            (
+                "policy",
+                "RegExStringMatch supplies context/metadata/RecID/SigSeq to ProcessMatchedSignature; full caller policy remains external",
+            ),
+        )
+    )
+
+
+def _header_msg_manifest(parsed: NdatPayload) -> JSONObject:
+    parsed = parse_ndat(parsed.raw)
+    is_header = parsed.callback_index == 16
+    try:
+        model = (
+            project_ndat_http_header_pattern(parsed)
+            if is_header
+            else project_ndat_msg_body_pattern(parsed)
+        )
+    except (UnsupportedNdatHttpHeaderPattern, UnsupportedNdatMsgBodyPattern) as exc:
+        return JSONObject(
+            (
+                ("framing_supported", False),
+                ("reason", str(exc)),
+                ("original_compile_valid", None),
+            )
+        )
+    portable = model.portable_profile if is_header else None
+    return JSONObject(
+        (
+            (
+                "format",
+                "vdm.ndat.http-header.boost-pattern.v1"
+                if is_header
+                else "vdm.ndat.msg-body.boost-pattern.v1",
+            ),
+            ("callback_decimal", parsed.callback_index),
+            ("framing_supported", True),
+            ("raw_hex", model.raw.hex()),
+            ("counted_data_length", len(model.counted_data)),
+            ("counted_data_hex", model.counted_data.hex()),
+            ("effective_pattern_hex", model.effective_pattern.hex()),
+            ("first_nul_offset", len(model.effective_pattern)),
+            ("after_pattern_terminator_hex", model.after_pattern_terminator.hex()),
+            (
+                "record_id_suffix_hex",
+                None
+                if model.record_id_suffix_raw is None
+                else model.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", model.trailing_raw.hex()),
+            ("syntax_flags_u32", model.syntax_flags),
+            ("syntax_flags_hex", "0x500000"),
+            (
+                "backend",
+                "original narrow char Boost w32_regex_traits; runtime GetUserDefaultLCID-dependent traits",
+            ),
+            (
+                "constructor",
+                JSONObject(
+                    (
+                        ("address", "0x1801FBFE4"),
+                        (
+                            "input",
+                            "first-NUL char CString; count is only the callback last-NUL gate",
+                        ),
+                        (
+                            "decoder",
+                            "no prefix/escape decoding before original Boost compile",
+                        ),
+                        ("row_stride", 32),
+                        ("record_id_offset", 16),
+                        ("sigseq_offset", 24),
+                        (
+                            "record_id_source",
+                            "runtime callback third uint32 argument, not payload or name suffix",
+                        ),
+                        (
+                            "sequence_getter",
+                            "uint64 sigseqfromrecid(uint32 RecID) @0x1800ACE50; real lookup/tables remain external",
+                        ),
+                        ("runtime_record_id", None),
+                        ("runtime_sigseq", None),
+                        (
+                            "service_evidence",
+                            "native receiver used one explicitly synthetic SigSeq getter; original row append/regex constructor remained native",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "consumer",
+                "NetworkHipsMatch formatted per-pair CString queries"
+                if is_header
+                else None,
+            ),
+            ("subject_recipe", _http_header_subject_recipe() if is_header else None),
+            ("consumer_unknown", not is_header),
+            ("subject", None),
+            ("policy", None),
+            ("original_compile_valid", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            (
+                "portable_projection",
+                JSONObject(
+                    (
+                        ("supported", portable is not None),
+                        (
+                            "reason",
+                            model.portable_reason
+                            if is_header
+                            else "callback17 runtime consumer/subject/policy unknown; no local matcher",
+                        ),
+                        (
+                            "qualification",
+                            "exact two original counted patterns, captured traits fingerprint/code profile, same effective first-NUL subject, Boolean search in normal resource-success domain"
+                            if is_header
+                            else None,
+                        ),
+                        (
+                            "traits_fingerprint_sha256",
+                            portable.traits_fingerprint if portable else None,
+                        ),
+                        ("runtime_traits_verified", None),
+                        ("engine_sha256", ENGINE_SHA256 if portable else None),
+                        (
+                            "code_sha256",
+                            JSONArray(
+                                tuple(
+                                    JSONObject((("address", a), ("sha256", h)))
+                                    for a, h in PROFILE_CODE_SHA256
+                                )
+                            )
+                            if portable
+                            else None,
+                        ),
+                        (
+                            "counted_pattern_sha256",
+                            portable.counted_sha256 if portable else None,
+                        ),
+                        (
+                            "effective_pattern_sha256",
+                            portable.effective_sha256 if portable else None,
+                        ),
+                        ("literal_hex", portable.literal.hex() if portable else None),
+                        (
+                            "compiled_literal_hex",
+                            portable.compiled_literal.hex() if portable else None,
+                        ),
+                        (
+                            "captured_fold256_hex",
+                            CAPTURED_FOLD256.hex() if portable else None,
+                        ),
+                        (
+                            "compiler",
+                            "lib.vdm.http_header_subject.compile_http_header_literal"
+                            if is_header
+                            else None,
+                        ),
+                        (
+                            "predicate",
+                            "lib.vdm.http_header_subject.search_http_header_cstring"
+                            if portable
+                            else None,
+                        ),
+                        (
+                            "yara_rhs",
+                            http_header_literal_yara_rhs(portable)
+                            if portable
+                            else None,
+                        ),
+                        (
+                            "yara_scope",
+                            "string RHS only on identical projected effective subject; never whole-file/raw-HTTP or full NetworkHipsPolicy"
+                            if portable
+                            else None,
+                        ),
+                        (
+                            "unsupported",
+                            "local unsupported is not original Boost compile rejection; other patterns retain original backend recipe",
+                        ),
+                        (
+                            "external",
+                            "other traits/locales, arbitrary regex, resources/exceptions/complexity, full caller gates, real IDs/namespace/getter and ProcessMatchedSignature",
+                        ),
+                    )
+                ),
+            ),
+        )
+    )
+
+
+def _export_header_msg_pattern(parsed: NdatPayload) -> ArtifactExport:
+    parsed = parse_ndat(parsed.raw)
+    is_header = parsed.callback_index == 16
+    try:
+        model = (
+            project_ndat_http_header_pattern(parsed)
+            if is_header
+            else project_ndat_msg_body_pattern(parsed)
+        )
+    except (UnsupportedNdatHttpHeaderPattern, UnsupportedNdatMsgBodyPattern) as exc:
+        return ArtifactExport("unsupported", reason=str(exc))
+    prefix = "http-header-pattern" if is_header else "msg-body-pattern"
+    artifacts = [
+        Artifact(prefix + ".boost.bin", "binary", model.effective_pattern),
+        Artifact(
+            prefix + ".json",
+            "json",
+            json.dumps(
+                semantic_json_to_data(_header_msg_manifest(parsed)),
+                ensure_ascii=True,
+                indent=2,
+            ).encode("utf8")
+            + b"\n",
+        ),
+    ]
+    if is_header and model.portable_profile is not None:
+        artifacts.append(
+            Artifact(
+                prefix + ".yara-string.txt",
+                "yara_string_fragment",
+                (
+                    "// String fragment for identical projected first-NUL subject only; no whole-file or network policy equivalence.\n"
+                    "$header = "
+                    + http_header_literal_yara_rhs(model.portable_profile)
+                    + "\n"
+                ).encode("ascii"),
+            )
+        )
+    return ArtifactExport("ready", tuple(artifacts))
+
+
+def _header_msg_semantics(parsed: NdatPayload) -> RuleSemantics:
+    parsed = parse_ndat(parsed.raw)
+    is_header = parsed.callback_index == 16
+    target = "HttpHeaderNdatCallback" if is_header else "MsgBodyNdatCallback"
+    name = "http_header_pattern" if is_header else "msg_body_pattern"
+    issues = [
+        SemanticIssue(
+            "http_header_qualified_runtime_profile_required"
+            if is_header
+            else "msg_body_constructor_only",
+            "Qualified exact literal profiles require captured traits/code and materialized subject; formatter/resources/IDs and whole caller policy remain external."
+            if is_header
+            else "Only constructor and runtime row layout are confirmed; no subject, consumer or policy contract is inferred.",
+        )
+    ]
+    if not is_header:
+        issues.append(
+            SemanticIssue(
+                "ndat_callback_business_semantics_unknown",
+                "Callback17 registration is confirmed but runtime consumer, subject and policy remain unknown.",
+                details=(("callback_index", 17), ("dispatch_target", target)),
+            )
+        )
+    if not parsed.data_raw or parsed.data_raw[-1] != 0:
+        issues.append(
+            SemanticIssue(
+                "header_msg_nonnull_pattern_profile_unsupported",
+                "Outside non-NULL count/last-NUL registration profile; not a generic wire-malformed verdict or inferred NULL finalize.",
+            )
+        )
+    if parsed.record_id_suffix_raw is not None:
+        issues.append(
+            SemanticIssue(
+                "record_name_encoding_unknown",
+                "Suffix is a NUL-terminated name for createrecidz, not runtime RecID or SigSeq; encoding is unknown.",
+            )
+        )
+    if parsed.trailing_raw:
+        issues.append(
+            SemanticIssue(
+                "trailing_bytes_uninterpreted",
+                "Bytes after the name terminator are retained without confirmed receiver semantics.",
+                details=(("length", len(parsed.trailing_raw)),),
+            )
+        )
+    claims = [
+        SemanticClaim(
+            "ndat-header-msg-registration",
+            "receiver_transform",
+            "Callbacks16/17 gate non-NULL count and final NUL, compile the first-NUL pattern with flags0x500000 and append row32 containing runtime RecID+16 and SigSeq+24; count/name suffix are not counted regex end or runtime IDs.",
+            "subset",
+            ("ndat-header-msg-static", "ndat-header-msg-receiver"),
+            (
+                SemanticUnknown(
+                    "receiver_transform",
+                    "Real record namespace/SigSeq tables, arbitrary compile validity, allocations/exceptions and successful runtime registration history remain external.",
+                ),
+            ),
+        )
+    ]
+    evidence = [
+        SemanticEvidence(
+            "ndat-header-msg-static",
+            "receiver",
+            "engine_static",
+            "docs/mpengine.dll/1.443.903.0/ndat_http_header_msg_body_contract_private.md",
+            ("ndat-header-msg-registration",),
+            "HttpHeaderNdatCallback1805BA660/C5; MsgBodyNdatCallback180C75990/C5; construct180549304 flags500000",
+        ),
+        SemanticEvidence(
+            "ndat-header-msg-receiver",
+            "receiver",
+            "engine_runtime",
+            "tests/local_cb16_17_native_v1_receiver_results.json",
+            ("ndat-header-msg-registration",),
+            "two original receiver children/21 callback calls, only SigSeq service synthetic; row+20 padding is not a wire field",
+        ),
+    ]
+    if is_header:
+        claims.append(
+            SemanticClaim(
+                "ndat-http-header-qualified-search",
+                "runtime_consumer",
+                "NetworkHipsMatch formats each wide pair via original narrow CRT percent-ls-colon-space-percent-ls; ordered groups use policy0/1 independently. Two exact compiled0/2/6 literal profiles and captured traits/restart0 support Boolean first-NUL substring search and an effective-subject-only YARA string fragment in the normal resource-success domain.",
+                "subset",
+                ("ndat-http-header-static", "ndat-http-header-native"),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "ASCII success or explicit external formatter outcomes only; runtime traits verification, other regex/locales, resources/exceptions, upstream metadata roles, IDs/getter and ProcessMatchedSignature remain external.",
+                    ),
+                ),
+            )
+        )
+        evidence.extend(
+            (
+                SemanticEvidence(
+                    "ndat-http-header-static",
+                    "consumer",
+                    "engine_static",
+                    "docs/mpengine.dll/1.443.903.0/ndat_cb16_literal_snapshot_closure_private.md",
+                    ("ndat-http-header-qualified-search",),
+                    "actual state0(index0 ICase1)->2->6, restart0 map classes, can_be_null0",
+                ),
+                SemanticEvidence(
+                    "ndat-http-header-native",
+                    "engine_equivalent_test",
+                    "engine_runtime",
+                    "tests/local_cb16_http_header_source_bridge_v1_freeze.json",
+                    ("ndat-http-header-qualified-search",),
+                    "53258 original Match observations and same-effective-subject YARA4.5.4 differential; two compiled-state/traits snapshots; formatter evidence separately scoped",
+                ),
+            )
+        )
+    return RuleSemantics(
+        status="unsupported" if parsed.trailing_raw else "confirmed_subset",
+        representation="ndat.counted_data_callback_suffix.v4",
+        data=JSONObject(
+            (
+                ("type", "NDAT"),
+                ("raw_hex", parsed.raw.hex()),
+                ("data_length", parsed.data_length),
+                ("data_raw_hex", parsed.data_raw.hex()),
+                (
+                    "callback",
+                    JSONObject(
+                        (
+                            ("index", parsed.callback_index),
+                            ("index_hex", f"0x{parsed.callback_index:02x}"),
+                            ("dispatch_target", target),
+                            ("dispatch_mechanism_confirmed", True),
+                            ("dispatch_target_confirmed", True),
+                            (
+                                "business_semantics",
+                                "boost_w32_pattern_ingest_and_ordered_formatted_header_search"
+                                if is_header
+                                else "unknown",
+                            ),
+                            ("is_final_detection", False if is_header else None),
+                        )
+                    ),
+                ),
+                (
+                    "record_name_raw_hex",
+                    None
+                    if parsed.record_id_suffix_raw is None
+                    else parsed.record_id_suffix_raw.hex(),
+                ),
+                (
+                    "record_name_role",
+                    "absent"
+                    if parsed.record_id_suffix_raw is None
+                    else "nul_terminated_name_for_createrecidz",
+                ),
+                ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                (name, _header_msg_manifest(parsed)),
+                (
+                    "loader_handoff",
+                    JSONObject(
+                        (
+                            ("entry_stride", 0x18),
+                            ("record_id_entry_offset", 4),
+                            ("record_id_descriptor", 0x1017),
+                            ("record_id_is_wire_dword", False),
+                            (
+                                "record_id_source",
+                                "createrecidz"
+                                if parsed.record_id_suffix_raw is not None
+                                else "createrecid",
+                            ),
+                            ("record_id_value", None),
+                            (
+                                "record_id_value_requirement",
+                                "loader context and record-ID creation state",
+                            ),
+                            ("post_callback_record_id_argument", 3),
+                        )
+                    ),
+                ),
+            )
+        ),
+        evidence=(
+            "mpengine1.443.903.0 ReceiveNewTemplate1803224D0; NdatPostCallback180464800; NetworkHips_init_module180C75A60 registers16/17; original callbacks/constructor and scoped consumer static/native evidence",
+        ),
+        profile="mpengine-1.443.903.0",
+        issues=tuple(issues),
+        claims=tuple(claims),
+        claim_evidence=tuple(evidence),
     )
 
 
@@ -2373,6 +2958,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs and linkage metadata."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index in (16, 17):
+        return _export_header_msg_pattern(parsed)
     if parsed.callback_index == 12:
         return _export_dns_cache_info(parsed)
     if parsed.callback_index == 7:
@@ -2581,6 +3168,57 @@ def _preview_rows(data: bytes) -> tuple[tuple[str, str], ...]:
 
 def render_ndat(parsed: NdatPayload) -> FormatResult:
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index in (16, 17):
+        is_header = parsed.callback_index == 16
+        supported = bool(parsed.data_raw) and parsed.data_raw[-1] == 0
+        effective = parsed.data_raw.split(b"\0", 1)[0]
+        preview = repr(effective)
+        if len(preview) > 64:
+            preview = preview[:61] + "..."
+        portable = False
+        if is_header and supported:
+            portable = (
+                project_ndat_http_header_pattern(parsed).portable_profile is not None
+            )
+        return FormatResult(
+            sections=(
+                DisplaySection(
+                    "HTTP Header Pattern"
+                    if is_header
+                    else "Message Pattern Registration",
+                    rows=(
+                        ("callback", str(parsed.callback_index)),
+                        ("pattern", preview),
+                        ("counted data", f"{parsed.data_length} B"),
+                        (
+                            "registration",
+                            "first-NUL Boost pattern input; runtime append external"
+                            if supported
+                            else "outside non-NULL count/final-NUL profile",
+                        ),
+                        (
+                            "subject",
+                            "ordered formatted pairs, narrow CString"
+                            if is_header
+                            else "unknown consumer/subject/policy",
+                        ),
+                        (
+                            "portable",
+                            "exact captured-traits literal profile; same-subject YARA string fragment"
+                            if portable
+                            else "original Boost recipe; no local matcher",
+                        ),
+                        (
+                            "record name",
+                            "present; separate from runtime RecID/SigSeq"
+                            if parsed.record_id_suffix_raw is not None
+                            else "absent",
+                        ),
+                        ("trailing", f"{len(parsed.trailing_raw)} retained bytes"),
+                    ),
+                ),
+            )
+        )
     if parsed.callback_index == 12:
         model = project_ndat_dns_cache_info(parsed)
         p = model.projection
@@ -2731,6 +3369,8 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
 def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     """Export only NDAT callbacks tied to a static registration and consumer."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index in (16, 17):
+        return _header_msg_semantics(parsed)
     if parsed.callback_index == 12:
         return _dns_cache_info_semantics(parsed)
     callback_targets = {
