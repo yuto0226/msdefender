@@ -158,7 +158,7 @@ def parse_pebmpat(payload: bytes) -> PEBMPat:
 
 def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
     """Export raw PEBMPAT framing and a non-authoritative BM decoder view."""
-    # Runtime claims and framing must derive from the authoritative wire bytes.
+    # Derived dataclass fields are not authority for matcher-fidelity promotion.
     parsed = parse_pebmpat(parsed.raw)
     name_start = 4
     pattern_start = name_start + len(parsed.name)
@@ -665,11 +665,11 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                 ),
             )
         )
-        if 0x13 in operation_raw_ids:
+        if 0x13 in operation_raw_ids and matcher_status != "confirmed_subset":
             runtime_unknowns.append(
                 SemanticUnknown(
                     "runtime_consumer",
-                    "Raw operation 0x13 remains conditional on displacement, reader state, captured state, and suffix behavior.",
+                    "Raw operation 0x13 is qualified only for null-backref BUFFER modes1/3 with identity/raw preparation and a single raw13 in the literal/raw01/END grammar; other compositions remain conditional.",
                 )
             )
         if matcher_status in {"conditional", "unsupported"}:
@@ -798,6 +798,85 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             )
         )
 
+    if 0x13 in operation_raw_ids:
+        claims.append(
+            SemanticClaim(
+                id="pebmpat_buffer_relative_instruction",
+                scope="runtime_consumer",
+                statement=(
+                    "Raw13 decodes untranslated rel8/rel32 branch bytes from the "
+                    "BUFFER subject, preserves the NEG ebx INT32_MIN target "
+                    "exception and u64 wrap, then runs the mapped suffix at the "
+                    "target. A failed suffix leaves the parent at that target. "
+                    "The qualified single-raw13 literal/raw01/END composition "
+                    "requires a complete finite contiguous BUFFER with declared "
+                    "size equal to supplied storage length, and excludes captures, "
+                    "other reader/mode profiles and PE mapping."
+                ),
+                coverage="subset",
+                evidence_refs=("pebmpat_raw13_transition",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The primary transition profile excludes capture. "
+                        "A separate 12-case producer observation does not close "
+                        "the complete capture lifecycle. Arbitrary suffixes, "
+                        "runtime mapping and caller arbitration remain outside "
+                        "the qualified composition.",
+                    ),
+                ),
+            )
+        )
+        claims.extend(
+            (
+                SemanticClaim(
+                    id="pebmpat_raw13_capture_observation",
+                    scope="runtime_consumer",
+                    statement=(
+                        "In 12 qualified producer cases, positive/zero rel8 "
+                        "displacements saved [original_cursor,target) as 5/2 "
+                        "bytes and kept the node after suffix failure. Negative "
+                        "displacements skipped AddBackref despite capture enabled, "
+                        "leaving an empty tree; raw1B then failed for missing "
+                        "capture after a successful literal. next_id reached 2 "
+                        "after that literal or stayed 1 on early literal failure."
+                    ),
+                    coverage="subset",
+                    evidence_refs=("pebmpat_raw13_capture_probe",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "runtime_consumer",
+                            "Initializer mode3, multiple keys/tree rotations, "
+                            "destruction, complete caller lifecycle, allocation "
+                            "failure/exceptions and captured bytes beyond supplied "
+                            "backing are unverified; no capture evaluator is provided.",
+                        ),
+                    ),
+                ),
+                SemanticClaim(
+                    id="pebmpat_raw13_actual_payloads",
+                    scope="corpus_observation",
+                    statement=(
+                        "Eight cached actual PEBMPAT payloads (MPAS7/MPAV1) "
+                        "were recovered and each has one AST raw13/dispatch13 "
+                        "operation encoded as 90 13 without operands. This is "
+                        "payload/AST coverage; the machine-code subject fixtures "
+                        "remain five synthetic representatives."
+                    ),
+                    coverage="subset",
+                    evidence_refs=("pebmpat_raw13_actual_payload_inventory",),
+                    unknowns=(
+                        SemanticUnknown(
+                            "corpus_observation",
+                            "MPAV was read at one pinned record rather than "
+                            "walked; other database versions and runtime subjects "
+                            "are outside this eight-payload inventory.",
+                        ),
+                    ),
+                ),
+            )
+        )
+
     claim_evidence = [
         SemanticEvidence(
             id="pebmpat_add_pattern",
@@ -811,6 +890,79 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             supports=("pebmpat_wire_layout", "pebmpat_receiver_disposition"),
         ),
     ]
+    if 0x13 in operation_raw_ids:
+        claim_evidence.extend(
+            (
+                SemanticEvidence(
+                    id="pebmpat_raw13_capture_probe",
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref=(
+                        "local_pebmpat13_capture_v1: 12 original-code Unicorn "
+                        "cases, not host-native; initializer mode1, worker "
+                        "modes1/3, identity map, single key ID0, rel8, null offset "
+                        "outputs, valid supplied backing and allocation success. "
+                        "Original initializer/worker producer/AddBackref/STL; "
+                        "only a success-only guest operator new service seam. "
+                        "Harness SHA256 "
+                        "5928001c2a6b13bba77b75ed9881c4eb94091455d30623bfcac2a73d16e09562; "
+                        "results SHA256 "
+                        "2bc0eea6075ecf860106b5732af1b2480106b9d97bdc2e46c682691de8857b21"
+                    ),
+                    locator=(
+                        "BMInitBackrefs @ 0x1800F0DC0; worker producer @ "
+                        "0x1800EE2BD; raw13 AddBackref call @ 0x1800EEC44; "
+                        "AddBackref @ 0x1800F01DC; guest new @ 0x18060E684"
+                    ),
+                    supports=("pebmpat_raw13_capture_observation",),
+                ),
+                SemanticEvidence(
+                    id="pebmpat_raw13_actual_payload_inventory",
+                    axis="corpus",
+                    kind="corpus",
+                    source_ref=(
+                        "local_pebmpat13_fullactual_v1.json SHA256 "
+                        "735a5ee604cd8c0badaf912fa26bf75eb38b3a71396bbc093c2987823aa77835; "
+                        "one MPAS stream walk and one pinned MPAV seek; "
+                        "MPAS7/MPAV1 actual payloads and ASTs, no engine execution"
+                    ),
+                    locator="eight recovered 0x95 payloads; AST raw_id=dispatch_id=0x13",
+                    supports=("pebmpat_raw13_actual_payloads",),
+                ),
+            )
+        )
+        claim_evidence.append(
+            SemanticEvidence(
+                id="pebmpat_raw13_transition",
+                axis="engine_equivalent_test",
+                kind="engine_equivalent_test",
+                source_ref=(
+                    "mpengine 1.443.903.0 DLL SHA256 "
+                    "928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                    "local_pebmpat13_machinecode_v1: Unicorn x86-64 original "
+                    "machine-code emulation, not host-native; 74 vectors x "
+                    "modes1/3 = 148 calls, null backref context, no captures or "
+                    "provider seams. Five actual payload representatives use "
+                    "synthetic subjects; separate eight-payload AST recovery "
+                    "does not expand these five machine-code subject fixtures. "
+                    "Scratch CC preservation applies only to these 148 calls. "
+                    "Harness SHA256 "
+                    "9580562506ae0d686645f807a0262eeeb309b3c0896e0eb57e4dd06df66bb6ea; "
+                    "results SHA256 "
+                    "23301a66461ff014f014cdcc6c41d0c12e985427c4e86cbcc7c8cfa1b2cd82ec"
+                ),
+                locator=(
+                    "BMMatchWorker_BMSBufferReader_ @ 0x1800EDB60; raw13 "
+                    "handler @ 0x1800EEBB9; target update @ 0x1800EEC58; "
+                    "negative displacement @ 0x1800EF2CA; recursive suffix "
+                    "@ 0x1800EE9F0; static opcode/second-byte/rel8/rel32 size "
+                    "gates @ 0x1800EEBC6/0x1800EF297/0x1800EEBE7/0x1800EF2B4 "
+                    "establish finite-buffer read bounds; the probe's readable "
+                    "A5 padding alone is not a declared-end read proof"
+                ),
+                supports=("pebmpat_buffer_relative_instruction",),
+            )
+        )
     if parsed.pattern is not None and matcher_status == "confirmed_subset":
         claim_evidence.append(
             SemanticEvidence(

@@ -105,6 +105,32 @@ def _primary_class_context_is_exact(
     )
 
 
+def _relative_instruction_context_is_exact(
+    context: BmSemanticContext | None, pattern: BmPattern | None
+) -> bool:
+    """Qualify the tested single-raw13 literal/raw01/END composition only."""
+    if not (
+        context is not None
+        and pattern is not None
+        and pattern.issue is None
+        and pattern.ended
+        and not pattern.remaining_raw
+        and b"\x90\x1b" not in pattern.raw
+        and context.reader_kind == "BUFFER"
+        and context.translation == "identity"
+        and context.pattern_preparation == "identity"
+        and context.worker_modes in ((1,), (3,), (1, 3))
+        and context.capture_enabled is False
+        and context.match_offset_output_supplied is False
+        and context.matches_vector_supplied is False
+    ):
+        return False
+    raw_ids = [token.raw_id for token in pattern.tokens if token.kind == "OPCODE"]
+    return raw_ids.count(0x13) == 1 and all(
+        raw_id in (0x01, 0x13) for raw_id in raw_ids
+    )
+
+
 def _operation_ir(
     operation: BmSemanticOperation,
     *,
@@ -336,6 +362,52 @@ def _operation_ir(
             "capture state can save the span from the prior cursor to the target",
             "the remaining pattern must match from the computed target cursor",
         ]
+        if token.raw_id == 0x13:
+            decoded["engine_transition"] = {
+                "primitive": "buffer_relative_instruction_transition",
+                "reader": "BUFFER",
+                "worker_modes": [1, 3],
+                "subject_storage": "complete finite contiguous buffer; declared size equals len(subject)",
+                "wire_operands": False,
+                "instruction_source": "untranslated subject bytes at current cursor",
+                "rel8_opcodes": ["70-7F", "E0-E3", "EB"],
+                "rel32_opcodes": ["E8", "E9", "0F 80-8F"],
+                "target": "(instruction_end + signed_displacement) modulo 2^64, except INT32_MIN",
+                "rel32_int_min_target": "(instruction_end + 0x80000000) modulo 2^64",
+                "target_bounds_checked_before_suffix": False,
+                "decode_failure_preserves_consumed_bytes": True,
+                "suffix_failure_parent_cursor": "computed target; no rollback",
+                "suffix_success_parent_reader": "adopt successful child reader",
+                "suffix_translation": "caller map applies to suffix, not instruction decode",
+                "capture_effects_modeled": False,
+                "qualified_capture_observation": {
+                    "evaluator_support": False,
+                    "cases": 12,
+                    "domain": "initializer mode1; worker modes1/3; identity map; rel8; single key ID0; null offset outputs; allocation succeeds; captured bytes within supplied backing",
+                    "producer": "original BMInitBackrefs, worker capture producer, AddBackref and STL; success-only guest operator new seam",
+                    "nonnegative_span": "[original_cursor, target); observed lengths 5 (positive) and 2 (zero)",
+                    "suffix_failure": "saved node remains; no capture rollback",
+                    "negative_displacement": "capture enabled but AddBackref skipped; tree empty; raw1B fails for missing capture after successful literal",
+                    "next_id": "2 after successful suffix literal; 1 after early literal failure",
+                    "excluded": [
+                        "initializer mode3",
+                        "multiple keys and tree rotations",
+                        "destructor and complete caller lifecycle",
+                        "allocation failure and exceptions",
+                        "captured bytes beyond supplied backing",
+                    ],
+                },
+                "qualified_composition": "one raw13; literal/9090/raw01/END only; complete framing, no physical 90 1B; identity/raw preparation, null backrefs and external outputs",
+                "engine_evidence": "raw13 handler 0x1800EEBB9; opcode/second-byte/rel8/rel32 size gates at 0x1800EEBC6/0x1800EF297/0x1800EEBE7/0x1800EF2B4; 148 original-machine-code Unicorn calls, not host-native",
+            }
+            result["requirements"] = [
+                "requires BUFFER, identity map and raw preparation, null backrefs and null external outputs, worker modes1/3",
+                "qualified composition requires a single raw13 with literal/9090/raw01/END prefix and suffix, complete framing and no physical 90 1B",
+                "other readers, modes, translation/preparation profiles, suffix grammars and capture lifecycle remain conditional",
+            ]
+            if _relative_instruction_context_is_exact(context, pattern):
+                result["fidelity"] = "exact"
+                result["requirements"] = []
     elif isinstance(operation, BmOpaque):
         result["kind"] = "opaque"
         result["fidelity"] = "unsupported"
