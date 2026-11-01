@@ -353,7 +353,7 @@ def static_runtime_recipes() -> JSONObject:
             ),
             evaluation="non #/~ first byte returns false without querying flags; #/~ with unresolved flags remains unknown; empty storage supplies one virtual NUL; NULL is caller no_match before helper",
             flags_source="qword_18128A488 NULL returns 0; otherwise GetOpt@0x1800B8090 non-NULL reads selected+0x18 QWORD, fallback reads global+0x08 QWORD",
-            unresolved="global and selected/default flags writers, GetOpt TLS selection and same-epoch provenance remain external; no command-line text parsing or THREAT_BEGIN bridge",
+            unresolved="name provenance outside the explicitly selected direct-full bridge/profile remains external; caller ID, effective namespace and epoch are required; global and selected/default flags writers, GetOpt TLS selection and same-epoch provenance remain external; no command-line text parsing",
             consumers=JSONArray(
                 ("CFG applicability", "long-target exception-or-signature gate")
             ),

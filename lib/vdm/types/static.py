@@ -413,6 +413,75 @@ def _stage_profile(parsed: StaticPayload) -> JSONObject:
     )
 
 
+def _no_tail_name_bridge_recipe(parsed: StaticPayload) -> JSONObject:
+    """Describe conditional name provenance without resolving runtime inputs."""
+    return JSONObject(
+        (
+            ("callable", "lib.vdm.static_namespace.no_tail_static_name"),
+            ("namespace_snapshot_type", "lib.vdm.threat_names.DirectFullNameSnapshot"),
+            (
+                "initialization_profile_type",
+                "lib.vdm.threat_names.DirectFullNameProfile",
+            ),
+            ("status", "conditional_recipe_only"),
+            ("runtime_inputs_resolved", False),
+            (
+                "ingress_unsupported_error_type",
+                "lib.vdm.static_namespace.UnsupportedStaticNameBridge",
+            ),
+            (
+                "namespace_unsupported_error_type",
+                "lib.vdm.threat_names.UnsupportedThreatNamespace",
+            ),
+            (
+                "record_eligible",
+                parsed.mode is not None
+                and len(parsed.raw) == HEADER_SIZE + len(parsed.hash_raw),
+            ),
+            (
+                "raw_ingress",
+                "reparse raw; complete mode0–4; exact18+hash_width; reject every tail",
+            ),
+            (
+                "required_facts",
+                JSONArray(
+                    (
+                        "explicit_u32_caller_threat_id_with_record_association",
+                        "selected_effective_raw_THREAT_BEGIN_namespace",
+                        "successful_normal_copy_value_preserving_storage",
+                        "engine_published_unique_sorted_direct_full_rows",
+                        "no_enabled_dependency_redirect_mini_fastpath_alternate_store_or_shadow",
+                        "no_unresolved_base_delta_override_or_cross_stream_concatenation",
+                        "explicit_threats_loaded_and_matching_nonempty_epoch",
+                    )
+                ),
+            ),
+            (
+                "output",
+                "raw narrow CString bytes or confirmed NULL; zero span NULL differs from nonzero empty CString",
+            ),
+            (
+                "unsupported",
+                "missing association/profile/epoch, magic IDs/ranges, dependencies, duplicates, unknown publication; typed error, never synthesized NULL",
+            ),
+            ("runtime_name", None),
+            ("exception_name", None),
+            (
+                "remaining_external",
+                JSONArray(
+                    (
+                        "resolved_GetCmdlineFlags_bit34",
+                        "configuration",
+                        "provider",
+                        "match",
+                        "final_verdict",
+                    )
+                ),
+            ),
+        )
+    )
+
+
 def export_static(parsed: StaticPayload) -> ArtifactExport:
     """Export a lossless inventory manifest, never a standalone matcher."""
     mode = parsed.mode
@@ -494,6 +563,9 @@ def export_static(parsed: StaticPayload) -> ArtifactExport:
         "format": "vdm.static.record.v2",
         "stage_profile": semantic_json_to_data(_stage_profile(parsed)),
         "runtime_recipes": semantic_json_to_data(static_runtime_recipes()),
+        "no_tail_name_bridge": semantic_json_to_data(
+            _no_tail_name_bridge_recipe(parsed)
+        ),
         "record": {
             "type": STATIC_TYPE,
             "type_hex": f"0x{STATIC_TYPE:02X}",
@@ -595,6 +667,37 @@ def _recid_tail_semantics(tail: RecIdTail | None, offset: int) -> JSONObject | N
 
 def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
     """Export the confirmed STATIC receiver and staged hash-match subset."""
+    name_bridge_recipe = _no_tail_name_bridge_recipe(parsed)
+    name_bridge_claim = SemanticClaim(
+        id="static_no_tail_name_bridge",
+        scope="runtime_consumer",
+        statement=(
+            "Complete mode0–4 no-tail STATIC Load retains the explicit caller threat ID. "
+            "Only an explicitly selected same-epoch normal-copy published unique sorted "
+            "direct-full namespace without redirects or overrides permits raw CString name "
+            "projection; wire records and cache offsets alone establish none of these facts."
+        ),
+        coverage="subset",
+        evidence_refs=("static_no_tail_name_sources",),
+        unknowns=(
+            SemanticUnknown(
+                "runtime_consumer",
+                "Caller association, effective publication/storage profile and epoch remain required external facts; no default record name is resolved.",
+            ),
+            SemanticUnknown(
+                "final_verdict",
+                "Name projection establishes neither flags/config/provider inputs, record-local match nor final verdict.",
+            ),
+        ),
+    )
+    name_bridge_evidence = SemanticEvidence(
+        id="static_no_tail_name_sources",
+        axis="consumer",
+        kind="engine_static",
+        source_ref="mpengine 1.443.903.0; docs/signature/STATIC_name_exception_source_next_private.md; docs/signature/STATIC_name_bridge_ir_scope_private.md",
+        locator="staticrec_t::Load@0x1800FAABC; verified caller-ID store@0x1800FAB7C; get_threat_name@0x1800F7D10; threat_info_receiver@0x1809EB590; normal kstore_copy_buff@0x1800FC594; existing static evidence, not loader execution",
+        supports=(name_bridge_claim.id,),
+    )
     exception_recipe_claim = SemanticClaim(
         id="static_exception_name_recipe",
         scope="runtime_consumer",
@@ -609,7 +712,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         unknowns=(
             SemanticUnknown(
                 "runtime_consumer",
-                "Name provenance, global/selected/default flags writers, GetOpt TLS selection and epoch coherence remain external; no command-line text parser or THREAT_BEGIN bridge is established here.",
+                "Name provenance outside the explicitly selected direct-full profile remains external; the conditional bridge requires caller ID, effective namespace and epoch. Global/selected/default flags writers, GetOpt TLS selection and epoch coherence remain external; no command-line text parser is established here.",
             ),
             SemanticUnknown(
                 "final_verdict",
@@ -885,6 +988,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                     ("comparison_supported", False),
                     ("stage_profile", _stage_profile(parsed)),
                     ("runtime_recipes", static_runtime_recipes()),
+                    ("no_tail_name_bridge", name_bridge_recipe),
                     ("hash", None),
                     (
                         "opaque_after_header",
@@ -919,6 +1023,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             claims=(
                 runtime_recipe_claim,
                 exception_recipe_claim,
+                name_bridge_claim,
                 corpus_claim,
                 crc_primitive_claim,
                 hash_comparison_claim,
@@ -964,7 +1069,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 ),
             ),
             claim_evidence=common_evidence
-            + (runtime_recipe_evidence, exception_recipe_evidence)
+            + (runtime_recipe_evidence, exception_recipe_evidence, name_bridge_evidence)
             + (
                 SemanticEvidence(
                     id="static_consumer",
@@ -1366,6 +1471,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
                 ("hash", hash_data),
                 ("stage_profile", _stage_profile(parsed)),
                 ("runtime_recipes", static_runtime_recipes()),
+                ("no_tail_name_bridge", name_bridge_recipe),
                 (
                     "match_pipeline",
                     JSONArray(
@@ -1408,6 +1514,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
         claims=(
             runtime_recipe_claim,
             exception_recipe_claim,
+            name_bridge_claim,
             corpus_claim,
             crc_primitive_claim,
             hash_comparison_claim,
@@ -1444,7 +1551,7 @@ def export_static_semantics(parsed: StaticPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=common_evidence
-        + (runtime_recipe_evidence, exception_recipe_evidence)
+        + (runtime_recipe_evidence, exception_recipe_evidence, name_bridge_evidence)
         + (
             SemanticEvidence(
                 id="static_tail_receiver",
