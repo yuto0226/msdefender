@@ -150,9 +150,156 @@ def _http_url_manifest(parsed: NdatPayload) -> JSONObject:
     )
 
 
-def export_ndat(parsed: NdatPayload) -> ArtifactExport:
-    """Export only callback-15 Boost input and its required backend contract."""
+class UnsupportedNdatGenericRegexPattern(ValueError):
+    """The record is outside callback-13 non-null pattern registration."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatGenericRegexPattern:
+    """Narrow byte pattern input for generic NDAT's original Boost backend."""
+
+    raw: bytes
+    counted_data: bytes
+    effective_pattern: bytes
+    after_pattern_terminator: bytes
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+    syntax_flags: int = 0x400000
+
+
+def project_ndat_generic_regex_pattern(parsed: NdatPayload) -> NdatGenericRegexPattern:
+    """Reparse callback decimal 13 (0x0D) without decoding its pattern bytes.
+
+    The non-null registration profile requires nonempty counted data ending in
+    NUL. Effective bytes before the first NUL include any leading 04 and exclude
+    that terminator; counted bytes after it are retained separately. This does not validate regex
+    compilation, identify the bytes' business domain, or evaluate a Lua query.
+    """
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 13:
+        raise UnsupportedNdatGenericRegexPattern("requires callback decimal 13 (0x0D)")
+    data = parsed.data_raw
+    if not data or data[-1] != 0:
+        raise UnsupportedNdatGenericRegexPattern(
+            "requires nonempty counted data ending in NUL"
+        )
+    first_nul = data.index(0)
+    return NdatGenericRegexPattern(
+        parsed.raw,
+        data,
+        data[:first_nul],
+        data[first_nul + 1 :],
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _generic_regex_manifest(parsed: NdatPayload) -> JSONObject:
+    try:
+        pattern = project_ndat_generic_regex_pattern(parsed)
+    except UnsupportedNdatGenericRegexPattern as exc:
+        return JSONObject((("framing_supported", False), ("reason", str(exc))))
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.generic-regex.boost-pattern.v1"),
+            ("callback_decimal", 13),
+            ("callback_hex", "0x0D"),
+            ("framing_supported", True),
+            ("raw_hex", pattern.raw.hex()),
+            ("counted_data_length", len(pattern.counted_data)),
+            ("counted_data_hex", pattern.counted_data.hex()),
+            ("effective_pattern_hex", pattern.effective_pattern.hex()),
+            ("first_nul_offset", len(pattern.effective_pattern)),
+            ("after_pattern_terminator_hex", pattern.after_pattern_terminator.hex()),
+            (
+                "record_id_suffix_hex",
+                None
+                if pattern.record_id_suffix_raw is None
+                else pattern.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", pattern.trailing_raw.hex()),
+            ("syntax_flags_u32", pattern.syntax_flags),
+            ("syntax_flags_hex", "0x400000"),
+            (
+                "backend",
+                "engine Boost regex; boost::re_detail_500; narrow char w32_regex_traits<char>",
+            ),
+            (
+                "grammar_dispatch",
+                "raw flags low two bits 0 select parse_extended; bit20 is clear; no portable grammar equivalence claimed",
+            ),
+            (
+                "locale_dependency",
+                "GetUserDefaultLCID at traits construction; cached LCID-dependent w32 narrow-byte traits",
+            ),
+            ("traits_internal_lcid", None),
+            (
+                "subject",
+                "Lua argument 2 result of luaL_checklstring(length_out=NULL), passed as a byte CString through first NUL; caller encoding, coercion and upstream normalization unknown",
+            ),
+            (
+                "query",
+                "LsaMpCommonLib::NdatRegExpMatch checks selector low32 == 13; RegExState::Match -> perl_matcher::find_imp searches each row until the first match",
+            ),
+            (
+                "runtime_order",
+                "Actual postcallback-ingested vector order required; NdatCmp orders callback/length/full counted bytes ascending then threat ID descending; wire arrival or a stable host sort is not a winner oracle",
+            ),
+            (
+                "post_match",
+                "First matched row's runtime RecID -> namefromrecid -> UnpackVirusName; success returns Lua true/name/RecID, miss returns only false; namespace/unpack failures are Lua errors",
+            ),
+            ("runtime_record_id", None),
+            ("runtime_name", None),
+            (
+                "record_id_source",
+                "loader createrecid/createrecidz, separate from counted pattern bytes; row stride24 stores RecID but no SigSeq",
+            ),
+            ("compile_valid", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            ("projector", "lib.vdm.types.ndat.project_ndat_generic_regex_pattern"),
+            ("projection_type", "lib.vdm.types.ndat.NdatGenericRegexPattern"),
+            (
+                "unsupported_error",
+                "lib.vdm.types.ndat.UnsupportedNdatGenericRegexPattern",
+            ),
+            ("evaluator", None),
+            (
+                "validation_scope",
+                "Pinned DLL host compiled frozen corpus 82 raw patterns and completed 410 queries, 102 true; not arbitrary compile validity, Lua/namespace end-to-end execution or portable regex conformance",
+            ),
+        )
+    )
+
+
+def _export_generic_regex_pattern(parsed: NdatPayload) -> ArtifactExport:
+    try:
+        pattern = project_ndat_generic_regex_pattern(parsed)
+    except UnsupportedNdatGenericRegexPattern as exc:
+        return ArtifactExport("unsupported", reason=str(exc))
+    manifest = dict(_generic_regex_manifest(parsed).items)
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact(
+                "generic-regex-pattern.boost.bin", "binary", pattern.effective_pattern
+            ),
+            Artifact(
+                "generic-regex-pattern.json",
+                "json",
+                json.dumps(manifest, ensure_ascii=True, indent=2).encode("utf-8")
+                + b"\n",
+            ),
+        ),
+    )
+
+
+def export_ndat(parsed: NdatPayload) -> ArtifactExport:
+    """Export supported NDAT pattern inputs with their distinct backend contracts."""
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 13:
+        return _export_generic_regex_pattern(parsed)
     try:
         pattern = project_ndat_http_url_pattern(parsed)
     except UnsupportedNdatHttpUrlPattern as exc:
@@ -384,13 +531,24 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     }
     callback_target = callback_targets.get(parsed.callback_index)
     has_http_url_consumer = parsed.callback_index == 15
+    has_generic_regex_consumer = parsed.callback_index == 13
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
+        else "boost_w32_byte_pattern_ingest_and_lua_search"
+        if has_generic_regex_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_generic_regex_consumer:
+        issues.append(
+            SemanticIssue(
+                "generic_regex_backend_required",
+                "The generic pattern manifest requires the original Boost w32 byte backend; "
+                "Lua subject generation, runtime order/name resolution and final policy are external.",
+            )
+        )
     if has_http_url_consumer:
         issues.append(
             SemanticIssue(
@@ -452,6 +610,14 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 "The manifest requires nonempty counted data ending in NUL; it does not model NULL finalize or compile failure.",
             )
         )
+    if has_generic_regex_consumer and (not parsed.data_raw or parsed.data_raw[-1] != 0):
+        issues.append(
+            SemanticIssue(
+                "generic_regex_nonnull_pattern_profile_unsupported",
+                "The projector requires nonempty counted data ending in NUL; this is not "
+                "a wire-framing verdict or proof that the loader supplies NULL for zero length.",
+            )
+        )
     return RuleSemantics(
         status=status,
         representation="ndat.counted_data_callback_suffix.v4",
@@ -487,6 +653,11 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     else None,
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                *(
+                    (("generic_regex_pattern", _generic_regex_manifest(parsed)),)
+                    if has_generic_regex_consumer
+                    else ()
+                ),
                 (
                     "http_url_pattern",
                     _http_url_manifest(parsed) if has_http_url_consumer else None,
@@ -555,6 +726,33 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-generic-regex-pattern-contract",
+                        "runtime_consumer",
+                        "Callback decimal13 (0x0D) forwards raw counted bytes to a first-NUL "
+                        "Boost w32 narrow-char pattern with flags0x400000, preserving leading04. "
+                        "The Lua arg2 CString consumer searches rows in runtime order; its first "
+                        "match resolves RecID/name and returns Lua values, not a scan verdict. "
+                        "Pinned-host evidence compiled 82 frozen corpus patterns and completed "
+                        "410 queries; the data projector does not validate arbitrary regexes.",
+                        "subset",
+                        ("ndat-generic-regex-static", "ndat-generic-regex-native-host"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Default-LCID traits, upstream Lua subject encoding/coercion, runtime "
+                                "row order and namespace/name resolution remain dependencies. Lua errors, "
+                                "allocation/compiler failure and full Lua/outer policy execution are "
+                                "not projected; no portable regex evaluator or business-domain label.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_generic_regex_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -645,6 +843,10 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     "is exported separately; complete compiler and post-match "
                     "policy are not projected."
                     if has_http_url_consumer
+                    else "The generic Boost pattern and Lua byte-subject contract is "
+                    "exported separately; complete compiler and first-match namespace "
+                    "behavior are not projected."
+                    if has_generic_regex_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -664,6 +866,9 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             else "Complete compiler acceptance, caller context "
                             "and post-match policy are not modeled."
                             if has_http_url_consumer
+                            else "Lua subject generation, actual vector/namespace state "
+                            "and complete compiler/query errors remain external."
+                            if has_generic_regex_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -735,6 +940,47 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-generic-regex-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine 1.443.903.0",
+                        ("ndat-generic-regex-pattern-contract",),
+                        "cksig NDAT descriptor180E4DFB0:1000/100F/1002/1017 -> "
+                        "ReceiveNewTemplate@1803224D0 kstore flags0 -> NdatPostCallback@180464800; "
+                        "GenericRegExpNdatCallback@1804B3FA0 -> emplace@1804B402C/reallocate@1804B4108 "
+                        "ctor1801FBFE4 flags400000; LsaMpCommonLib::NdatRegExpMatch@180C8FA50 "
+                        "luaL_checklstring -> Match@1800B6D64 -> first RecID/name; "
+                        "docs/mpengine.dll/1.443.903.0/ndat_generic_regex_contract_private.md",
+                    ),
+                    SemanticEvidence(
+                        "ndat-generic-regex-native-host",
+                        "consumer",
+                        "engine_runtime",
+                        "Pinned mpengine 1.443.903.0 native_host isolated children",
+                        ("ndat-generic-regex-pattern-contract",),
+                        "DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                        "tests/local_boost_native_cb13_corpus_probe_v3.py SHA256 "
+                        "7a7f5ed8368222eedaf95f509d1832e1511b108c42eae39a140ac10aaa9f9721; "
+                        ".tmp/local_boost_native_cb13_corpus_probe_v3_manifest.json SHA256 "
+                        "4993310661a2be659ca515f31f9eac634e2901bec7e622506fe125badc4f8325; "
+                        ".tmp/local_boost_native_cb13_corpus_probe_v3_results.jsonl SHA256 "
+                        "8610c56229debbc26efaa7dc0ebb72d1b104dd332bc8d85177048e704e7e85fd; "
+                        ".tmp/local_boost_native_cb13_corpus_probe_v3_summary.json SHA256 "
+                        "92f22205397b35adf70845eeb4c5756bddf895931cb85dcc3f8407de9a1a5479; "
+                        "current offline bridge tests/local_ndat_generic_regex_manifest_bridge.py SHA256 "
+                        "0cb2a30896c8afd7fd138df1912cbf9d8e691af34aa032f559471332458e3bee; "
+                        "82 constructors/410 completed queries/102 true; v2 NUL-fixture failure is historical; "
+                        "loaded-code pins/canaries/timeout/child exits, no Unicorn PC/GPR/XMM trace; "
+                        "host LCID1033 ACP1252 environment, not direct traits-internal locale reading; "
+                        "no original Lua binding/name resolution or final scan-policy execution",
+                    ),
+                )
+                if has_generic_regex_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
