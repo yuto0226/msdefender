@@ -224,7 +224,14 @@ def _operation_ir(
             if snapshot_context:
                 result["fidelity"] = "exact"
                 result["requirements"] = [
-                    "finite literal/raw01/raw09/END invocation; limit == len(subject backing), valid storage and successful resources; null backrefs/vector",
+                    (
+                        "finite literal/raw01/primary-raw04/raw09/END invocation; limit == len(subject backing), valid storage and successful resources; null backrefs/vector"
+                        if pattern is not None
+                        and any(
+                            t.kind == "OPCODE" and t.raw_id == 4 for t in pattern.tokens
+                        )
+                        else "finite literal/raw01/raw09/END invocation; limit == len(subject backing), valid storage and successful resources; null backrefs/vector"
+                    ),
                     "same-start Boolean acceptance only; wrapper scalar output values, match end and reporting excluded",
                 ]
                 decoded["engine_transition"].update(
@@ -243,6 +250,7 @@ def _operation_ir(
             and (
                 _primary_class_context_is_exact(context, pattern)
                 or class_choice_context
+                or (snapshot_context and token.raw_id == 0x04)
             )
         ):
             assert context is not None
@@ -596,7 +604,14 @@ def _execution_graph(
         **(
             {
                 "snapshot_finite_domain": {
-                    "grammar": "literal/escaped90/raw01/raw09/END; one invocation, no tail or rewrites",
+                    "grammar": (
+                        "literal/escaped90/raw01/primary-raw04/raw09/END; one invocation, no tail or rewrites"
+                        if any(
+                            isinstance(operation, BmClass)
+                            for operation in program.invocations[program.root].prefix
+                        )
+                        else "literal/escaped90/raw01/raw09/END; one invocation, no tail or rewrites"
+                    ),
                     "backing": "immutable subject bytes at reader.base; limit == len(subject)",
                     "entry": "caller-supplied base/limit/start cursor; all raw09 restore this same entry",
                     "evaluator": "evaluate_bm_snapshot_finite",

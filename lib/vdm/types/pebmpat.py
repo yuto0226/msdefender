@@ -814,6 +814,12 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
         ),
     ]
     if 0x09 in operation_raw_ids:
+        snapshot_class_closed = (
+            0x04 in operation_raw_ids
+            and pattern_data is not None
+            and dict(serialized["execution_graph"].items).get("snapshot_finite_closed")
+            is True
+        )
         claims.append(
             SemanticClaim(
                 id="pebmpat_buffer_backward_scan",
@@ -824,8 +830,9 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                     "snapshot and apply byte-count/cursor/bounds logic; successful cases "
                     "disprove unconditional rejection. Full acceptance and "
                     "suffix behavior remain reader-specific and are not lowered to YARA. "
-                    "Only the explicitly gated single-invocation identity literal/raw01/"
-                    "raw09/END domain has a portable evaluator; its limit equals the "
+                    "Only the explicitly gated single-invocation identity literal/"
+                    + ("raw01/primary-raw04/" if snapshot_class_closed else "raw01/")
+                    + "raw09/END domain has a portable evaluator; its limit equals the "
                     "supplied subject byte length. Other compositions remain conditional."
                 ),
                 coverage="subset",
@@ -834,6 +841,11 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
                     "pebmpat_backward_scan_counterexamples",
                     "pebmpat_backward_scan_transition_model",
                     "pebmpat_backward_scan_finite_model",
+                    *(
+                        ("pebmpat_backward_scan_class_composition",)
+                        if snapshot_class_closed
+                        else ()
+                    ),
                 ),
                 unknowns=(
                     SemanticUnknown(
@@ -1073,6 +1085,28 @@ def export_pebmpat_semantics(parsed: PEBMPat) -> RuleSemantics:
             )
         )
     if 0x09 in operation_raw_ids:
+        if snapshot_class_closed:
+            claim_evidence.append(
+                SemanticEvidence(
+                    id="pebmpat_backward_scan_class_composition",
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref=(
+                        "local_raw09_class_engine: 25928 original-machine-code Unicorn "
+                        "comparisons against an independent wire interpreter; full reader "
+                        "and END scratch checked; not host-native DLL execution"
+                    ),
+                    locator=(
+                        "primary raw04 dispatch4/flags2 fixed-count loop @ "
+                        "0x1800EE230..0x1800EE28D; opcode entry reloads snapshot "
+                        "@ 0x1800EDD1D/0x1800EDD21/0x1800EDD25; modes1/3 do not "
+                        "refresh snapshot; evaluate_bm_snapshot_finite single invocation "
+                        "literal/raw01/primary-raw04/raw09/END, identity, null backrefs/vector, "
+                        "same-base immutable subject with limit == len(subject); no aliases/retries"
+                    ),
+                    supports=("pebmpat_buffer_backward_scan",),
+                )
+            )
         claim_evidence.append(
             SemanticEvidence(
                 id="pebmpat_backward_scan_finite_model",
