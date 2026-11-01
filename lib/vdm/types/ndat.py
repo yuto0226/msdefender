@@ -32,6 +32,7 @@ from ..raw_ssl_cert import (
     compile_raw_ssl_byte_pattern,
     raw_ssl_yara_rhs,
 )
+from ..vdll_api_membership import VdllApiProjection, project_vdll_api
 from ..vfs_link import VfsLinkProjection, project_vfs_link
 
 NDAT_TYPE: Final = 0xA9
@@ -48,6 +49,190 @@ class NdatPayload:
     callback_index: int
     record_id_suffix_raw: bytes | None
     trailing_raw: bytes
+
+
+class UnsupportedNdatVdllApi(ValueError):
+    """The raw NDAT record is not callback3 VDLL API metadata."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatVdllApi:
+    """Copied module/selector bytes, without guessed runtime VDLL bindings."""
+
+    raw: bytes
+    counted_data: bytes
+    projection: VdllApiProjection
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+
+
+def project_ndat_vdll_api(parsed: NdatPayload) -> NdatVdllApi:
+    """Reparse callback3 raw bytes; ordinary copy skips remain metadata."""
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 3:
+        raise UnsupportedNdatVdllApi("requires callback decimal3 (0x03)")
+    return NdatVdllApi(
+        parsed.raw,
+        parsed.data_raw,
+        project_vdll_api(parsed.data_raw, parsed.data_length),
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _vdll_api_manifest(parsed: NdatPayload) -> JSONObject:
+    model = project_ndat_vdll_api(parsed)
+    p = model.projection
+    ordinal = p.ordinal
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.vdll-api-membership-metadata.v1"),
+            ("kind", "engine_vdll_api_membership_metadata_not_ioc"),
+            ("counted_data_hex", model.counted_data.hex()),
+            ("delimiter_offset", p.delimiter_offset),
+            ("skip_reason", p.skip_reason),
+            ("module_raw_hex", None if p.module_name is None else p.module_name.hex()),
+            ("selector_raw_hex", None if p.selector is None else p.selector.hex()),
+            ("selector_copy_hresult", p.selector_copy_hresult),
+            ("route", p.route),
+            ("name_crc_u32", p.name_crc),
+            (
+                "ordinal",
+                None
+                if ordinal is None
+                else JSONObject(
+                    (
+                        ("value_u32", ordinal.value),
+                        ("hresult", ordinal.hresult),
+                        ("end_offset", ordinal.end_offset),
+                    )
+                ),
+            ),
+            (
+                "record_name_raw_hex",
+                None
+                if model.record_id_suffix_raw is None
+                else model.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", model.trailing_raw.hex()),
+            ("last_nul_required", False),
+            ("runtime_recid_used_by_callback", False),
+            ("callback_return", None),
+            ("registration_completed", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            (
+                "recipe",
+                JSONObject(
+                    (
+                        ("projector", "lib.vdm.types.ndat.project_ndat_vdll_api"),
+                        ("model_type", "lib.vdm.types.ndat.NdatVdllApi"),
+                        (
+                            "unsupported_type",
+                            "lib.vdm.types.ndat.UnsupportedNdatVdllApi",
+                        ),
+                        (
+                            "pair_projector",
+                            "lib.vdm.vdll_api_membership.project_vdll_api",
+                        ),
+                        (
+                            "projection_type",
+                            "lib.vdm.vdll_api_membership.VdllApiProjection",
+                        ),
+                        (
+                            "ordinal_parser",
+                            "lib.vdm.vdll_api_membership.parse_vdll_ordinal",
+                        ),
+                        ("ordinal_type", "lib.vdm.vdll_api_membership.VdllOrdinal"),
+                        ("crc", "lib.vdm.vdll_api_membership.vdll_api_crc"),
+                        ("resolver", "lib.vdm.vdll_api_membership.resolve_vdll_api"),
+                        ("host_type", "lib.vdm.vdll_api_membership.VdllApiHost"),
+                        (
+                            "module_selection_type",
+                            "lib.vdm.vdll_api_membership.VdllModuleSelection",
+                        ),
+                        (
+                            "export_table_type",
+                            "lib.vdm.vdll_api_membership.VdllExportTable",
+                        ),
+                        (
+                            "named_export_type",
+                            "lib.vdm.vdll_api_membership.VdllNamedExport",
+                        ),
+                        (
+                            "resolution_type",
+                            "lib.vdm.vdll_api_membership.VdllApiResolution",
+                        ),
+                        (
+                            "membership_type",
+                            "lib.vdm.vdll_api_membership.VdllApiMembershipSnapshot",
+                        ),
+                        (
+                            "membership_query",
+                            "lib.vdm.vdll_api_membership.VdllApiMembershipSnapshot.contains",
+                        ),
+                        ("bucket", "lib.vdm.vdll_api_membership.vdll_api_bucket"),
+                        (
+                            "state_error_type",
+                            "lib.vdm.vdll_api_membership.UnsupportedVdllApi",
+                        ),
+                        (
+                            "copy",
+                            "counted first ! at1..127; first-NUL copy128; truncation/error HRESULT ignored by native callback",
+                        ),
+                        (
+                            "selector",
+                            "named CRC_1 excludesNUL, no uppercase; @ ordinal uses C-locale Windows ULONG32 base0, failed parse still looks up0",
+                        ),
+                        (
+                            "bindings",
+                            "four explicit host gates and selected VDLL tables; unknown selection differs from confirmed index miss and valid index0; no OS resolver",
+                        ),
+                        (
+                            "membership",
+                            "resolved nonzero VA then host2 clearsbit0, including stored0; actual16x4 bucket vectors and raw queryVA, linear unsorted equality",
+                        ),
+                        (
+                            "runtime_state",
+                            "active loaded tables/epoch and membership vectors required; wire order does not establish global state or successful append",
+                        ),
+                        (
+                            "effect",
+                            "selected x64 trust branch statically bypasses two counter increments/API-limit when membership true; not whole trust policy, allowlist or final verdict",
+                        ),
+                        (
+                            "native_scope",
+                            "explicit fake VDLL tables and module-index service; original copy/CRC/ordinal/export lookup/membership; separate raw CRC1225 and parser80 oracles",
+                        ),
+                        (
+                            "unknown",
+                            "real module resolver, runtime bindings/epoch/other writers, realloc/exception partial state and complete trust-switch policy",
+                        ),
+                    )
+                ),
+            ),
+        )
+    )
+
+
+def _export_vdll_api(parsed: NdatPayload) -> ArtifactExport:
+    model = project_ndat_vdll_api(parsed)
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("vdll-api-data.bin", "binary", model.counted_data),
+            Artifact(
+                "vdll-api-membership.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_vdll_api_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode("utf-8")
+                + b"\n",
+            ),
+        ),
+    )
 
 
 class UnsupportedNdatVfsLink(ValueError):
@@ -1499,6 +1684,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs and linkage metadata."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 3:
+        return _export_vdll_api(parsed)
     if parsed.callback_index == 6:
         return _export_vfs_link(parsed)
     if parsed.callback_index == 1:
@@ -1730,11 +1917,35 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
                 else p.skip_reason,
             ),
         )
+    api_rows = ()
+    if parsed.callback_index == 3:
+        p = project_ndat_vdll_api(parsed).projection
+        if p.skip_reason is not None:
+            api_rows = (("registration", "skip: " + p.skip_reason),)
+        else:
+            api_rows = (
+                ("module!selector", f"{p.module_name!r}!{p.selector!r}"),
+                (
+                    "selector",
+                    f"CRC 0x{p.name_crc:08x}"
+                    if p.route == "named"
+                    else f"ordinal {p.ordinal.value}; parse HRESULT 0x{p.ordinal.hresult:08x}",
+                ),
+                (
+                    "copy_hresult",
+                    f"0x{p.selector_copy_hresult:08x}; runtime binding required",
+                ),
+            )
     return FormatResult(
         sections=(
             DisplaySection("NDAT Metadata", rows=tuple(rows)),
             DisplaySection("NDAT Data", rows=_preview_rows(parsed.data_raw)),
             *((DisplaySection("VFS Link", rows=link_rows),) if link_rows else ()),
+            *(
+                (DisplaySection("VDLL API Membership", rows=api_rows),)
+                if api_rows
+                else ()
+            ),
         )
     )
 
@@ -1775,6 +1986,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     has_pdb_path_consumer = parsed.callback_index == 10
     has_vbasic_path_consumer = parsed.callback_index == 1
     has_vfs_link_consumer = parsed.callback_index == 6
+    has_vdll_api_consumer = parsed.callback_index == 3
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
@@ -1792,10 +2004,19 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         if has_vbasic_path_consumer
         else "crc_keyed_vfs_redirect_metadata"
         if has_vfs_link_consumer
+        else "vdll_resolved_api_membership_metadata"
+        if has_vdll_api_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_vdll_api_consumer:
+        issues.append(
+            SemanticIssue(
+                "vdll_api_runtime_bindings_required",
+                "Copied module/selector does not establish active VDLL exports or membership. Four known host gates, selected runtime tables and epoch are external; this metadata is not a generic API IoC or whole trust verdict.",
+            )
+        )
     if has_vfs_link_consumer:
         issues.append(
             SemanticIssue(
@@ -1988,6 +2209,11 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
                 *(
+                    (("vdll_api_membership", _vdll_api_manifest(parsed)),)
+                    if has_vdll_api_consumer
+                    else ()
+                ),
+                *(
                     (("vfs_link", _vfs_link_manifest(parsed)),)
                     if has_vfs_link_consumer
                     else ()
@@ -2078,6 +2304,25 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-vdll-api-membership",
+                        "runtime_consumer",
+                        "Callback3 copies the counted first-! module/export selector into128-byte CStrings, ignoring copy/ordinal parse HRESULTs. Explicit selected runtime VDLL tables resolve named rawCRC XOR salt or ordinal values; nonzero resolvedVA is normalized only for host2 before bucket append. pe_is_nop_api queries fullu64 linear membership without querybit clearing. The traced x64 trust branch statically skips two counter increments and its API-limit checks on true, not every counter branch.",
+                        "subset",
+                        ("ndat-vdll-api-static", "ndat-vdll-api-native"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Real module-name resolution, active bindings/epoch/other writers, allocation/exception partial state and complete trust-switch/counter policy are outside this projection. Original native fixtures use fake selected VDLL tables plus module-index service; ordinal/truncation are synthetic, absent from969 actual records. No OS API existence, allowlist IoC, whole trust execution or final verdict is established.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_vdll_api_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -2345,6 +2590,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     if has_vbasic_path_consumer
                     else "The counted VFS redirect pair and CRC-keyed map contract are exported separately; successful runtime insertion order and full VFS services remain external."
                     if has_vfs_link_consumer
+                    else "The copied module/selector and selected runtime VDLL export/membership algorithms are exported separately; active bindings, resources and full trust-switch effects remain external."
+                    if has_vdll_api_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -2379,6 +2626,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             if has_vbasic_path_consumer
                             else "Actual map history/epoch, resource failures, query normalization and complete VFS effects remain external."
                             if has_vfs_link_consumer
+                            else "Real module resolution, active VDLL/membership state and complete trust-counter/resource policy are external."
+                            if has_vdll_api_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -2450,6 +2699,28 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-vdll-api-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine1.443.903.0",
+                        ("ndat-vdll-api-membership",),
+                        "VdllNdatDontCountCallback180CA5640/201 -> StringCchCopyNA180321570/69, CRC_1(copied selector CString after127-byte truncation, excludingNUL), StrToULongHelper1801D135C/11E, vdll_get_export_va180100F70/54 or by_ordinal180101F70/A1 -> g_hashtables1812748A0 vectors16x4. pe_is_nop_api18041E6C0/5B linear query; trust_change_callback<x86_64_context>180C5B108/409 callC5B3FA ALtrue bypasses selected837C0/837C4 counters/API-limit, not other counter branches. docs/mpengine.dll/1.443.903.0/ndat_dont_count_contract_private.md.",
+                    ),
+                    SemanticEvidence(
+                        "ndat-vdll-api-native",
+                        "consumer",
+                        "engine_runtime",
+                        "Original callback/export/membership with explicit module-index service; separate CRC/parser oracles",
+                        ("ndat-vdll-api-membership",),
+                        "tests/local_cb3_native_v1.py SHAb380b320a7977ed38b9a685e81d8a49b4f39fe8f5271c6a00dc6b12cf4d6a9fa; results c36d3365b55083e096412f9ad1c5bf1ca102ced4aa6fd78e072623d66f1b507f: 32children/64callback calls/384membership queries, not repeat-append matrix or real VDLL loading. Separate local_cb3_crc_native_corpus_v1.py SHA945374128f9cf05d876cc148d6cac7df738a756473487501b282afa91a058edf results a06d962cf2a0f95eb2fb27cdc128ced871f71f88cc2ccf5d03975c891a1c0a36 covers969selectors+256singlebytes/full8tables; local_cb3_parser_native_v1.py SHA37b1d31299d69b3ff50101dee5c9134f47c60052ddcb6bd43e3bd3bc9469b738 results be66f9c4b6a74098bd297d000fea761e90a77786efe1d550c1337c1796f9a430 covers80rawparser calls. Current offline bridges: tests/local_vdll_api_membership_bridge.py SHA7e4595f67f25b6e61d03093ee1d10544c07aca6d9caa9a037200d02b5c600833; tests/local_ndat_vdll_api_bridge.py SHA0265ef13ce80a3e324e4e1557a8982fe3d9abfbce97e55d434121928241b6d31. Full trust-counter path/realloc/exception and real module resolver are not executed.",
+                    ),
+                )
+                if has_vdll_api_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
