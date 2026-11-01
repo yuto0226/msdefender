@@ -412,7 +412,11 @@ def _simplify_search_operations(
 
 
 def _render_bm_flat_yara(
-    pattern: BmPattern, *, context: BmMatchContext | None = None
+    pattern: BmPattern,
+    *,
+    context: BmMatchContext | None = None,
+    _force_regex: bool = False,
+    _regex_costs: list[tuple[int, int, int]] | None = None,
 ) -> BmYaraRender:
     """Return one complete hex/regex RHS, or no body with typed diagnostics.
 
@@ -444,7 +448,7 @@ def _render_bm_flat_yara(
         _is_primary_class(operation, 0x04) or _is_primary_class(operation, 0x05)
         for operation in operations
     )
-    regex_backend = has_range_search or has_primary_class
+    regex_backend = _force_regex or has_range_search or has_primary_class
     class_pattern_closed = (
         pattern.issue is None
         and pattern.ended
@@ -834,6 +838,8 @@ def _render_bm_flat_yara(
         else "{ " + " ".join(part for part, _, _, _ in parts) + " }"
     )
     fidelity = BmYaraFidelity.CONDITIONAL if requirements else BmYaraFidelity.EXACT
+    if _regex_costs is not None:
+        _regex_costs.append((maximum_match_bytes, regex_splits, regex_paths))
     return BmYaraRender(
         body,
         fidelity,
@@ -908,7 +914,14 @@ def render_bm_yara(
                 )
             ),
         )
-    if not program.primitive_closed:
+    class_choice_closed = context is not None and program.identity_class_choice_closed(
+        reader_kind=context.reader_kind,
+        identity_translation=context.translation == _IDENTITY_TRANSLATION,
+        worker_modes=(context.worker_mode,),
+        capture_enabled=context.capture_enabled,
+        matches_vector_supplied=context.matches_vector_supplied,
+    )
+    if not program.primitive_closed and not class_choice_closed:
         return BmYaraRender(
             None,
             BmYaraFidelity.UNSUPPORTED,
@@ -947,13 +960,57 @@ def render_bm_yara(
             (BmRenderIssue("unsupported.no_accepting_paths", 0),),
         )
     bodies = []
+    regex_costs: list[tuple[int, int, int]] = []
+    # Qualified identity mode3 classes equal mode1. Keep the flat renderer's
+    # existing mode policy intact, including RANGE_SEARCH and class aliases.
+    path_context = replace(context, worker_mode=1) if class_choice_closed else context
     for raw in dict.fromkeys(paths):
         rendered = _render_bm_flat_yara(
-            decode_bm_pattern(raw, profile=pattern.profile), context=context
+            decode_bm_pattern(raw, profile=pattern.profile),
+            context=path_context,
+            _force_regex=class_choice_closed,
+            _regex_costs=regex_costs if class_choice_closed else None,
         )
         if rendered.body is None:
-            return direct
-        bodies.append(rendered.body[2:-2])
+            return rendered if class_choice_closed else direct
+        bodies.append(
+            rendered.body[1:-1] if class_choice_closed else rendered.body[2:-2]
+        )
+    if class_choice_closed:
+        # Exact duplicate regex paths may be removed: Boolean OR is idempotent.
+        # Never discard a distinct branch to fit local budgets.
+        unique: dict[str, tuple[int, int, int]] = {}
+        for path_body, cost in zip(bodies, regex_costs):
+            previous = unique.get(path_body, (0, 0, 0))
+            unique[path_body] = tuple(max(a, b) for a, b in zip(previous, cost))
+        bodies = list(unique)
+        regex_costs = list(unique.values())
+        body = (
+            "/"
+            + (bodies[0] if len(bodies) == 1 else "(" + "|".join(bodies) + ")")
+            + "/"
+        )
+        union_issues = []
+        if max(cost[0] for cost in regex_costs) > MAX_YARA_REGEX_MATCH_BYTES:
+            union_issues.append(BmRenderIssue("unsupported.regex_span_limit", 0))
+        if (
+            sum(cost[1] for cost in regex_costs) + len(bodies) - 1
+            > MAX_YARA_REGEX_SPLITS
+        ):
+            union_issues.append(BmRenderIssue("unsupported.regex_complexity_limit", 0))
+        if sum(cost[2] for cost in regex_costs) > MAX_YARA_REGEX_PATHS:
+            union_issues.append(BmRenderIssue("unsupported.regex_fiber_limit", 0))
+        if len(body) > MAX_YARA_REGEX_RHS_CHARS:
+            union_issues.append(BmRenderIssue("unsupported.regex_limit", 0))
+        if len(body) > MAX_YARA_RHS_CHARS:
+            union_issues.append(BmRenderIssue("unsupported.output_limit", 0))
+        if union_issues:
+            return BmYaraRender(None, BmYaraFidelity.UNSUPPORTED, tuple(union_issues))
+        return BmYaraRender(
+            body,
+            BmYaraFidelity.EXACT,
+            printable_preview=render_bm_printable_preview(pattern),
+        )
     body = (
         "{ "
         + (bodies[0] if len(bodies) == 1 else "( " + " | ".join(bodies) + " )")
