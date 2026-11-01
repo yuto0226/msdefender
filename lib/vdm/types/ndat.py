@@ -10,12 +10,14 @@ from ..core import (
     DisplaySection,
     FamilySpec,
     FormatResult,
+    JSONArray,
     JSONObject,
     RuleSemantics,
     SemanticClaim,
     SemanticEvidence,
     SemanticIssue,
     SemanticUnknown,
+    semantic_json_to_data,
 )
 
 NDAT_TYPE: Final = 0xA9
@@ -295,9 +297,229 @@ def _export_generic_regex_pattern(parsed: NdatPayload) -> ArtifactExport:
     )
 
 
+class UnsupportedNdatSslCertPattern(ValueError):
+    """The record is outside callback-18 non-null pattern registration."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatSslCertPattern:
+    """Original Boost pattern bytes for formatted certificate subjects."""
+
+    raw: bytes
+    counted_data: bytes
+    effective_pattern: bytes
+    after_pattern_terminator: bytes
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+    syntax_flags: int = 0x500000
+
+
+def project_ndat_ssl_cert_pattern(parsed: NdatPayload) -> NdatSslCertPattern:
+    """Reparse decimal callback 18 (0x12), preserving arbitrary pattern bytes.
+
+    Nonempty counted data ending in NUL defines this non-null registration
+    profile. The effective pattern excludes its first NUL; later counted bytes
+    and the independent record-ID suffix/trailing bytes remain separate.
+    No certificate parse, regex compilation or query occurs here.
+    """
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 18:
+        raise UnsupportedNdatSslCertPattern("requires callback decimal 18 (0x12)")
+    data = parsed.data_raw
+    if not data or data[-1] != 0:
+        raise UnsupportedNdatSslCertPattern(
+            "requires nonempty counted data ending in NUL"
+        )
+    first_nul = data.index(0)
+    return NdatSslCertPattern(
+        parsed.raw,
+        data,
+        data[:first_nul],
+        data[first_nul + 1 :],
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _ssl_cert_subject_recipes() -> JSONObject:
+    return JSONObject(
+        (
+            (
+                "dn",
+                JSONObject(
+                    (
+                        ("builder", "lib.vdm.ssl_cert_subject.build_ssl_dn_subject"),
+                        ("row_type", "lib.vdm.ssl_cert_subject.SslDnStringRow"),
+                        (
+                            "input",
+                            "parsed runtime 24-byte DN rows: type u32 at +0, resolved physical WCHAR CString pointer at +16; not raw DER",
+                        ),
+                        ("type_order", JSONArray((12, 5, 4, 3, 2, 1, 0))),
+                        (
+                            "short_labels",
+                            JSONArray(("EMAIL", "CN", "OU", "O", "L", "ST", "C")),
+                        ),
+                        (
+                            "selection",
+                            "first matching row, including NULL that shadows later duplicates; unknown-type value storage is not selected",
+                        ),
+                        (
+                            "values",
+                            "NULL skips; non-NULL empty retains label=; first aligned WCHAR NUL ends each value, later fields still append",
+                        ),
+                        (
+                            "format",
+                            "Subject: or Issuer: prefix, then label=value joined by comma-space; no trim or escaping",
+                        ),
+                        (
+                            "caller_roles",
+                            "Subject uses certificate+0x40 DN; Issuer uses certificate+0x30 DN",
+                        ),
+                        (
+                            "success_domain",
+                            "ASCII selected WCHAR content projected to narrow bytes; non-ASCII/insufficient physical CString storage is typed unsupported, not mismatch",
+                        ),
+                        (
+                            "native_format",
+                            "TrNewSprintfA(%s: %ls) -> narrow CRT __stdio_common_vsprintf(locale=NULL); no CP_UTF8 or ACP equivalence claimed",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "validity",
+                JSONObject(
+                    (
+                        (
+                            "builder",
+                            "lib.vdm.ssl_cert_subject.build_ssl_validity_subject",
+                        ),
+                        (
+                            "snapshot_type",
+                            "lib.vdm.ssl_cert_subject.SslValiditySnapshot",
+                        ),
+                        ("from_words_offset", 88),
+                        ("to_words_offset", 104),
+                        ("words_per_time", 8),
+                        ("used_word_indices", JSONArray((0, 1, 3, 4, 5, 6))),
+                        ("offset_dword_offsets", JSONArray((120, 124, 128, 132))),
+                        (
+                            "gate",
+                            "either first year WORD zero supplies no recipe-local subject; original global-pattern-vector gate remains external",
+                        ),
+                        (
+                            "format",
+                            "ValidFrom: YYYY-MM-DD hh:mm:ss (UTC + uu:uu) ValidTo: YYYY-MM-DD hh:mm:ss (UTC + uu:uu)",
+                        ),
+                        (
+                            "numeric_rules",
+                            "raw unsigned u16/u32, minimum widths 4 for year and 2 otherwise; literal UTC +; no date validation, signed-zone adjustment or current-time test",
+                        ),
+                    )
+                ),
+            ),
+            ("result_type", "lib.vdm.ssl_cert_subject.SslCertSubject"),
+            ("unsupported_error", "lib.vdm.ssl_cert_subject.UnsupportedSslCertSubject"),
+            (
+                "availability",
+                "subject_available is recipe-local only; no regex/NRI/post-match result or complete engine-query eligibility",
+            ),
+        )
+    )
+
+
+def _ssl_cert_manifest(parsed: NdatPayload) -> JSONObject:
+    try:
+        pattern = project_ndat_ssl_cert_pattern(parsed)
+    except UnsupportedNdatSslCertPattern as exc:
+        return JSONObject((("framing_supported", False), ("reason", str(exc))))
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.ssl-cert.boost-pattern.v1"),
+            ("callback_decimal", 18),
+            ("callback_hex", "0x12"),
+            ("framing_supported", True),
+            ("raw_hex", pattern.raw.hex()),
+            ("counted_data_length", len(pattern.counted_data)),
+            ("counted_data_hex", pattern.counted_data.hex()),
+            ("effective_pattern_hex", pattern.effective_pattern.hex()),
+            ("first_nul_offset", len(pattern.effective_pattern)),
+            ("after_pattern_terminator_hex", pattern.after_pattern_terminator.hex()),
+            (
+                "record_id_suffix_hex",
+                None
+                if pattern.record_id_suffix_raw is None
+                else pattern.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", pattern.trailing_raw.hex()),
+            ("syntax_flags_u32", pattern.syntax_flags),
+            ("syntax_flags_hex", "0x500000"),
+            (
+                "backend",
+                "engine Boost regex; boost::re_detail_500; narrow char w32_regex_traits<char>",
+            ),
+            (
+                "locale_dependency",
+                "runtime GetUserDefaultLCID-dependent regex traits, separate from the narrow CRT DN formatter locale; internal locale values not directly read",
+            ),
+            ("subject_recipes", _ssl_cert_subject_recipes()),
+            (
+                "certificate_input",
+                "NetworkHipsMatch metadata+0x40 blob view (+4 size/+8 pointer); one BE24 length at bytes3..5 selects bytes+6 for ParsePkcs6Certificate; not a portable ASN.1 or TLS-chain parser",
+            ),
+            (
+                "query",
+                "RegExStringMatch -> RegExState::Match/find_imp searches each formatted Subject/Issuer/Validity CString with the original backend",
+            ),
+            (
+                "policy",
+                "DN field NRI checks can independently affect builder return; RegExStringMatch invokes ProcessMatchedSignature with runtime RecID/SigSeq; neither is evaluated by these recipes",
+            ),
+            ("runtime_record_id", None),
+            ("runtime_sigseq", None),
+            ("compile_valid", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            ("projector", "lib.vdm.types.ndat.project_ndat_ssl_cert_pattern"),
+            ("projection_type", "lib.vdm.types.ndat.NdatSslCertPattern"),
+            ("unsupported_error", "lib.vdm.types.ndat.UnsupportedNdatSslCertPattern"),
+            ("evaluator", None),
+            (
+                "validation_scope",
+                "278 corpus patterns compiled and 1652 original Match calls completed; formatter/builder evidence is separately scoped, not arbitrary regex validity or full certificate/NRI/scan policy",
+            ),
+        )
+    )
+
+
+def _export_ssl_cert_pattern(parsed: NdatPayload) -> ArtifactExport:
+    try:
+        pattern = project_ndat_ssl_cert_pattern(parsed)
+    except UnsupportedNdatSslCertPattern as exc:
+        return ArtifactExport("unsupported", reason=str(exc))
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("ssl-cert-pattern.boost.bin", "binary", pattern.effective_pattern),
+            Artifact(
+                "ssl-cert-pattern.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_ssl_cert_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode("utf-8")
+                + b"\n",
+            ),
+        ),
+    )
+
+
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs with their distinct backend contracts."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 18:
+        return _export_ssl_cert_pattern(parsed)
     if parsed.callback_index == 13:
         return _export_generic_regex_pattern(parsed)
     try:
@@ -532,15 +754,26 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     callback_target = callback_targets.get(parsed.callback_index)
     has_http_url_consumer = parsed.callback_index == 15
     has_generic_regex_consumer = parsed.callback_index == 13
+    has_ssl_cert_consumer = parsed.callback_index == 18
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
         else "boost_w32_byte_pattern_ingest_and_lua_search"
         if has_generic_regex_consumer
+        else "boost_w32_pattern_ingest_and_formatted_certificate_search"
+        if has_ssl_cert_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_ssl_cert_consumer:
+        issues.append(
+            SemanticIssue(
+                "ssl_cert_backend_and_runtime_view_required",
+                "Only pattern input and parsed-runtime ASCII DN/raw validity recipes are projected; "
+                "ASN.1 parsing, regex/NRI/namespace and final policy remain external.",
+            )
+        )
     if has_generic_regex_consumer:
         issues.append(
             SemanticIssue(
@@ -618,6 +851,14 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 "a wire-framing verdict or proof that the loader supplies NULL for zero length.",
             )
         )
+    if has_ssl_cert_consumer and (not parsed.data_raw or parsed.data_raw[-1] != 0):
+        issues.append(
+            SemanticIssue(
+                "ssl_cert_nonnull_pattern_profile_unsupported",
+                "Nonempty counted data ending in NUL defines this projector's non-NULL "
+                "registration profile, not a wire rejection or inferred NULL finalize.",
+            )
+        )
     return RuleSemantics(
         status=status,
         representation="ndat.counted_data_callback_suffix.v4",
@@ -653,6 +894,11 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     else None,
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
+                *(
+                    (("ssl_cert_pattern", _ssl_cert_manifest(parsed)),)
+                    if has_ssl_cert_consumer
+                    else ()
+                ),
                 *(
                     (("generic_regex_pattern", _generic_regex_manifest(parsed)),)
                     if has_generic_regex_consumer
@@ -726,6 +972,45 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-ssl-cert-pattern-contract",
+                        "runtime_consumer",
+                        "Callback18 (0x12) stores first-NUL Boost w32 byte patterns with flags0x500000. "
+                        "The consumer searches formatted Subject/Issuer DN and validity strings, not raw certificate bytes. "
+                        "278 frozen corpus patterns compiled and 1652 backend queries completed; arbitrary compile validity is not projected.",
+                        "subset",
+                        ("ndat-ssl-cert-static", "ndat-ssl-cert-backend-native-host"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Complete certificate parsing, default-LCID traits, runtime RecID/SigSeq/NRI and ProcessMatchedSignature policy remain outside the data projector.",
+                            ),
+                        ),
+                    ),
+                    SemanticClaim(
+                        "ndat-ssl-cert-subject-recipes",
+                        "runtime_consumer",
+                        "Parsed runtime DN rows use fixed type order and first matching row, preserving NULL masking/empty values/CString boundaries; the narrow success projection is ASCII. "
+                        "Validity formats raw SYSTEMTIME words and four unsigned DWORDs with minimum decimal widths and a zero-year local gate, without current-time logic.",
+                        "subset",
+                        (
+                            "ndat-ssl-cert-static",
+                            "ndat-ssl-cert-formatter-native-host",
+                            "ndat-ssl-cert-builders-native-host",
+                        ),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Subject availability is recipe-local: global pattern presence, CRT/resource failure, ASN.1/OID mapping, field NRI checks and regex/post-match policy are not modeled; non-ASCII selected values are typed unsupported, not false.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_ssl_cert_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -847,6 +1132,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     "exported separately; complete compiler and first-match namespace "
                     "behavior are not projected."
                     if has_generic_regex_consumer
+                    else "The formatted-certificate pattern/subject contract is exported separately; complete parser, NRI and query policy are not projected."
+                    if has_ssl_cert_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -869,6 +1156,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             else "Lua subject generation, actual vector/namespace state "
                             "and complete compiler/query errors remain external."
                             if has_generic_regex_consumer
+                            else "Full certificate parser, non-ASCII CRT conversion and regex/NRI/post-match state are external."
+                            if has_ssl_cert_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -940,6 +1229,68 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-ssl-cert-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine 1.443.903.0",
+                        (
+                            "ndat-ssl-cert-pattern-contract",
+                            "ndat-ssl-cert-subject-recipes",
+                        ),
+                        "SSLCertNdatCallback18055D720/C5 -> construct180549304/reallocate1801FB41C flags500000 row32; "
+                        "NetworkHipsMatch18008E460 metadata+40 blob -> ParsePkcs6Certificate1801B2788; "
+                        "Matchx509Dn18044DCA4 uses cert+40 Subject/+30 Issuer -> GetString1802951C0/lambda18044DF4C -> TrNewSprintfA180668528 -> CRT localeNULL; "
+                        "Matchx509Validity18002E344 reads+88/+104 words and+120/+124/+128/+132 DWORDs; RegExStringMatch18002E528; "
+                        "docs/mpengine.dll/1.443.903.0/ndat_ssl_cert_contract_private.md",
+                    ),
+                    SemanticEvidence(
+                        "ndat-ssl-cert-backend-native-host",
+                        "consumer",
+                        "engine_runtime",
+                        "Pinned DLL original Boost in isolated Windows children",
+                        ("ndat-ssl-cert-pattern-contract",),
+                        "DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                        "tests/local_boost_native_cb18_corpus_probe_v1.py SHA256 4f77de32acb5c15fc5842f72e837f04353f9a5d5792682765398deaa63ee272f; "
+                        ".tmp/local_boost_native_cb18_corpus_probe_v1_manifest.json SHA256 b00adb75397b2d3bcd8ee363c069737424f8432c26ec38c5536eef108e485f23; "
+                        "results SHA256 a4f4b07b01dd475124a58b9223e5c43b56205e340c8a626a17f760eb202f6a4e; summary SHA256 118851b2f7e9ec69539f8a985461ffe194f49a0f89e5f4b1da14145f08349c77; "
+                        "278 constructors/1652 completed queries (1390 baseline false +262 selected literal-DN witnesses true); "
+                        "no original DN/certificate pipeline in this batch, no portable regex or Unicorn PC/register-trace claim; "
+                        "current offline source bridge tests/local_ndat_ssl_cert_bridge.py SHA256 3a7a357b50bd8a7d0adb048484f939fde592fbbb11b61d767feb4f84874b5e63",
+                    ),
+                    SemanticEvidence(
+                        "ndat-ssl-cert-builders-native-host",
+                        "consumer",
+                        "engine_runtime",
+                        "Original DN/validity builders and CRT with downstream hooks returning false",
+                        ("ndat-ssl-cert-subject-recipes",),
+                        "tests/.tmp/ssl_dn_native_hook_v2.py SHA256 499f5002d6b63a4e674e1729ba024805ff07be65ebcc61db49c758c456631a7f; "
+                        "manifest fd67dbd580a96db3a78109ab8c7b6621c0092a852b4b6324b1d4b41c650d037e; results 462dc94e4cabbfcf21fa822685112e6485463710eaaca145775bbcb5d9bc2924; "
+                        "tests/.tmp/ssl_validity_native_hook_v1.py SHA256 04806ad5d1c7633b4f838454d239e0f3d2b4c795b1ff8b4c598667b709403dbe; "
+                        "manifest 555691ebaef86b56878547a9785c5fb14c6bc6f65146cca5e872a10b6f4e6aa1; results 663aeaad5929543d984a666cd7f95104b1d21a17d5a28a0c4c1ee6880a9794df; "
+                        "8 DN cases/7 subjects and 7 validity cases/4 subjects; exact code/global restoration and input canaries; "
+                        "RegExStringMatch and DN CheckWSTRWSTR controlled false, not real regex/NRI policy; "
+                        "root DN subset d574ca189769c7f9ca01afc15e0b0c4ce69c718003dc8a3277e5c392141f9ba1; validity subset 01337cd69595393432d63548fd0cdc8d98ac72a0617108f35ea285e2d8ef35b3; "
+                        "current offline source bridge tests/local_ndat_ssl_cert_bridge.py SHA256 3a7a357b50bd8a7d0adb048484f939fde592fbbb11b61d767feb4f84874b5e63",
+                    ),
+                    SemanticEvidence(
+                        "ndat-ssl-cert-formatter-native-host",
+                        "consumer",
+                        "engine_runtime",
+                        "Original narrow CRT formatter in isolated Windows children",
+                        ("ndat-ssl-cert-subject-recipes",),
+                        "tests/local_cb18_formatter_probe_v1.py SHA256 93597d6f42592da145ef44a43ccbf20b03ec8d3e03cbf71dc4a09a5c54bb71b3; "
+                        ".tmp/local_cb18_formatter_probe_v1.manifest.json SHA256 53faab4e989aefb8481637121125dbd318eb6e7506b12705c0ff7094d533d737; "
+                        "results SHA256 d552cdb609ae44fa9bbadc33109d4a530cba8083fb84a1c600f4cc7bd4e12a19; "
+                        "7 isolated inputs: ASCII/WCHAR-NUL/label-NUL New success then Tr same bytes; concrete mixed-BMP/astral/unpaired-surrogate inputs New E_FAIL NULL, Tr skipped; "
+                        "not all non-ASCII rejection or measured CRT locale, and not original full DN/policy execution",
+                    ),
+                )
+                if has_ssl_cert_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
