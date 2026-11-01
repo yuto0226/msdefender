@@ -183,16 +183,46 @@ def _block_type_counts(block: ThreatBlock) -> Counter[int]:
     return Counter(record.type_byte for record in block.records)
 
 
-def _write_block(
-    out_dir: Path, block: ThreatBlock, reason: str | None, source_name: str
-) -> None:
-    threat_dir = _threat_dir(out_dir, block)
-    (threat_dir / "raw.sig").write_bytes(block.to_bytes())
-    exports: list[dict[str, object]] = []
-    records: list[dict[str, object]] = []
-    for index, wire_record in enumerate(block.records, start=1):
+def _export_manifest(record: WireRecord, index: int, status: str) -> dict[str, object]:
+    return {
+        "record_index": index,
+        "type": record.type_byte,
+        "type_hex": f"0x{record.type_byte:02X}",
+        "type_name": fmt_type(record.type_byte),
+        "status": status,
+        "artifacts": [],
+    }
+
+
+def _write_record_exports(
+    record_root: Path, wire_record: WireRecord, index: int
+) -> tuple[dict[str, object], dict[str, object] | None, dict[str, object]]:
+    """One shared decode/semantic/artifact pipeline; raw is saved by the caller.
+
+    Decoder/exporter exceptions become reviewable record outcomes. Filesystem
+    errors propagate using the CLI's existing raw-first failure policy.
+    Optional no-exporter details remain outside the threat manifest schema.
+    """
+    record_entry = _record_manifest(wire_record, index)
+    try:
         decoded = decode_record(wire_record.type_byte, wire_record.payload)
-        record_entry = _record_manifest(wire_record, index)
+    except Exception as exc:  # noqa: BLE001 - persist per-record decoder failures
+        detail = f"{type(exc).__name__}: {exc}"
+        record_entry["semantic_export"] = {"status": "failed", "error": detail}
+        entry = _export_manifest(wire_record, index, "failed")
+        entry["error"] = detail
+        return record_entry, entry, {"status": "failed", "error": detail}
+
+    decode_status: dict[str, object] = {
+        "status": "unregistered"
+        if decoded.spec is None
+        else "failed"
+        if decoded.error is not None
+        else "ready"
+    }
+    if decoded.error is not None:
+        decode_status["error"] = decoded.error
+    try:
         semantic_result = export_record_semantics(decoded)
         if semantic_result is not None:
             if semantic_result.status == "ready":
@@ -207,68 +237,136 @@ def _write_block(
                     "status": "failed",
                     "error": semantic_result.error,
                 }
-        records.append(record_entry)
-        result = export_record_artifacts(decoded)
-        if result is None:
-            continue
-        entry: dict[str, object] = {
-            "record_index": index,
-            "type": wire_record.type_byte,
-            "type_hex": f"0x{wire_record.type_byte:02X}",
-            "type_name": fmt_type(wire_record.type_byte),
-            "status": result.status,
-            "artifacts": [],
+    except Exception as exc:  # noqa: BLE001 - persist per-record semantic failures
+        record_entry["semantic_export"] = {
+            "status": "failed",
+            "error": f"{type(exc).__name__}: {exc}",
         }
-        if result.status == "ready":
-            artifacts: list[dict[str, object]] = []
-            type_part = sanitize_name(fmt_type(wire_record.type_byte))
-            artifact_dir = (
-                threat_dir
-                / "artifacts"
-                / (f"{index:06d}_{wire_record.type_byte:02X}_{type_part}")
-            )
-            artifact_dir.mkdir(parents=True, exist_ok=True)
-            for artifact in result.artifacts:
-                # Artifact names are validated by the model; exclusive creation
-                # also prevents accidental overwrite within a record directory.
-                destination = artifact_dir / artifact.name
-                with destination.open("xb") as output:
-                    output.write(artifact.data)
-                artifacts.append(
-                    {
-                        "kind": artifact.kind,
-                        "path": destination.relative_to(threat_dir).as_posix(),
-                        "size": len(artifact.data),
-                    }
-                )
-            entry["status"] = "exported"
-            entry["artifacts"] = artifacts
-        elif result.status == "unsupported":
-            entry["reason"] = result.reason
-        else:
-            entry["error"] = result.error
-        if result.warnings:
-            entry["warnings"] = [
-                {
-                    "code": warning.code,
-                    "message": warning.message,
-                    "details": dict(warning.details),
-                }
-                for warning in result.warnings
-            ]
-        exports.append(entry)
-    manifest_path = threat_dir / "manifest.json"
-    temp_path = threat_dir / ".manifest.json.tmp"
-    payload = (
-        json.dumps(
-            _manifest(block, reason, source_name, exports, records),
-            ensure_ascii=False,
-            indent=2,
+    try:
+        result = export_record_artifacts(decoded)
+    except Exception as exc:  # noqa: BLE001 - persist per-record artifact failures
+        entry = _export_manifest(wire_record, index, "failed")
+        entry["error"] = f"{type(exc).__name__}: {exc}"
+        return record_entry, entry, decode_status
+    if result is None:
+        return record_entry, None, decode_status
+    entry = _export_manifest(wire_record, index, result.status)
+    if result.status == "ready":
+        artifacts: list[dict[str, object]] = []
+        type_part = sanitize_name(fmt_type(wire_record.type_byte))
+        artifact_dir = (
+            record_root
+            / "artifacts"
+            / f"{index:06d}_{wire_record.type_byte:02X}_{type_part}"
         )
-        + "\n"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        for artifact in result.artifacts:
+            # Model validation rejects unsafe local names. Exclusive creation
+            # additionally prevents overwrite within this record's directory.
+            destination = artifact_dir / artifact.name
+            with destination.open("xb") as output:
+                output.write(artifact.data)
+            artifacts.append(
+                {
+                    "kind": artifact.kind,
+                    "path": destination.relative_to(record_root).as_posix(),
+                    "size": len(artifact.data),
+                }
+            )
+        entry["status"] = "exported"
+        entry["artifacts"] = artifacts
+    elif result.status == "unsupported":
+        entry["reason"] = result.reason
+    else:
+        entry["error"] = result.error
+    if result.warnings:
+        entry["warnings"] = [
+            {
+                "code": warning.code,
+                "message": warning.message,
+                "details": dict(warning.details),
+            }
+            for warning in result.warnings
+        ]
+    return record_entry, entry, decode_status
+
+
+def _write_manifest(directory: Path, manifest: dict[str, object]) -> None:
+    temp_path = directory / ".manifest.json.tmp"
+    payload = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+    with temp_path.open("x", encoding="utf-8", newline="\n") as output:
+        output.write(payload)
+    os.replace(temp_path, directory / "manifest.json")
+
+
+def _new_directory(parent: Path, base: str) -> Path:
+    suffix = 1
+    while True:
+        candidate = parent / (base if suffix == 1 else f"{base}__{suffix}")
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            suffix += 1
+        else:
+            return candidate
+
+
+def _write_orphan(
+    out_dir: Path,
+    record: WireRecord,
+    source_name: str,
+    index: int,
+    per_type_index: int,
+    source_context: str,
+) -> Path:
+    orphan_root = out_dir / "__orphan__"
+    orphan_root.mkdir(exist_ok=True)
+    if orphan_root.resolve().parent != out_dir.resolve():
+        raise ValueError("orphan directory resolves outside output directory")
+    base = f"{per_type_index:06d}_{record.type_byte:02X}_{sanitize_name(fmt_type(record.type_byte))}"
+    directory = _new_directory(orphan_root, base)
+    with (directory / "raw.sig").open("xb") as output:
+        output.write(record.raw)
+    record_entry, export_entry, decode_status = _write_record_exports(
+        directory, record, index
     )
-    temp_path.write_text(payload, encoding="utf-8", newline="\n")
-    os.replace(temp_path, manifest_path)
+    record_entry["decode"] = decode_status
+    record_entry.setdefault("semantic_export", {"status": "no_exporter"})
+    if export_entry is None:
+        export_entry = _export_manifest(record, index, "no_exporter")
+    _write_manifest(
+        directory,
+        {
+            "schema_version": 1,
+            "scope": "orphan",
+            "source": source_name,
+            "source_context": source_context,
+            "orphan_index": index,
+            "per_type_index": per_type_index,
+            "raw_path": "raw.sig",
+            "records": [record_entry],
+            "exports": [export_entry],
+        },
+    )
+    return directory
+
+
+def _write_block(
+    out_dir: Path, block: ThreatBlock, reason: str | None, source_name: str
+) -> None:
+    threat_dir = _threat_dir(out_dir, block)
+    with (threat_dir / "raw.sig").open("xb") as output:
+        output.write(block.to_bytes())
+    exports: list[dict[str, object]] = []
+    records: list[dict[str, object]] = []
+    for index, wire_record in enumerate(block.records, start=1):
+        record_entry, export_entry, _ = _write_record_exports(
+            threat_dir, wire_record, index
+        )
+        records.append(record_entry)
+        if export_entry is not None:
+            exports.append(export_entry)
+    _write_manifest(threat_dir, _manifest(block, reason, source_name, exports, records))
 
 
 def _report_event(
@@ -286,7 +384,7 @@ def _report_event(
                 block.begin.name,
             )
         case UnmatchedEndEvent():
-            warn("THREAT_END without preceding THREAT_BEGIN — skipping")
+            warn("THREAT_END without preceding THREAT_BEGIN")
 
 
 def main() -> None:
@@ -295,7 +393,8 @@ def main() -> None:
             "Extract signatures from a Microsoft Defender .sig file.\n"
             "Without --output, analyse and print a summary to stdout.\n"
             "With --output, write one directory per threat containing raw.sig and "
-            "manifest.json; optionally write orphan .sig files."
+            "manifest.json; optionally write per-orphan directories with raw.sig, "
+            "manifest.json and available artifacts."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -330,16 +429,24 @@ def main() -> None:
                         shown.append((block.begin.name, len(block.records), counts))
                     if out_dir is not None:
                         _write_block(out_dir, block, reason, path.name)
-                case OrphanRecordEvent(record=record):
+                case (
+                    OrphanRecordEvent(record=record) | UnmatchedEndEvent(record=record)
+                ):
                     orphan_count += 1
                     total_records += 1
                     orphan_counts[record.type_byte] += 1
                     if out_dir is not None and not args.no_orphans:
                         orphan_seq[record.type_byte] += 1
-                        orphan_dir = out_dir / "__orphan__"
-                        orphan_dir.mkdir(exist_ok=True)
-                        filename = f"{fmt_type(record.type_byte)}_{orphan_seq[record.type_byte]:06d}.sig"
-                        (orphan_dir / filename).write_bytes(record.raw)
+                        _write_orphan(
+                            out_dir,
+                            record,
+                            path.name,
+                            orphan_count,
+                            orphan_seq[record.type_byte],
+                            "unmatched_end"
+                            if isinstance(event, UnmatchedEndEvent)
+                            else "orphan",
+                        )
                         written_orphans += 1
 
         info("found %d threats, %d orphan records", threat_count, orphan_count)
@@ -381,7 +488,7 @@ def main() -> None:
     print()
     if out_dir is not None:
         ok(
-            "wrote %d threat directories + %d orphan file(s) -> %s",
+            "wrote %d threat directories + %d orphan directories -> %s",
             threat_count,
             written_orphans,
             out_dir,
