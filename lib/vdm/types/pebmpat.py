@@ -78,6 +78,19 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
     else:
         status = "confirmed_subset"
 
+    graph = fields(pattern_fields.get("execution_graph"))
+    fidelity_basis = "flat_decoder_operations"
+    if graph.get("has_rewrites") and not (
+        status == "confirmed_subset" and graph.get("fidelity") == "conditional"
+    ):
+        graph_fidelity = graph.get("fidelity")
+        fidelity_basis = "execution_graph"
+        status = {
+            "exact": "confirmed_subset",
+            "conditional": "conditional",
+            "unsupported": "unsupported",
+        }[graph_fidelity]
+
     return JSONObject(
         (
             ("status", status),
@@ -87,6 +100,8 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
             ),
             ("reader", "BMSBufferReader via BMMatchPEMapper -> BMMatchEx2"),
             ("framing_complete", framing_complete),
+            ("execution_graph_fidelity", graph.get("fidelity")),
+            ("fidelity_basis", fidelity_basis),
             ("byte_translation", "BM_MAP_ALL"),
             ("worker_flags", "(2 * !trie_flags_bit1) | 1"),
             ("worker_modes", JSONArray((1, 3))),

@@ -16,9 +16,15 @@ from .bm import (
     BmPattern,
     BmScan,
     BmSemanticOperation,
+    decode_bm_pattern,
     interpret_bm_pattern,
     raw_04_05_byte_set,
     render_bm_printable_preview,
+)
+from .bm_program import (
+    DEFAULT_BM_PROGRAM_BUDGET,
+    BmProgramBudget,
+    build_bm_execution_program,
 )
 
 
@@ -50,6 +56,8 @@ class BmMatchContext:
     worker_mode: int | None = None
     capture_enabled: bool | None = None
     pattern_preparation: Literal["identity", "ascii_lowercase"] | None = None
+    match_offset_output_supplied: bool | None = None
+    matches_vector_supplied: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +66,8 @@ class BmYaraRender:
 
     It does not establish first-success offsets, match ends, capture behavior,
     scanner domains, validators, or reporting policy.
+    Recursive alternatives assume valid backing and successful temporary
+    allocations; resource exceptions are outside their Boolean projection.
     A conditional body is a candidate under requirements, not an equivalence
     claim for a known incompatible worker context.
     """
@@ -401,7 +411,7 @@ def _simplify_search_operations(
     return tuple(merged)
 
 
-def render_bm_yara(
+def _render_bm_flat_yara(
     pattern: BmPattern, *, context: BmMatchContext | None = None
 ) -> BmYaraRender:
     """Return one complete hex/regex RHS, or no body with typed diagnostics.
@@ -829,4 +839,136 @@ def render_bm_yara(
         fidelity,
         requirements=requirements,
         printable_preview=printable_preview,
+    )
+
+
+def render_bm_yara(
+    pattern: BmPattern,
+    *,
+    context: BmMatchContext | None = None,
+    program_budget: BmProgramBudget = DEFAULT_BM_PROGRAM_BUDGET,
+) -> BmYaraRender:
+    """Lower a qualified invocation DAG's Boolean language, keeping IR separate.
+
+    Paths are a bounded rendering projection only. Recursive reader snapshots,
+    ordered first success and writeback remain in the execution DAG; they are
+    not represented by YARA's result offsets. Allocation failure is excluded.
+    """
+    pattern = decode_bm_pattern(pattern.raw, profile=pattern.profile)
+    direct = _render_bm_flat_yara(pattern, context=context)
+    program = build_bm_execution_program(
+        pattern,
+        preparation=context.pattern_preparation if context else None,
+        budget=program_budget,
+    )
+    rewrites = any(node.rewrite is not None for node in program.invocations)
+    if not program.complete and (not program.invocations or rewrites):
+        if not any(issue.startswith("local_budget.") for issue in program.issues):
+            return direct
+        return BmYaraRender(
+            None,
+            BmYaraFidelity.UNSUPPORTED,
+            tuple(BmRenderIssue(issue, 0) for issue in program.issues),
+        )
+    if not rewrites:
+        return direct
+    requirements, issues = _raw17_context_requirements(context, strict_mode=False)
+    missing = list(requirements)
+    for name, expected in (
+        ("match_offset_output_supplied", False),
+        ("matches_vector_supplied", False),
+    ):
+        value = getattr(context, name, None)
+        if value is None:
+            missing.append(f"{name}={expected}")
+        elif value is not expected:
+            issues += (BmRenderIssue(f"incompatible_context.{name}", 0),)
+    requirements = tuple(missing)
+    if b"\x90\x1b" in pattern.raw:
+        issues += (BmRenderIssue("unsupported.recursive_capture_marker", 0),)
+    if issues:
+        return BmYaraRender(None, BmYaraFidelity.UNSUPPORTED, issues)
+    # Keep the established compact RHS, under the same invocation gates as
+    # expanded paths. No projection may bypass known incompatible facts.
+    if direct.body is not None:
+        return replace(
+            direct,
+            fidelity=(
+                BmYaraFidelity.CONDITIONAL if requirements else BmYaraFidelity.EXACT
+            ),
+            requirements=tuple(
+                dict.fromkeys(
+                    (
+                        *(
+                            item
+                            for item in direct.requirements
+                            if item != "worker mode bit0 set"
+                        ),
+                        *requirements,
+                    )
+                )
+            ),
+        )
+    if not program.primitive_closed:
+        return BmYaraRender(
+            None,
+            BmYaraFidelity.UNSUPPORTED,
+            (BmRenderIssue("unsupported.recursive_leaf_semantics", 0),),
+        )
+    # Use the established literal/gap renderer only after complete child decode.
+    # This projection is safe solely for the snapshot-independent closed subset.
+    paths: list[bytes] = []
+    expanded = 0
+
+    def collect(identity: int, prefix: bytes) -> None:
+        nonlocal expanded
+        node = program.invocations[identity]
+        prefix += node.prefix_raw
+        expanded += len(prefix)
+        if expanded > program_budget.expanded_bytes:
+            raise ValueError("local_budget.render_expanded_bytes")
+        if node.terminal == "end":
+            if len(paths) >= program_budget.edges:
+                raise ValueError("local_budget.render_paths")
+            paths.append(prefix + b"\x90\x00")
+        else:
+            for choice in node.choices:
+                collect(choice.invocation, prefix)
+
+    try:
+        collect(program.root, b"")
+    except ValueError as error:
+        return BmYaraRender(
+            None, BmYaraFidelity.UNSUPPORTED, (BmRenderIssue(str(error), 0),)
+        )
+    if not paths:
+        return BmYaraRender(
+            None,
+            BmYaraFidelity.UNSUPPORTED,
+            (BmRenderIssue("unsupported.no_accepting_paths", 0),),
+        )
+    bodies = []
+    for raw in dict.fromkeys(paths):
+        rendered = _render_bm_flat_yara(
+            decode_bm_pattern(raw, profile=pattern.profile), context=context
+        )
+        if rendered.body is None:
+            return direct
+        bodies.append(rendered.body[2:-2])
+    body = (
+        "{ "
+        + (bodies[0] if len(bodies) == 1 else "( " + " | ".join(bodies) + " )")
+        + " }"
+    )
+    if len(body) > MAX_YARA_RHS_CHARS:
+        return BmYaraRender(
+            None,
+            BmYaraFidelity.UNSUPPORTED,
+            (BmRenderIssue("unsupported.output_limit", 0),),
+        )
+    return BmYaraRender(
+        body,
+        BmYaraFidelity.CONDITIONAL if requirements else BmYaraFidelity.EXACT,
+        requirements=requirements,
+        printable_preview=render_bm_printable_preview(pattern),
     )
