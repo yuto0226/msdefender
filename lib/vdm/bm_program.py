@@ -66,6 +66,66 @@ class BmExecutionProgram:
         return not self.issues
 
     @property
+    def snapshot_finite_grammar(self) -> bool:
+        """One framed invocation; no retries, rewrites, captures or END tail."""
+        if (
+            not self.complete
+            or self.profile != "1.443.903.0"
+            or len(self.invocations) != 1
+            or self.root != 0
+        ):
+            return False
+        node = self.invocations[self.root]
+        if node.terminal != "end" or node.ignored_after_end or b"\x90\x1b" in node.raw:
+            return False
+        try:
+            validate_bm_framing(node.raw)
+        except ValueError:
+            return False
+        # Public frozen dataclasses can still be copied with replaced derived
+        # fields. Execution and qualification must agree with raw authority.
+        canonical = build_bm_execution_program(
+            decode_bm_pattern(node.raw, profile=self.profile),
+            preparation=self.preparation,
+        )
+        if self != canonical:
+            return False
+        return all(
+            isinstance(operation, BmLiteral)
+            or operation.raw[:2] in (b"\x90\x01", b"\x90\x09")
+            for operation in node.prefix
+        )
+
+    def identity_snapshot_closed(
+        self,
+        *,
+        reader_kind: str | None,
+        identity_translation: bool,
+        worker_modes: tuple[int, ...] | None,
+        capture_enabled: bool | None,
+        matches_vector_supplied: bool | None,
+    ) -> bool:
+        """Qualify the finite raw09 snapshot grammar for same-start matching.
+
+        Valid backing/storage and successful resources remain caller duties.
+        Scalar wrapper output is neutral; no match-end/reporting claim follows.
+        """
+        return bool(
+            self.snapshot_finite_grammar
+            and self.preparation == "identity"
+            and reader_kind == "BUFFER"
+            and identity_translation
+            and worker_modes in ((1,), (3,), (1, 3))
+            and all(type(mode) is int for mode in worker_modes)
+            and capture_enabled is False
+            and matches_vector_supplied is False
+            and any(
+                operation.raw[:2] == b"\x90\x09"
+                for operation in self.invocations[self.root].prefix
+            )
+        )
+
+    @property
     def primitive_closed(self) -> bool:
         return self.complete and all(
             operation.raw[:2] in (b"\x90\x01", b"\x90\x02")
