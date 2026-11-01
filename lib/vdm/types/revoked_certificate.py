@@ -315,6 +315,79 @@ def _receiver_attribution(parsed: RevokedCertificate) -> JSONObject:
     )
 
 
+def build_revoked_root_callback_profile() -> JSONObject:
+    """Share the separate runtime callback contract without resolving snapshots."""
+    return JSONObject(
+        (
+            ("representation", "revokedcert.root_callback_recipe.v1"),
+            ("evidence_tier", "engine_static"),
+            ("callable", "lib.vdm.revoked_root_callback.project_revoked_root_callback"),
+            (
+                "post_report_callable",
+                "lib.vdm.revoked_root_callback.project_revoked_root_post_report",
+            ),
+            ("metadata_type", "lib.vdm.revoked_root_callback.RevokedRootMetadata"),
+            ("query_type", "lib.vdm.revoked_root_callback.RevokedRootQuerySnapshot"),
+            (
+                "post_report_type",
+                "lib.vdm.revoked_root_callback.RevokedRootPostReportSnapshot",
+            ),
+            (
+                "result_type",
+                "lib.vdm.revoked_root_callback.RevokedRootCallbackProjection",
+            ),
+            ("arguments_type", "lib.vdm.revoked_root_callback.RevokedRootArguments"),
+            (
+                "scope",
+                "RevokedCertProviderFunc::CompareValues value_index0, used by CheckRootCertificate; separate from the general RevokedCertProvider FILETIME/bit0/signed-file predicate",
+            ),
+            (
+                "runtime_inputs",
+                "parsed raw record plus explicit same invocation-scoped epoch query key20 and RevokedRootMetadata(payload_raw,normalized_record_key20,threat_id:uint32,sigseq:uint64,identity20); immutable payload_raw must exactly bind record.raw, including flags/tail; payload bytes or their hash are not engine signature identity",
+            ),
+            (
+                "normalized_keys",
+                "actual runtime normalized record/query keys are authoritative and distinct from the original20-byte signature identity; no automatic raw-key normalization or identity generation; the existing certificate-key normalizer is a separate successful-source profile, never a replacement for supplied runtime facts",
+            ),
+            (
+                "comparison",
+                "key mismatch returns local false without needing callback or threat/sigseq/identity facts; key equality with callback_present=false produces typed std::bad_function_call outcome and local_compare_result=None, not a normal false",
+            ),
+            (
+                "callback_request",
+                "key equality and present function object require explicit record metadata; pass copies of threat_id, zero:uint32=0, sigseq, identity20 to function vtable+0x10; callback_return_u8 accepts0..255 and only AL0 projects local comparator true",
+            ),
+            (
+                "post_report_profile",
+                "optional CResmgrCertStore.ScanImpl.root_Do_call only: bind invocation-scoped epoch, exact payload and original input threat_id/sigseq/identity; post-state must be from this same callback call, not another equal-argument invocation in the scan; externally observed post-ReportCertificate uint32 scanresult gives callback AL=int(scanresult!=1); uint32 error is independent and may be missing",
+            ),
+            (
+                "polarity_counterexamples",
+                "explicit error1359/scanresult1 gives Do_call AL0 and comparator true; error0/scanresult0 gives AL1 and comparator false; error0 never resolves an unknown scanresult; generic callback AL2/255 are nonzero and do not acquire the specific Do_call profile",
+            ),
+            (
+                "post_report_boundary",
+                "ReportCertificate/NID58/ReportAllEx and their mutations/services are not executed or inferred; post-state refers to original input metadata even if ReportCertificate substitutes internal identity fields; a fully bound known Do_call permits only AL0/1 even when post-scanresult is unknown, and conflicting explicit AL/post-state is a typed input error; unbound generic callbacks retain the full uint8 range",
+            ),
+            (
+                "outer_lookup_boundary",
+                "local comparator true does not imply Lookup1: subtype still applies name/attribute/NID108 arbitration; CheckRootCertificate hash->to->by stops only on lookup==1, while the store secondary wrapper stops on any nonzero result; no lookup/report/final trust verdict is projected",
+            ),
+            (
+                "missing_and_errors",
+                "None means unknown, no default false/zero; wrong types/widths, bool-as-uint, cross-epoch/payload/input bindings and nonzero value_index assertion domain raise RevokedRootSnapshotError; std::bad_function_call is a distinct modeled exception outcome, not executed C++",
+            ),
+            (
+                "flags_boundary",
+                "this comparator does not read record FILETIME or revoke_flags and does not call ShouldReport; raw flags and original identity inputs remain intact, unknown bits/issues/status are preserved, and this limited path does not establish globally ignored bits",
+            ),
+            ("callback_execution", None),
+            ("report_execution", None),
+            ("final_trust_or_scan_verdict", None),
+        )
+    )
+
+
 def export_revoked_certificate_semantics(
     parsed: RevokedCertificate,
 ) -> RuleSemantics:
@@ -466,6 +539,7 @@ def export_revoked_certificate_semantics(
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
+                ("root_callback_recipe", build_revoked_root_callback_profile()),
                 (
                     "key_normalization_recipe",
                     JSONObject(
@@ -633,6 +707,30 @@ def export_revoked_certificate_semantics(
         issues=tuple(issues),
         claims=(
             SemanticClaim(
+                id="revoked_certificate_root_callback_recipe",
+                scope="runtime_consumer",
+                statement=(
+                    "With explicit same-epoch runtime normalized keys and raw-bound "
+                    "record threat/sigseq/original20-byte identity metadata, the root "
+                    "callback comparator projects lazy key equality, callback argument "
+                    "copies and AL0-only local acceptance; an empty function object is "
+                    "a separate bad_function_call outcome. A specifically identified "
+                    "ScanImpl Do_call may derive AL from observed post-report scanresult, "
+                    "independently of the report error."
+                ),
+                coverage="subset",
+                evidence_refs=("revoked_certificate_root_callback_static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The wire does not supply runtime metadata, normalized query or "
+                        "callback observations. Lookup arbitration, ReportCertificate "
+                        "services, global flag semantics and final trust/scan verdict "
+                        "remain outside this callback recipe.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
                 id="certificate_key_successful_projection",
                 scope="receiver_transform",
                 statement="The shared raw-key normalizer projects binary GetKey and terminated wide strict-hex or CP_UTF8 flags0 success; the 6C local evaluator preserves unsigned inclusive time, any-nonzero policy byte and lazy bit0 signed gate.",
@@ -724,6 +822,25 @@ def export_revoked_certificate_semantics(
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                id="revoked_certificate_root_callback_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                locator=(
+                    "RevokedCertProviderFunc::CompareValues@0x180B0413C/0xB7 "
+                    "value_index check@0x180B04152/nonzero assert@0x180B041DA and false return@0x180B041DF; "
+                    "key20 comparison and record+0x14 identity/+0x30 sigseq/+0x38 threat copies, "
+                    "function+0x50 and vtable+0x10, _Xbad_function_call@0x180908948; "
+                    "ScanImpl@0x18042F7FC captures -> callback vftable@0x180DF1598; "
+                    "root Do_call@0x180ABE040/0x64 -> ReportCertificate@0x180ABD0D8 "
+                    "then error store and scanresult!=1; CheckRootCertificate@0x18042FF1C/0x21D; "
+                    "Store Lookup<RevokedCertProviderFunc>@0x18043048C and subtype@0x1804305FC; "
+                    "docs/signature/REVOKED_CERTIFICATE_bit1_scope_private.md; "
+                    "saved static decompile and machine bytes only, no callback/report execution"
+                ),
+                supports=("revoked_certificate_root_callback_recipe",),
+            ),
             SemanticEvidence(
                 id="certificate_key_native_projection",
                 axis="receiver",
@@ -833,6 +950,9 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
             "name": "REVOKED_CERTIFICATE",
         },
         "raw_hex": parsed.raw.hex(),
+        "root_callback_recipe": semantic_json_to_data(
+            build_revoked_root_callback_profile()
+        ),
         "local_predicate_recipe": {
             "callable": "lib.vdm.certificate_match.evaluate_revoked_certificate",
             "result_type": "lib.vdm.certificate_match.RevokedCertificateMatch",
