@@ -10,9 +10,15 @@ from __future__ import annotations
 
 import hashlib
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
+from .static_runtime import (
+    StaticCallerProfile,
+    StaticRuntimeSnapshot,
+    project_static_cfg_gate,
+    project_static_provider,
+)
 from .types.static import StaticHashMode, StaticPayload
 
 MatchStatus = Literal["match", "no_match", "unknown"]
@@ -29,7 +35,29 @@ class StaticMatchContext:
     # True also covers a caller-confirmed case with no applicable CFG gate.
     configuration_gate: bool | None = None
     threat_exception_name: bool | None = None
+    # IsValidSigned policy-helper result, not hash-slice Authenticode validity.
     valid_signed: bool | None = None
+    runtime_snapshot: StaticRuntimeSnapshot | None = None
+    caller_profile: StaticCallerProfile | None = None
+    reply_size: int | None = None
+    rpf_slot_offset: int | None = None
+    rpf_slot_size: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.caller_profile is not None and (
+            self.provider_offset is not None or self.provider_size is not None
+        ):
+            raise ValueError(
+                "caller_profile cannot coexist with explicit provider range"
+            )
+        if self.runtime_snapshot is not None and self.configuration_gate is not None:
+            raise ValueError(
+                "provide runtime_snapshot or aggregate configuration_gate, not both"
+            )
+        if self.runtime_snapshot is not None and self.threat_exception_name is not None:
+            raise ValueError(
+                "runtime_snapshot supplies exception_name; omit threat_exception_name"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,7 +243,15 @@ def _mode_hash(record: StaticPayload, context: StaticMatchContext) -> StaticStag
     if gate != "match":
         reason = "size_mismatch" if gate == "no_match" else "provider_size_unavailable"
         return _stage(3, name, gate, reason)
-    if context.configuration_gate is False:
+    cfg = (
+        project_static_cfg_gate(context.runtime_snapshot)
+        if context.runtime_snapshot is not None
+        else None
+    )
+    if cfg is not None and cfg.status == "invalid_state":
+        return _stage(3, name, "unknown", cfg.reason)
+    configuration_gate = cfg.value if cfg is not None else context.configuration_gate
+    if configuration_gate is False:
         return _stage(3, name, "no_match", "configuration_gate_failed")
     selected = _selected_source(context)
     if selected is None:
@@ -223,7 +259,7 @@ def _mode_hash(record: StaticPayload, context: StaticMatchContext) -> StaticStag
     actual = _digest(record, selected[: record.file_size])
     if actual != record.hash_raw:
         return _stage(3, name, "no_match", "hash_mismatch", record.hash_raw, actual)
-    if context.configuration_gate is not True:
+    if configuration_gate is not True:
         return _stage(
             3,
             name,
@@ -236,7 +272,12 @@ def _mode_hash(record: StaticPayload, context: StaticMatchContext) -> StaticStag
         return _stage(
             3, name, "match", "hash_equal_exact_size", record.hash_raw, actual
         )
-    if context.threat_exception_name is True or context.valid_signed is False:
+    exception_name = (
+        context.runtime_snapshot.exception_name
+        if context.runtime_snapshot is not None
+        else context.threat_exception_name
+    )
+    if exception_name is True or context.valid_signed is False:
         return _stage(
             3,
             name,
@@ -245,7 +286,7 @@ def _mode_hash(record: StaticPayload, context: StaticMatchContext) -> StaticStag
             record.hash_raw,
             actual,
         )
-    if context.threat_exception_name is False and context.valid_signed is True:
+    if exception_name is False and context.valid_signed is True:
         return _stage(
             3, name, "no_match", "long_target_gate_failed", record.hash_raw, actual
         )
@@ -262,6 +303,23 @@ def evaluate_static(
     A known negative stage short-circuits later stages. Missing inputs or
     incomplete selected source bytes produce unknown, not a CRC/hash mismatch.
     """
+    if context.caller_profile is not None:
+        provider = project_static_provider(
+            context.caller_profile,
+            reply_size=context.reply_size,
+            slot_offset=context.rpf_slot_offset,
+            slot_size=context.rpf_slot_size,
+        )
+        if provider.status == "skip":
+            return StaticMatchResult("no_match", provider.reason, ())
+        context = replace(
+            context,
+            caller_profile=None,
+            provider_offset=provider.offset,
+            provider_size=provider.size,
+        )
+    if context.runtime_snapshot is not None and context.runtime_snapshot.name is None:
+        return StaticMatchResult("no_match", "null_name_no_match", ())
     functions = (_first_page, _prefix, _tail, _mode_hash)
     names = ("first_page_crc_candidate_key", "prefix_crc", "tail_page_crc", "mode_hash")
     stages: list[StaticStageResult] = []
