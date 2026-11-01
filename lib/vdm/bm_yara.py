@@ -115,6 +115,12 @@ _FIXED_REPEAT_BYTES = {
     ),
 }
 
+# Only these existing identity-repeat IDs have original preparation + LOWCASE
+# table + Ex2/BUFFER mode1 evidence. Other extensions retain their own gates.
+_LOWCASE_FIXED_REPEAT_IDS = frozenset(
+    (0x0D, 0x26, 0x0F, 0x28, 0x11, 0x1C, 0x2E, 0x1E, 0x30)
+)
+
 
 def _uses_ascii_lowercase_profile(context: BmMatchContext | None) -> bool:
     return context is not None and (
@@ -439,7 +445,17 @@ def render_bm_yara(
         _raw17_context_requirements if has_raw17_alternatives else _context_requirements
     )
     requirements, context_issues = context_requirements(
-        context, strict_mode=regex_backend
+        context,
+        strict_mode=regex_backend
+        or (
+            _uses_ascii_lowercase_profile(context)
+            and any(
+                isinstance(operation, BmExtension)
+                and operation.name in ("RANGE_REPEAT", "RANGE_NEGATIVE_REPEAT")
+                and operation.token.raw_id in _LOWCASE_FIXED_REPEAT_IDS
+                for operation in operations
+            )
+        ),
     )
     lowercase_map = _uses_ascii_lowercase_profile(context)
     if has_range_search or has_class_search:
@@ -679,7 +695,14 @@ def render_bm_yara(
                         operation.token.raw_id,
                     )
                 )
-        elif lowercase_map and isinstance(operation, BmExtension):
+        elif (
+            lowercase_map
+            and isinstance(operation, BmExtension)
+            and not (
+                operation.name in ("RANGE_REPEAT", "RANGE_NEGATIVE_REPEAT")
+                and operation.token.raw_id in _LOWCASE_FIXED_REPEAT_IDS
+            )
+        ):
             issues.append(
                 BmRenderIssue(
                     "unsupported.ascii_lowercase_extension",

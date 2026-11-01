@@ -6,6 +6,7 @@ from typing import Literal
 
 from ..bm import (
     BmAlternatives,
+    BmExtension,
     BmOpaque,
     BmPattern,
     decode_bm_pattern,
@@ -14,6 +15,7 @@ from ..bm import (
 )
 from ..bm_semantic import BmSemanticContext, serialize_bm_pattern
 from ..bm_yara import (
+    _LOWCASE_FIXED_REPEAT_IDS,
     BmMatchContext,
     BmYaraRender,
     render_bm_yara,
@@ -1273,6 +1275,7 @@ def _hstr_typed_semantics(
     parsed: HstrPayload,
     *,
     raw17_literal_indices: tuple[int, ...] = (),
+    lowcase_fixed_repeat_indices: tuple[int, ...] = (),
 ) -> tuple[tuple[SemanticClaim, ...], tuple[SemanticEvidence, ...]]:
     """Build claims without projecting one family's caller facts onto another."""
     type_byte = parsed.type_byte
@@ -1577,6 +1580,45 @@ def _hstr_typed_semantics(
                 ),
             )
         )
+    if lowcase_fixed_repeat_indices:
+        claim_id = f"{prefix}_lowcase_fixed_repeat_boolean_subset"
+        static_id = f"{prefix}_lowcase_fixed_repeat_callsite"
+        native_id = f"{prefix}_lowcase_fixed_repeat_native"
+        claims.append(
+            SemanticClaim(
+                id=claim_id,
+                scope="runtime_consumer",
+                coverage="subset",
+                statement=f"Subsignatures {lowcase_fixed_repeat_indices} use the bounded nine-ID fixed-repeat LOWCASE Boolean lowering on the same selected BUFFER subject, with successful original pattern preparation, mode1 and capture disabled; literal/suffix byte preimages are preserved.",
+                evidence_refs=(static_id, native_id),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Other opcodes/modes/maps, nullable/resource-limited patterns, ordinary-trie/AMS candidate lifecycle, offsets/captures, scoring, reporting and final verdict are not promoted by this RHS equivalence.",
+                    ),
+                ),
+            )
+        )
+        evidence.extend(
+            (
+                SemanticEvidence(
+                    id=static_id,
+                    axis="consumer",
+                    kind="engine_static",
+                    source_ref="mpengine 1.443.903.0",
+                    locator="add_sstring_internal @ 0x1800FE008 -> BMPatternToLower @ 0x1800FECFC; hstr_internal_search_worker @ 0x1800E9F70 callsite 0x1800EA2F9 -> BMMatchEx2 @ 0x1800EC420; BM_MAP_LOWCASE @ 0x180DBB8C0 folds only ASCII A-Z, other 230 bytes identity",
+                    supports=(claim_id,),
+                ),
+                SemanticEvidence(
+                    id=native_id,
+                    axis="engine_equivalent_test",
+                    kind="engine_equivalent_test",
+                    source_ref="Pinned DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; original preparation, Ex2/initializer/worker with actual DLL LOWCASE pointer and unmodified subjects; 4733 wrapper calls and 54 preparations versus libyara 4.5.4",
+                    locator="tests/local_bm_lowcase_repeat_native.py SHA256 416aacafdcacfc60056d3ba8574c4ea396a2313b5657acc2802457d27efbbe56 (45 cases); current production bridge tests/local_bm_lowcase_repeat_differential.py SHA256 860ae351f80e9064821dea6652f65d94902cd2016ae7068c9d558cefb01e591a (72 cases, 18 complete actual cached records: 5 new ready/compile, 13 remain unsupported); docs/mpengine.dll/1.443.903.0/BM_LOWCASE_fixed_repeat_private.md",
+                    supports=(claim_id,),
+                ),
+            )
+        )
     return tuple(claims), tuple(evidence)
 
 
@@ -1584,6 +1626,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
     """Export a lossless HSTR matcher subset, never a final engine verdict."""
     unsupported = False
     raw17_literal_indices: list[int] = []
+    lowcase_fixed_repeat_indices: list[int] = []
     issues: list[SemanticIssue] = [_outer_verdict_issue(parsed.type_byte)]
     if parsed.receiver_ignored:
         issues.append(
@@ -1738,6 +1781,19 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                 )
             ):
                 raw17_literal_indices.append(index)
+            if (
+                bm_render.fidelity.value == "exact"
+                and subsig.flags.value == 0x0002
+                and parsed.type_byte in _CONFIRMED_MATCHER_FAMILIES
+                and not parsed.receiver_ignored
+                and any(
+                    isinstance(operation, BmExtension)
+                    and operation.name in ("RANGE_REPEAT", "RANGE_NEGATIVE_REPEAT")
+                    and operation.token.raw_id in _LOWCASE_FIXED_REPEAT_IDS
+                    for operation in interpret_bm_pattern(pattern).operations
+                )
+            ):
+                lowcase_fixed_repeat_indices.append(index)
             pattern_data, pattern_issues = serialize_bm_pattern(
                 pattern,
                 context=semantic_context,
@@ -1951,7 +2007,9 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         )
     )
     claims, claim_evidence = _hstr_typed_semantics(
-        parsed, raw17_literal_indices=tuple(raw17_literal_indices)
+        parsed,
+        raw17_literal_indices=tuple(raw17_literal_indices),
+        lowcase_fixed_repeat_indices=tuple(lowcase_fixed_repeat_indices),
     )
     legacy_evidence = [
         "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
