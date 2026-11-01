@@ -528,6 +528,187 @@ def _export_ssl_cert_pattern(parsed: NdatPayload) -> ArtifactExport:
     )
 
 
+class UnsupportedNdatVbasicPathPattern(ValueError):
+    """Outside callback-1 non-NULL pattern-registration framing."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatVbasicPathPattern:
+    raw: bytes
+    counted_data: bytes
+    effective_pattern: bytes
+    after_pattern_terminator: bytes
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+    syntax_flags: int = 0x100000
+
+
+def project_ndat_vbasic_path_pattern(parsed: NdatPayload) -> NdatVbasicPathPattern:
+    """Reparse callback1 and retain raw pattern/count/CString/suffix boundaries.
+
+    This nonempty/last-NUL registration profile does not validate arbitrary
+    Boost grammar, infer NULL finalize or decode pattern bytes as Unicode.
+    """
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 1:
+        raise UnsupportedNdatVbasicPathPattern("requires callback decimal1 (0x01)")
+    data = parsed.data_raw
+    if not data or data[-1] != 0:
+        raise UnsupportedNdatVbasicPathPattern(
+            "requires nonempty counted data ending in NUL"
+        )
+    first = data.index(0)
+    return NdatVbasicPathPattern(
+        parsed.raw,
+        data,
+        data[:first],
+        data[first + 1 :],
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _vbasic_path_manifest(parsed: NdatPayload) -> JSONObject:
+    try:
+        pattern = project_ndat_vbasic_path_pattern(parsed)
+    except UnsupportedNdatVbasicPathPattern as exc:
+        return JSONObject(
+            (
+                ("format", "vdm.ndat.vbasic-path.boost-pattern.v1"),
+                ("framing_supported", False),
+                ("reason", str(exc)),
+            )
+        )
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.vbasic-path.boost-pattern.v1"),
+            ("framing_supported", True),
+            ("callback_decimal", 1),
+            ("counted_data_hex", pattern.counted_data.hex()),
+            ("effective_pattern_hex", pattern.effective_pattern.hex()),
+            ("after_pattern_terminator_hex", pattern.after_pattern_terminator.hex()),
+            (
+                "record_id_suffix_hex",
+                None
+                if pattern.record_id_suffix_raw is None
+                else pattern.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_hex", pattern.trailing_raw.hex()),
+            ("syntax_flags_u32", 0x100000),
+            (
+                "backend",
+                "original RegExState::PushRegEx -> Boost re_detail_500 w32_regex_traits<char>, flags0x100000; CString Match/icase/captures, not a portable regex evaluator",
+            ),
+            (
+                "locale_dependency",
+                "runtime default-LCID byte traits; raw invalidUTF8 pattern bytes are retained, not Unicode-decoded/casefolded; host locale is environment only",
+            ),
+            (
+                "subject_recipe",
+                JSONObject(
+                    (
+                        ("projector", "lib.vdm.vbasic_path.project_vbasic_path_source"),
+                        ("field_type", "lib.vdm.vbasic_path.VbasicPathField"),
+                        ("result_type", "lib.vdm.vbasic_path.VbasicPathSource"),
+                        (
+                            "unsupported_error",
+                            "lib.vdm.vbasic_path.UnsupportedVbasicPathSource",
+                        ),
+                        (
+                            "domain",
+                            "caller-resolved parser+0xB0 field; Load_VBasicData copies VBProjectInfo+0x2A522B here; no mapping/version/parser initialization gates are run by this recipe",
+                        ),
+                        ("mapped_projectinfo_offset", 0x2A),
+                        ("parser_field_offset", 0xB0),
+                        ("declared_field_bytes", 522),
+                        ("worker_copy_bytes", 520),
+                        ("forced_wchar_nul_index", 259),
+                        ("code_page", 65001),
+                        ("conversion_flags", 0),
+                        ("cch_wide_char", -1),
+                        ("output_capacity_bytes", 260),
+                        (
+                            "conversion",
+                            "UTF16LE through first aligned NUL after forcing unit259NUL; invalid surrogates replace; UTF8 with NUL must fit260bytes, no heap retry",
+                        ),
+                        (
+                            "gates",
+                            "capacity failure sets worker output[0]=0; success forces output[259]=0; API-success empty is distinct but skips true query; missing520B is typed unsupported",
+                        ),
+                        (
+                            "query",
+                            "nonempty UTF8CString true call only: regex_subject excludesNUL; caller_hash_cstring and scan_filepath_length includeNUL; no slash/path normalization",
+                        ),
+                        (
+                            "excluded_recovery",
+                            "separate low-byte recovery passes scan_filepath boolfalse and bypasses path/name regex vectors; it is not a fallback/second callback1 subject",
+                        ),
+                        (
+                            "descriptor",
+                            JSONObject(
+                                (
+                                    ("address", "0x181289AA0"),
+                                    ("path_vector_offset", 0),
+                                    ("name_vector_offset", 8),
+                                    ("nid_snid_selector_offset", 16),
+                                    ("nid_snid_selector", 11),
+                                    ("nid_snid_selector_hex", "0x0B"),
+                                )
+                            ),
+                        ),
+                        (
+                            "boundary",
+                            "recipe-local conversion/source availability only; original Win32/engine resource failures, mapper/VBversion/p-code initialization, global patterns, NID/SNID/attributes/basename and ShouldContinueScanning remain external",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "query",
+                "original full converted path CString to Match/find_imp; row RecID and post-match ShouldContinueScanning/delayed reporting are not final verdicts",
+            ),
+            ("projector", "lib.vdm.types.ndat.project_ndat_vbasic_path_pattern"),
+            ("pattern_type", "lib.vdm.types.ndat.NdatVbasicPathPattern"),
+            (
+                "unsupported_error",
+                "lib.vdm.types.ndat.UnsupportedNdatVbasicPathPattern",
+            ),
+            ("runtime_record_id", None),
+            ("runtime_name", None),
+            ("compile_valid", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            ("evaluator", None),
+            ("portable_projection", None),
+        )
+    )
+
+
+def _export_vbasic_path_pattern(parsed: NdatPayload) -> ArtifactExport:
+    try:
+        pattern = project_ndat_vbasic_path_pattern(parsed)
+    except UnsupportedNdatVbasicPathPattern as exc:
+        return ArtifactExport("unsupported", reason=str(exc))
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact(
+                "vbasic-path-pattern.boost.bin", "binary", pattern.effective_pattern
+            ),
+            Artifact(
+                "vbasic-path-pattern.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_vbasic_path_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode()
+                + b"\n",
+            ),
+        ),
+    )
+
+
 class UnsupportedNdatPdbPathPattern(ValueError):
     """Outside callback-10 non-NULL pattern-registration framing."""
 
@@ -1183,6 +1364,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs with their distinct backend contracts."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 1:
+        return _export_vbasic_path_pattern(parsed)
     if parsed.callback_index == 10:
         return _export_pdb_path_pattern(parsed)
     if parsed.callback_index == 19:
@@ -1429,6 +1612,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     has_raw_ssl_consumer = parsed.callback_index == 20
     has_raw_body_consumer = parsed.callback_index == 19
     has_pdb_path_consumer = parsed.callback_index == 10
+    has_vbasic_path_consumer = parsed.callback_index == 1
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
@@ -1442,10 +1626,26 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         if has_raw_body_consumer
         else "boost_w32_pdb_path_pattern_ingest_and_rsds_cstring_search"
         if has_pdb_path_consumer
+        else "boost_w32_vbasic_path_pattern_ingest_and_projectinfo_utf8_search"
+        if has_vbasic_path_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_vbasic_path_consumer:
+        issues.append(
+            SemanticIssue(
+                "vbasic_path_backend_and_resolved_field_required",
+                "Only resolved VBProjectInfo/parser-field UTF8 true-query preparation is projected; mapping/parser/version, original resources, Boost traits and final policy remain external.",
+            )
+        )
+        if not parsed.data_raw or parsed.data_raw[-1] != 0:
+            issues.append(
+                SemanticIssue(
+                    "vbasic_path_nonnull_pattern_profile_unsupported",
+                    "Outside non-NULL registration profile, without declaring wire malformed or inferring NULL finalize.",
+                )
+            )
     if has_pdb_path_consumer:
         issues.append(
             SemanticIssue(
@@ -1617,7 +1817,9 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
                 *(
-                    (("pdb_path_pattern", _pdb_path_manifest(parsed)),)
+                    (("vbasic_path_pattern", _vbasic_path_manifest(parsed)),)
+                    if has_vbasic_path_consumer
+                    else (("pdb_path_pattern", _pdb_path_manifest(parsed)),)
                     if has_pdb_path_consumer
                     else (("raw_body_pattern", _raw_body_manifest(parsed)),)
                     if has_raw_body_consumer
@@ -1700,6 +1902,25 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-vbasic-path-pattern-source-contract",
+                        "runtime_consumer",
+                        "Callback1 stores first-NUL Boost patterns through actual PushRegEx flags0x100000. The traced source is VBProjectInfo+0x2A522B copied to parser+0xB0; the worker copies520B, forcesWCHAR259NUL and converts CP_UTF8 flags0/-1 into260bytes. Only API-success nonempty UTF8 prepares the true regex query; its caller hash length includesNUL. Separate low-byte recovery passes false and bypasses regex vectors.",
+                        "subset",
+                        ("ndat-vbasic-path-static", "ndat-vbasic-path-native-oracle"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Resolved field projection is not the original VB/PE parser or worker; resource/API failures outside capacity domain, global patterns, general Boost grammar/traits/namespace and hash/NID/SNID/ShouldContinueScanning policy remain external. Arbitrary compile/match/verdict unknown.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_vbasic_path_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -1925,6 +2146,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     if has_raw_body_consumer
                     else "The PDB path pattern and first-entry mapped RSDS source contract are exported separately; complete mapping, attributes/NID/SNID and reporting policy remain external."
                     if has_pdb_path_consumer
+                    else "The VBProjectInfo/parser-field UTF8 true-query and pattern contract are exported separately; low-byte recovery is not a regex subject and complete loader/reporting policy remain external."
+                    if has_vbasic_path_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -1955,6 +2178,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             if has_raw_body_consumer
                             else "Complete mapped-window lifecycle, runtime Boost traits/compiler and ShouldContinueScanning/delayed-report state remain external."
                             if has_pdb_path_consumer
+                            else "Original VB/PE mapping/version/parser and worker execution, native resources, Boost traits and ShouldContinueScanning/reporting remain external."
+                            if has_vbasic_path_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -2026,6 +2251,29 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-vbasic-path-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine1.443.903.0",
+                        ("ndat-vbasic-path-pattern-source-contract",),
+                        "VbasicPathNdatCallback1805861F0/15 -> FilePathNdatCallback1801FB7E4 -> PushRegEx1801FC020 flags100000,row24RecID+16. Load_VBasicData1804AB7B0/3C5 mask180E43120 {2A,20A} copies VBProjectInfo+2A522B to parser+B0. scan_vbasic32_worker_core1804ABBA0/898 copies520/forcesWORD259NUL -> WCTMB65001/flags0/-1/output104hex=260bytes; nonempty call4ABD3E scan_filepath(stateAA0,path,strlen+1,true). Recovery4AC2FF false bypassesregex at144091. descriptor selector decimal11/hex0B. docs/mpengine.dll/1.443.903.0/ndat_vbasic_path_contract_private.md; conversion/source mapping is static attribution, not native complete worker.",
+                    ),
+                    SemanticEvidence(
+                        "ndat-vbasic-path-native-oracle",
+                        "consumer",
+                        "engine_runtime",
+                        "Original Push/Match primitive plus separate Win32 conversion oracle, not original worker",
+                        ("ndat-vbasic-path-pattern-source-contract",),
+                        "Current offline production bridge tests/local_ndat_vbasic_path_bridge.py SHA256 9d32c1fe4b77343b2c64d2561b1b88d06abdcee404c92218e9c5b47b25dd79b5. "
+                        "DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; tests/.tmp/local_cb1_vb_native_evidence_index_v1.json SHA92659762ce7067a23d81bf32288a8729f5e5da64cdabcb1a3c162e2932681e14 pins368actualPush0/23children/1840Match/111positive37rows, manual3 primitive and17Win32oracle12success(includingempty)/5error122. Script95a719c5c9ecf301d525bff15dba43e52e5df8c78b9db2d0d67e9abc3ed04a2d; oraclefdd6bd11e55500b12c9648ab260fc51e8e1d45e9a2cc846c4b1a7d7781c0ed20/resultsb5a8165f4d3fda7bfa09a20bbca5ab4ef96efbdae4f95343a017fae5bdbe173b. Original manual raw90 subject is invalidUTF8/primitive only. New tests/.tmp/local_cb1_valid_utf8_source_witness_v1.py SHAf022ba028b2f10befbf762e90200e0241f706a591cebb86ca51d577ce0586f76/results546e093b4e3fd14eba06e8ec03bdaaa3a6afd344aca9745349e1e840cbb22bed uses actualWCTMB UTF16hex1004->D090 validUTF8 with actualraw90class Push0/Match1/case1/slash0. Root API17 replay6ed108a5949169cb8a9a8984d1843c3ac4a14db0ab7e7ceb2b4048f00dc01baf. Host codepins/canaries/children, no Unicorn trace or originalworker/parser/CRC/policy execution.",
+                    ),
+                )
+                if has_vbasic_path_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
