@@ -343,6 +343,30 @@ def _regkey_claims(
 ) -> tuple[SemanticClaim, ...]:
     return (
         SemanticClaim(
+            id="regkey_path_comparison_instruction_profile",
+            scope="detection_predicate",
+            statement=(
+                "Under explicit ASCII CRT prefix-comparison and typed path-list "
+                "service profiles, 145 concrete outcomes from original "
+                "expand_path_cmp and GetFriendlyFileNameW instructions agree "
+                "with the portable comparison, including ordered pair traces. "
+                "Three additional bounded unreadable/out-of-profile cases "
+                "remain unknown, not engine-returned booleans."
+            ),
+            coverage="subset",
+            evidence_refs=("regkey_path_comparison_instruction_test",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "CRT wcsncmp/_wcsnicmp, path-list services, cleanup and "
+                    "security-cookie checks are explicit seams. Resolver and "
+                    "offline producers, complete CRT locale behavior, NULL "
+                    "dereference outcomes, registry I/O, report and final "
+                    "verdict are not executed or established by this profile.",
+                ),
+            ),
+        ),
+        SemanticClaim(
             id="regkey_resolved_path_comparison",
             scope="detection_predicate",
             statement=(
@@ -507,6 +531,24 @@ def _regkey_claims(
 
 def _regkey_evidence() -> tuple[SemanticEvidence, ...]:
     return (
+        SemanticEvidence(
+            id="regkey_path_comparison_instruction_test",
+            axis="engine_equivalent_test",
+            kind="engine_equivalent_test",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "Original expand_path_cmp @ 0x180523660 (468 bytes) and "
+                "GetFriendlyFileNameW @ 0x18011790C (71 bytes), Unicorn 2.1.4; "
+                "145 concrete agreements plus 3 bounded unknown cases; "
+                "tests/local_regkey_paths_instruction_differential_v1.py SHA256 "
+                "63e8a6ad94148ca2b36d3e65caf4750c0d0a227630354eb24418756217d3c7a6; "
+                "tests/local_regkey_paths_instruction_differential_v2.json SHA256 "
+                "edb539e1d0307e9758d94b31ffe3150a413783a25a05d715640d06e237eb3112; "
+                "ASCII CRT/list/free/cookie seams; no resolver/offline producer execution; "
+                "docs/signature/REGKEY_path_comparison_instruction_differential_private.md"
+            ),
+            supports=("regkey_path_comparison_instruction_profile",),
+        ),
         SemanticEvidence(
             id="regkey_path_comparison_static",
             axis="consumer",
