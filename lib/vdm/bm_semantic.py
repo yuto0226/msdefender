@@ -553,6 +553,7 @@ def _execution_graph(
         "structure_complete": program.complete,
         "fidelity": fidelity,
         "has_rewrites": any(node.rewrite is not None for node in program.invocations),
+        **({"root_end_tail_closed": True} if program.root_end_tail_closed else {}),
         "scope": "same-start Boolean acceptance; valid disjoint backing and scalar output storage, and successful temporary allocation; child scratch is local and nonnull; outer scratch may be null; null backrefs and matches vector; scalar output may be null or nonnull; excludes first-success cursor, match end and reporting",
         "issues": list(program.issues),
         "invocations": [

@@ -16,6 +16,7 @@ from .bm import (
     decode_bm_pattern,
     interpret_bm_pattern,
     parse_bm_alternative_program,
+    validate_bm_framing,
 )
 
 
@@ -71,6 +72,34 @@ class BmExecutionProgram:
             for node in self.invocations
             for operation in node.prefix
         )
+
+    @property
+    def root_end_tail_closed(self) -> bool:
+        """Close only literal/raw01 root fragments, preserving the whole body.
+
+        This is worker Boolean closure, not receiver acceptance or wrapper
+        equivalence. Whole-body framing, derived flags, physical backref scans
+        and mapper length guards remain upstream consumers of the original raw.
+        """
+        if not self.complete or len(self.invocations) != 1:
+            return False
+        root = self.invocations[self.root]
+        if (
+            self.profile != "1.443.903.0"
+            or root.terminal != "end"
+            or not root.ignored_after_end
+            or b"\x90\x1b" in root.raw
+            or not all(
+                isinstance(operation, BmLiteral) or operation.raw[:2] == b"\x90\x01"
+                for operation in root.prefix
+            )
+        ):
+            return False
+        try:
+            validate_bm_framing(root.raw)
+        except ValueError:
+            return False
+        return True
 
 
 def build_bm_execution_program(
