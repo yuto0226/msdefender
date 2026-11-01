@@ -18,11 +18,11 @@ from .nid_named_namespace import (
     named_tail_nid_runtime_entry,
 )
 from .nid_namespace import (
-    NoTailNameSnapshot,
     UnsupportedNidNamespace,
     no_tail_nid_runtime_entry,
 )
 from .snid_resolver import NidRuntimeEntry
+from .threat_names import DirectFullNameSnapshot, UnsupportedThreatNamespace
 from .types.nid import NID_TYPE, NidPayload
 from .types.threat import MAGIC_THREAT_IDS, parse_threat_begin
 
@@ -133,7 +133,7 @@ def replay_fresh_nid4(
     events: tuple[Nid4WireEvent, ...],
     *,
     profile: Nid4FreshReplayProfile,
-    namespace: NoTailNameSnapshot | None = None,
+    namespace: DirectFullNameSnapshot | None = None,
 ) -> Nid4FreshReplayResult:
     """Derive stored IDs/sig fields and normalized name/status chunks.
 
@@ -155,8 +155,8 @@ def replay_fresh_nid4(
     ):
         raise TypeError("events must be an ordered tuple of Nid4WireEvent")
     if namespace is not None:
-        if not isinstance(namespace, NoTailNameSnapshot):
-            raise TypeError("namespace must be a NoTailNameSnapshot or None")
+        if not isinstance(namespace, DirectFullNameSnapshot):
+            raise TypeError("namespace must be a DirectFullNameSnapshot or None")
         if namespace.profile.threats_loaded != profile.threats_loaded:
             raise UnsupportedNid4Replay("namespace and replay loaded states differ")
 
@@ -194,7 +194,7 @@ def replay_fresh_nid4(
                     profile=named_profile,
                     parent_namespace=namespace,
                 )
-        except UnsupportedNidNamespace as exc:
+        except (UnsupportedNidNamespace, UnsupportedThreatNamespace) as exc:
             raise UnsupportedNid4Replay(str(exc)) from exc
 
         stored_id, sig_id = event.caller_threat_id, event.caller_sig_id

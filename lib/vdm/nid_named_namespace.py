@@ -8,8 +8,9 @@ state. Unknown storage/namespace state is an error, never a synthesized NULL nam
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from .nid_namespace import NoTailNameSnapshot, UnsupportedNidNamespace
+from .nid_namespace import UnsupportedNidNamespace
 from .snid_resolver import NidRuntimeEntry
+from .threat_names import DirectFullNameSnapshot
 from .types.nid import NID_TYPE, NidPayload
 
 NAMED_MINI_NAME_PROFILE: Final = (
@@ -48,7 +49,7 @@ def named_tail_nid_runtime_entry(
     caller_threat_id: int,
     caller_sig_id: int,
     profile: NamedTailNameProfile,
-    parent_namespace: NoTailNameSnapshot | None = None,
+    parent_namespace: DirectFullNameSnapshot | None = None,
 ) -> NidRuntimeEntry:
     """Project a generic type55 nonempty tail into the existing ASCII row API.
 
@@ -88,7 +89,7 @@ def _named_tail_runtime_name(
     caller_threat_id: int,
     caller_sig_id: int,
     profile: NamedTailNameProfile,
-    parent_namespace: NoTailNameSnapshot | None,
+    parent_namespace: DirectFullNameSnapshot | None,
 ) -> bytes | None:
     """Shared RecordPush/createrecidz flags0 name-value projection.
 
@@ -102,9 +103,9 @@ def _named_tail_runtime_name(
     if not isinstance(profile, NamedTailNameProfile):
         raise TypeError("an explicit NamedTailNameProfile is required")
     if parent_namespace is not None and not isinstance(
-        parent_namespace, NoTailNameSnapshot
+        parent_namespace, DirectFullNameSnapshot
     ):
-        raise TypeError("parent_namespace must be a NoTailNameSnapshot or None")
+        raise TypeError("parent_namespace must be a DirectFullNameSnapshot or None")
 
     if tail[0] == 0:
         if parent_namespace is None:

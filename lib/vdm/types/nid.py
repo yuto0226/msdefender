@@ -40,7 +40,15 @@ _NID4_FRESH_REPLAY: Final = JSONObject(
         ),
         ("result_type", "lib.vdm.nid_fresh_replay.Nid4FreshReplayResult"),
         ("stored_row_type", "lib.vdm.nid_fresh_replay.Nid4StoredRow"),
-        ("optional_parent_namespace_type", "lib.vdm.nid_namespace.NoTailNameSnapshot"),
+        (
+            "optional_parent_namespace_type",
+            "lib.vdm.threat_names.DirectFullNameSnapshot",
+        ),
+        ("parent_namespace_epoch_required", True),
+        (
+            "parent_namespace_unsupported_error_type",
+            "lib.vdm.threat_names.UnsupportedThreatNamespace",
+        ),
         ("unsupported_error_type", "lib.vdm.nid_fresh_replay.UnsupportedNid4Replay"),
         (
             "inputs",
@@ -177,11 +185,16 @@ _NID64_SUPPRESSION: Final = JSONObject(
 _NID64_NO_TAIL_NAME_BRIDGE: Final = JSONObject(
     (
         ("callable", "lib.vdm.nid64_namespace.no_tail_nid64_runtime_entry"),
-        ("namespace_snapshot_type", "lib.vdm.nid_namespace.NoTailNameSnapshot"),
-        ("initialization_profile_type", "lib.vdm.nid_namespace.NoTailNameProfile"),
+        ("namespace_snapshot_type", "lib.vdm.threat_names.DirectFullNameSnapshot"),
+        ("namespace_epoch_required", True),
+        (
+            "namespace_unsupported_error_type",
+            "lib.vdm.threat_names.UnsupportedThreatNamespace",
+        ),
+        ("initialization_profile_type", "lib.vdm.threat_names.DirectFullNameProfile"),
         (
             "profile_kind",
-            "mpengine-1.443.903.0.normal-copy.unique-direct-full.no-redirect.no-override",
+            "mpengine-1.443.903.0.normal-copy.unique-sorted-direct-full.no-redirect.no-override",
         ),
         ("unsupported_error_type", "lib.vdm.nid_namespace.UnsupportedNidNamespace"),
         ("record_type", NID64_TYPE),
@@ -212,7 +225,15 @@ _NID64_NAMED_NAME_BRIDGE: Final = JSONObject(
             "profile_kind",
             "mpengine-1.443.903.0.normal-copy.consistent-mini.immutable-no-shadow",
         ),
-        ("optional_parent_namespace_type", "lib.vdm.nid_namespace.NoTailNameSnapshot"),
+        (
+            "optional_parent_namespace_type",
+            "lib.vdm.threat_names.DirectFullNameSnapshot",
+        ),
+        ("parent_namespace_epoch_required", True),
+        (
+            "parent_namespace_unsupported_error_type",
+            "lib.vdm.threat_names.UnsupportedThreatNamespace",
+        ),
         ("unsupported_error_type", "lib.vdm.nid_namespace.UnsupportedNidNamespace"),
         ("record_type", NID64_TYPE),
         ("payload_length", "greater than 9"),
@@ -240,11 +261,16 @@ _NID64_NAMED_NAME_BRIDGE: Final = JSONObject(
 _NO_TAIL_NAME_BRIDGE: Final = JSONObject(
     (
         ("callable", "lib.vdm.nid_namespace.no_tail_nid_runtime_entry"),
-        ("namespace_snapshot_type", "lib.vdm.nid_namespace.NoTailNameSnapshot"),
-        ("initialization_profile_type", "lib.vdm.nid_namespace.NoTailNameProfile"),
+        ("namespace_snapshot_type", "lib.vdm.threat_names.DirectFullNameSnapshot"),
+        ("namespace_epoch_required", True),
+        (
+            "namespace_unsupported_error_type",
+            "lib.vdm.threat_names.UnsupportedThreatNamespace",
+        ),
+        ("initialization_profile_type", "lib.vdm.threat_names.DirectFullNameProfile"),
         (
             "profile_kind",
-            "mpengine-1.443.903.0.normal-copy.unique-direct-full.no-redirect.no-override",
+            "mpengine-1.443.903.0.normal-copy.unique-sorted-direct-full.no-redirect.no-override",
         ),
         ("record_type", NID_TYPE),
         ("payload_length", 5),
@@ -282,7 +308,15 @@ _NAMED_TAIL_NAME_BRIDGE: Final = JSONObject(
             "profile_kind",
             "mpengine-1.443.903.0.normal-copy.consistent-mini.immutable-no-shadow",
         ),
-        ("optional_parent_namespace_type", "lib.vdm.nid_namespace.NoTailNameSnapshot"),
+        (
+            "optional_parent_namespace_type",
+            "lib.vdm.threat_names.DirectFullNameSnapshot",
+        ),
+        ("parent_namespace_epoch_required", True),
+        (
+            "parent_namespace_unsupported_error_type",
+            "lib.vdm.threat_names.UnsupportedThreatNamespace",
+        ),
         ("unsupported_error_type", "lib.vdm.nid_namespace.UnsupportedNidNamespace"),
         ("record_type", NID_TYPE),
         ("payload_length", "greater than 5"),

@@ -9,12 +9,13 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from .nid_named_namespace import NamedTailNameProfile, _named_tail_runtime_name
-from .nid_namespace import NoTailNameSnapshot, UnsupportedNidNamespace
+from .nid_namespace import UnsupportedNidNamespace
 from .nid_suppression import (
     Nid64LookupSnapshot,
     Nid64RuntimeEntry,
     UnsupportedNidSuppression,
 )
+from .threat_names import DirectFullNameSnapshot
 from .types.nid import NID64_TYPE, NidPayload
 
 WIRE_ONLY_EMPTY108_PROFILE: Final = "mpengine-1.443.903.0.complete-base-wire-ce.empty-effective-delta.no-cache-overlay-or-other-producers"
@@ -50,7 +51,7 @@ def no_tail_nid64_runtime_entry(
     parsed_nid: NidPayload,
     *,
     caller_threat_id: int,
-    namespace: NoTailNameSnapshot,
+    namespace: DirectFullNameSnapshot,
 ) -> Nid64RuntimeEntry:
     """Associate exact9 generic CE with raw parent bytes/NULL, preserving high bits.
 
@@ -60,8 +61,8 @@ def no_tail_nid64_runtime_entry(
     raw = _ce_raw(parsed_nid)
     if len(raw) != 9:
         raise UnsupportedNidNamespace("bridge requires exactly nine no-tail CE bytes")
-    if not isinstance(namespace, NoTailNameSnapshot):
-        raise TypeError("an explicit NoTailNameSnapshot is required")
+    if not isinstance(namespace, DirectFullNameSnapshot):
+        raise TypeError("an explicit DirectFullNameSnapshot is required")
     return Nid64RuntimeEntry(
         int.from_bytes(raw[:8], "little"),
         raw[8],
@@ -75,7 +76,7 @@ def named_tail_nid64_runtime_entry(
     caller_threat_id: int,
     caller_sig_id: int,
     profile: NamedTailNameProfile,
-    parent_namespace: NoTailNameSnapshot | None = None,
+    parent_namespace: DirectFullNameSnapshot | None = None,
 ) -> Nid64RuntimeEntry:
     """Associate generic CE via the verified flags0 mini name-value projection.
 
