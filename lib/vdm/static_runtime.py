@@ -14,7 +14,9 @@ class StaticUnknown(Enum):
 UNKNOWN = StaticUnknown.UNKNOWN
 type RuntimeBool = bool | StaticUnknown
 type RuntimeU32 = int | None | StaticUnknown
+type RuntimeU64 = int | StaticUnknown
 UINT64_MAX = (1 << 64) - 1
+EXCEPTION_NAME_DISABLE_MASK = 1 << 34
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +40,9 @@ class StaticRuntimeSnapshot:
     narrow pointer storage, never decoded text. Prefix comparison reads bytes[1:5]
     independently of byte0; scanner starts at byte5 and stops at NUL/colon.
     Exactly one virtual NUL follows supplied storage; no bytes beyond it are
-    inferred. Empty storage cannot supply name+1 and produces unknown. epoch must be explicitly supplied.
+    inferred. Empty storage has a virtual first-byte NUL and is non-exception.
+    epoch must be explicitly supplied. resolved_cmdline_flags_u64 is the already
+    resolved GetCmdlineFlags result; its writers/TLS/epoch are external inputs.
     config is the resolved effective pointer *(reply+0xB8), after CheckConfig's
     fixed passed_config=NULL fallback; config=None means that resolved pointer
     is confirmed NULL, not merely that the fixed argument is NULL.
@@ -46,7 +50,7 @@ class StaticRuntimeSnapshot:
 
     epoch: str
     name: bytes | None | StaticUnknown = UNKNOWN
-    exception_name: RuntimeBool = UNKNOWN
+    resolved_cmdline_flags_u64: RuntimeU64 = UNKNOWN
     config: StaticConfigSnapshot | None | StaticUnknown = UNKNOWN
     scan_state_kind: RuntimeU32 = UNKNOWN
     force_scan_archives: RuntimeBool = UNKNOWN
@@ -63,7 +67,6 @@ class StaticRuntimeSnapshot:
         ):
             raise TypeError("name must be narrow CString bytes, NULL, or UNKNOWN")
         for value in (
-            self.exception_name,
             self.force_scan_archives,
             self.force_scan_mail,
             self.force_scan_packed,
@@ -83,6 +86,54 @@ class StaticRuntimeSnapshot:
                 and (type(value) is not int or not 0 <= value <= 0xFFFFFFFF)
             ):
                 raise ValueError("snapshot DWORD must be u32, NULL, or UNKNOWN")
+        if self.resolved_cmdline_flags_u64 is not UNKNOWN and (
+            type(self.resolved_cmdline_flags_u64) is not int
+            or not 0 <= self.resolved_cmdline_flags_u64 <= UINT64_MAX
+        ):
+            raise ValueError("resolved cmdline flags must be u64 or UNKNOWN")
+
+    @property
+    def exception_name(self) -> RuntimeBool:
+        """One derived helper result shared by CFG and long-target consumers."""
+        return project_static_exception_name(self).value
+
+
+@dataclass(frozen=True, slots=True)
+class StaticExceptionProjection:
+    status: Literal["true", "false", "unknown", "no_match"]
+    reason: str
+    queried_fields: tuple[str, ...] = ()
+
+    @property
+    def value(self) -> RuntimeBool:
+        return {"true": True, "false": False}.get(self.status, UNKNOWN)
+
+
+def project_static_exception_name(
+    snapshot: StaticRuntimeSnapshot,
+) -> StaticExceptionProjection:
+    """Project IsExceptionName from narrow storage and resolved flags, not text.
+
+    NULL belongs to the caller's rejection path and never invokes the helper.
+    Empty storage supplies the contract's one virtual NUL as its first byte.
+    """
+    name = snapshot.name
+    if name is None:
+        return StaticExceptionProjection("no_match", "null_name_no_match")
+    if name is UNKNOWN:
+        return StaticExceptionProjection("unknown", "name_unresolved")
+    if not name or name[0] not in (0x23, 0x7E):
+        return StaticExceptionProjection("false", "non_exception_prefix", ("name[0]",))
+    flags = snapshot.resolved_cmdline_flags_u64
+    queries = ("name[0]", "resolved_cmdline_flags_u64")
+    if flags is UNKNOWN:
+        return StaticExceptionProjection("unknown", "cmdline_flags_unresolved", queries)
+    disabled = bool(flags & EXCEPTION_NAME_DISABLE_MASK)
+    return StaticExceptionProjection(
+        "false" if disabled else "true",
+        "cmdline_bit34_set" if disabled else "cmdline_bit34_clear",
+        queries,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,8 +232,6 @@ def project_static_cfg_gate(snapshot: StaticRuntimeSnapshot) -> StaticCfgProject
         return StaticCfgProjection("true", "cfg_not_applicable")
     # Input is narrow pointer storage, not a decoded CString starting at byte0.
     # strncmp is called at name+1; only the later scanner starts at name+5.
-    if not name:
-        return StaticCfgProjection("unknown", "name_storage_incomplete")
     for offset, expected in enumerate(b"CFG:", 1):
         byte = name[offset] if offset < len(name) else 0  # one virtual NUL
         if byte != expected:
@@ -293,6 +342,23 @@ def static_runtime_recipes() -> JSONObject:
         record_local_match=None,
         final_verdict=None,
         caller_selection="external_only; never inferred from record",
+        exception_name_recipe=obj(
+            helper="IsExceptionName@0x180185370",
+            flags_helper="GetCmdlineFlags@0x180185894",
+            provenance="derived only from explicit same-epoch narrow name storage and resolved_cmdline_flags_u64; no snapshot boolean override",
+            predicate=expr(
+                "and",
+                expr("first_byte_in", "name", 0x23, 0x7E),
+                expr("equal", expr("bit_u64", "resolved_cmdline_flags_u64", 34), 0),
+            ),
+            evaluation="non #/~ first byte returns false without querying flags; #/~ with unresolved flags remains unknown; empty storage supplies one virtual NUL; NULL is caller no_match before helper",
+            flags_source="qword_18128A488 NULL returns 0; otherwise GetOpt@0x1800B8090 non-NULL reads selected+0x18 QWORD, fallback reads global+0x08 QWORD",
+            unresolved="global and selected/default flags writers, GetOpt TLS selection and same-epoch provenance remain external; no command-line text parsing or THREAT_BEGIN bridge",
+            consumers=JSONArray(
+                ("CFG applicability", "long-target exception-or-signature gate")
+            ),
+            external_observation="StaticMatchContext without runtime_snapshot may accept an externally observed helper boolean; that observation is not a derived recipe result",
+        ),
         caller_profiles=obj(
             troj_scan_entry=obj(
                 callsite="0x180B027CB",
@@ -317,7 +383,7 @@ def static_runtime_recipes() -> JSONObject:
             ),
         ),
         cfg_recipe=obj(
-            name="resolved narrow pointer storage; raw bytes[1:5] prefix independent of byte0; empty storage unknown; exactly one virtual NUL after supplied bytes; NULL=no_match",
+            name="resolved narrow pointer storage; helper first byte must be #/~ before raw bytes[1:5] CFG prefix; empty storage is non-exception; exactly one virtual NUL after supplied bytes; NULL=no_match",
             applicability=expr(
                 "and", "exception_name", expr("bytes_equal", "name[1:5]", "4346473a")
             ),
@@ -327,7 +393,7 @@ def static_runtime_recipes() -> JSONObject:
                 obj(A=1, M=3, P=2),
             ),
             byte_contract="case-sensitive raw bytes[1:5] prefix; scan only from byte5 until NUL/colon or supplied storage end (one virtual NUL); preserve order, offsets and duplicates; ignore other bytes; continue after false",
-            snapshot="explicit immutable same-epoch config flags:u32, state NULL/kind:u32, three ForceScan attribute booleans; unknown distinct from false",
+            snapshot="explicit immutable same-epoch name storage, resolved_cmdline_flags_u64:u64, config flags:u32, state NULL/kind:u32, three ForceScan attribute booleans; exception_name is derived; unknown distinct from false",
             config_source="CheckConfig passed_config=NULL; effective_config=*(SCAN_REPLY+0xB8); flags=*(u32*)(effective_config+0)",
             null_config="resolved fallback effective_config is NULL: invalid_state unsupported when CheckConfig is called",
             C1=expr(
