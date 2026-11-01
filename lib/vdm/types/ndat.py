@@ -2122,6 +2122,7 @@ def _preview_rows(data: bytes) -> tuple[tuple[str, str], ...]:
 
 
 def render_ndat(parsed: NdatPayload) -> FormatResult:
+    parsed = parse_ndat(parsed.raw)
     suffix = parsed.record_id_suffix_raw
     rows = [
         ("data_length", f"{parsed.data_length} B"),
@@ -2214,6 +2215,7 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
 
 def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     """Export only NDAT callbacks tied to a static registration and consumer."""
+    parsed = parse_ndat(parsed.raw)
     callback_targets = {
         1: "VbasicPathNdatCallback",
         3: "VdllNdatDontCountCallback",
