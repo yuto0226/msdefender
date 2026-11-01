@@ -67,7 +67,7 @@ class BmExecutionProgram:
 
     @property
     def snapshot_finite_grammar(self) -> bool:
-        """One framed invocation; no retries, rewrites, captures or END tail."""
+        """Framed finite snapshot grammar; raw02 retries exclude class/rewrite."""
         if (
             not self.complete
             or self.profile != "1.443.903.0"
@@ -90,9 +90,14 @@ class BmExecutionProgram:
         )
         if self != canonical:
             return False
+        if any(op.raw[:2] == b"\x90\x02" for op in node.prefix) and any(
+            isinstance(op, BmClass) for op in node.prefix
+        ):
+            # Primary-class closure has not proved raw02 child composition.
+            return False
         return all(
             isinstance(operation, BmLiteral)
-            or operation.raw[:2] in (b"\x90\x01", b"\x90\x09")
+            or operation.raw[:2] in (b"\x90\x01", b"\x90\x02", b"\x90\x09")
             or (
                 isinstance(operation, BmClass)
                 and operation.token.raw_id == 0x04
