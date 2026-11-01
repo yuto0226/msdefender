@@ -93,6 +93,12 @@ class BmExecutionProgram:
         return all(
             isinstance(operation, BmLiteral)
             or operation.raw[:2] in (b"\x90\x01", b"\x90\x09")
+            or (
+                isinstance(operation, BmClass)
+                and operation.token.raw_id == 0x04
+                and operation.token.dispatch_id == 0x04
+                and operation.token.descriptor_flags == 0x02
+            )
             for operation in node.prefix
         )
 

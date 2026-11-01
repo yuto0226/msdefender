@@ -1,4 +1,4 @@
-"""Finite BUFFER/identity literal/raw01/raw09/END invocation evaluator.
+"""Finite BUFFER/identity literal/raw01/primary-raw04/raw09/END evaluator.
 
 This is not a general BM matcher. Unsupported grammar/context raises ValueError;
 ordinary matching failure returns a result with the mutated reader preserved.
@@ -6,7 +6,7 @@ ordinary matching failure returns a result with the mutated reader preserved.
 
 from dataclasses import dataclass, replace
 
-from .bm import BmLiteral, buffer_backward_scan_transition
+from .bm import BmClass, BmLiteral, buffer_backward_scan_transition, raw_04_05_byte_set
 from .bm_program import BmExecutionProgram
 
 
@@ -66,6 +66,19 @@ def evaluate_bm_snapshot_finite(
                 if (
                     reader.cursor >= reader.limit
                     or reader.subject[reader.cursor] != value
+                ):
+                    return BmFiniteMatchResult(False, reader, None)
+                reader = replace(reader, cursor=reader.cursor + 1)
+        elif isinstance(operation, BmClass):
+            # Primary raw04 runs in this invocation. It neither retries the
+            # suffix nor refreshes the entry snapshot used by later raw09.
+            accepted = raw_04_05_byte_set(
+                operation.spec, pattern_preparation="identity"
+            )
+            for _ in range(operation.count):
+                if (
+                    reader.cursor >= reader.limit
+                    or reader.subject[reader.cursor] not in accepted
                 ):
                     return BmFiniteMatchResult(False, reader, None)
                 reader = replace(reader, cursor=reader.cursor + 1)
