@@ -21,7 +21,7 @@ from ..core import (
     SemanticUnknown,
 )
 from ..recid import RecIdTail, parse_recid_tail
-from ._certificate_key import parse_certificate_key
+from ._certificate_key import certificate_key_profile, parse_certificate_key
 
 TRUSTED_PUBLISHER_TYPE: Final = 0x70
 
@@ -149,13 +149,6 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
                 (("key_type", parsed.key_type),),
             )
         )
-    if parsed.decode_error is not None:
-        unsupported_reasons.append(
-            SemanticIssue(
-                "invalid_utf16le",
-                "The string key cannot be decoded as UTF-16LE; text semantics are unavailable.",
-            )
-        )
     if parsed.mode == "string" and not parsed.terminator_raw:
         unsupported_reasons.append(
             SemanticIssue(
@@ -211,42 +204,14 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
             )
         )
 
-    normalized_key: bytes | None = None
-    if type_name is not None and parsed.mode == "binary":
-        if parsed.key_type in {1, 4} and len(parsed.key_material_raw) == 20:
-            adjusted = bytearray(parsed.key_material_raw)
-            adjusted[0] = (adjusted[0] + parsed.key_type) & 0xFF
-            normalized_key = bytes(adjusted)
-            normalization = "copy_digest_then_add_type_to_first_byte"
-        else:
-            normalized_key = hashlib.sha1(
-                bytes((parsed.key_type,)) + parsed.key_material_raw
-            ).digest()
-            normalization = "sha1(type_byte || binary_material)"
-    elif (
-        type_name is not None
-        and parsed.mode == "string"
-        and parsed.key_type not in {1, 4}
-    ):
-        material_end = len(parsed.key_material_raw)
-        for offset in range(0, len(parsed.key_material_raw) - 1, 2):
-            if parsed.key_material_raw[offset : offset + 2] == b"\0\0":
-                material_end = offset
-                break
-        material_text_raw = parsed.key_material_raw[:material_end]
-        try:
-            material_text = material_text_raw.decode("utf-16le")
-        except UnicodeDecodeError:
-            normalization = "wide_GetKey_conversion_fallback"
-        else:
-            normalized_key = hashlib.sha1(
-                bytes((parsed.key_type,)) + material_text.encode("utf-8")
-            ).digest()
-            normalization = "sha1(type_byte || utf8(material_text))"
-    elif parsed.mode == "string" and parsed.key_type in {1, 4}:
-        normalization = "hex_decode_then_binary_GetKey"
-    else:
-        normalization = "unknown"
+    normalization_profile = certificate_key_profile(
+        parse_trusted_publisher(parsed.raw).key_data
+    )
+    normalized_hex = normalization_profile["normalized_key_hex"]
+    normalized_key = (
+        bytes.fromhex(normalized_hex) if isinstance(normalized_hex, str) else None
+    )
+    normalization = normalization_profile["operation"] or "unsupported"
 
     if parsed.key_type in {1, 2, 3, 5}:
         consumer_claim = SemanticClaim(
@@ -384,6 +349,10 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
                     JSONObject(
                         (
                             ("engine_call", "GetKey"),
+                            (
+                                "recipe",
+                                JSONObject(tuple(normalization_profile.items())),
+                            ),
                             ("operation", normalization),
                             (
                                 "normalized_key_hex",
@@ -427,6 +396,19 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            SemanticClaim(
+                id="certificate_key_successful_projection",
+                scope="receiver_transform",
+                statement="The shared raw-key normalizer projects binary GetKey and terminated wide strict-hex or CP_UTF8 flags0 success, including surrogate replacement; no Unicode canonicalization or trust decision is implied.",
+                coverage="subset",
+                evidence_refs=("certificate_key_native_projection",),
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "API/allocation failure fallback, invalid-hex C++ catch, X509 field selection, lookup and final trust remain outside the projection.",
+                    ),
+                ),
+            ),
             SemanticClaim(
                 id="trusted_publisher_wire_layout",
                 scope="wire_layout",
@@ -484,6 +466,14 @@ def export_trusted_publisher_semantics(parsed: TrustedPublisher) -> RuleSemantic
         ),
         claim_evidence=(
             SemanticEvidence(
+                id="certificate_key_native_projection",
+                axis="receiver",
+                kind="engine_equivalent_test",
+                source_ref="Pinned mpengine 1.443.903.0 original receivers/GetKey/Win32 wrappers/SHA1; actual host CP_UTF8 flags0 and C-locale prefix oracles; allocations/copies are successful resource services.",
+                locator="tests/local_certificate_key_native.py SHA256 4313d2706c50081c20d6223e2c09bbc0b38440302a325359ecb91f46fc463f11 (47 cases); current source bridge tests/local_certificate_key_differential.py SHA256 0f06417d212b9e20cab7e316f62571c19c54b4664ce5368f5e9c66478953d76e (35 cases); docs/mpengine.dll/1.443.903.0/certificate_key_native_private.md",
+                supports=("certificate_key_successful_projection",),
+            ),
+            SemanticEvidence(
                 id="trusted_publisher_dispatch",
                 axis="dispatch",
                 kind="engine_static",
@@ -532,6 +522,9 @@ def export_trusted_publisher(parsed: TrustedPublisher) -> ArtifactExport:
         "schema": "vdm.trusted_publisher.artifact.v1",
         "record_type": {"byte": TRUSTED_PUBLISHER_TYPE, "name": "TRUSTED_PUBLISHER"},
         "raw_hex": parsed.raw.hex(),
+        "normalization_recipe": certificate_key_profile(
+            parse_trusted_publisher(parsed.raw).key_data
+        ),
         "key": {
             "length": parsed.key_len,
             "length_raw_hex": parsed.raw[:2].hex(),

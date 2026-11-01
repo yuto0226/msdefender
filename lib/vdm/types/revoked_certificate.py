@@ -23,7 +23,11 @@ from ..core import (
     semantic_json_to_data,
 )
 from ..recid import RecIdTail, parse_recid_tail
-from ._certificate_key import parse_certificate_key
+from ._certificate_key import (
+    certificate_key_profile,
+    normalize_binary_certificate_key,
+    parse_certificate_key,
+)
 
 REVOKED_CERTIFICATE_TYPE: Final = 0x6C
 POLICY_TRAILER_SIZE: Final = 12
@@ -363,15 +367,6 @@ def export_revoked_certificate_semantics(
                 "bound; this record has no NUL terminator inside key_data.",
             )
         )
-    if parsed.decode_error is not None:
-        unsupported_reasons.append(
-            SemanticIssue(
-                "invalid_utf16le_key",
-                "The string-like key bytes cannot be decoded as UTF-16LE; "
-                "the raw key remains available.",
-            )
-        )
-
     issues = list(unsupported_reasons)
     if parsed.key_type in {1, 2, 3, 5}:
         consumer_claim = SemanticClaim(
@@ -471,6 +466,43 @@ def export_revoked_certificate_semantics(
         data=JSONObject(
             (
                 ("raw_hex", parsed.raw.hex()),
+                (
+                    "key_normalization_recipe",
+                    JSONObject(
+                        tuple(
+                            certificate_key_profile(
+                                parse_revoked_certificate(parsed.raw).key_data
+                            ).items()
+                        )
+                    ),
+                ),
+                (
+                    "local_predicate_recipe",
+                    JSONObject(
+                        (
+                            (
+                                "callable",
+                                "lib.vdm.certificate_match.evaluate_revoked_certificate",
+                            ),
+                            (
+                                "result_type",
+                                "lib.vdm.certificate_match.RevokedCertificateMatch",
+                            ),
+                            (
+                                "unsupported_error",
+                                "lib.vdm.types._certificate_key.UnsupportedCertificateKey",
+                            ),
+                            (
+                                "inputs",
+                                "raw record, query key20, uint64 FILETIME, uint8 policy, explicit signed bool or None",
+                            ),
+                            (
+                                "scope",
+                                "record-local key/time/signed predicate; no X509 field selection, lookup or final trust",
+                            ),
+                        )
+                    ),
+                ),
                 ("attribution", _receiver_attribution(parsed)),
                 (
                     "framing",
@@ -601,6 +633,19 @@ def export_revoked_certificate_semantics(
         issues=tuple(issues),
         claims=(
             SemanticClaim(
+                id="certificate_key_successful_projection",
+                scope="receiver_transform",
+                statement="The shared raw-key normalizer projects binary GetKey and terminated wide strict-hex or CP_UTF8 flags0 success; the 6C local evaluator preserves unsigned inclusive time, any-nonzero policy byte and lazy bit0 signed gate.",
+                coverage="subset",
+                evidence_refs=("certificate_key_native_projection",),
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "API/allocation failure fallback, invalid-hex C++ catch, X509 field selection, namespace lookup and final trust remain outside the projection.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
                 id="revoked_certificate_wire_layout",
                 scope="wire_layout",
                 statement=(
@@ -679,6 +724,14 @@ def export_revoked_certificate_semantics(
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                id="certificate_key_native_projection",
+                axis="receiver",
+                kind="engine_equivalent_test",
+                source_ref="Pinned mpengine 1.443.903.0 original receivers/GetKey/Win32 wrappers/SHA1/CompareValues/ShouldReport; actual host CP_UTF8 flags0 and C-locale prefix oracles; allocation/copy and signed boolean are explicit services.",
+                locator="tests/local_certificate_key_native.py SHA256 4313d2706c50081c20d6223e2c09bbc0b38440302a325359ecb91f46fc463f11 (47 cases); current source bridge tests/local_certificate_key_differential.py SHA256 0f06417d212b9e20cab7e316f62571c19c54b4664ce5368f5e9c66478953d76e (35 cases); docs/mpengine.dll/1.443.903.0/certificate_key_native_private.md",
+                supports=("certificate_key_successful_projection",),
+            ),
             SemanticEvidence(
                 id="revoked_certificate_attribution_helper_probe",
                 axis="engine_equivalent_test",
@@ -767,14 +820,12 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
     """Export a lossless policy observation without X.509 field guesses."""
     key_end = 2 + parsed.key_len
     trailer_end = key_end + POLICY_TRAILER_SIZE
-    normalization_profile = (
-        _binary_getkey_profile(parsed)
-        if parsed.mode == "binary"
-        else {
-            **_wide_hex_getkey_profile(parsed),
-            "normalization": "GetKey_wide_hex_subset",
-        }
-    )
+    normalization_profile = {
+        **_binary_getkey_profile(parse_revoked_certificate(parsed.raw)),
+        **certificate_key_profile(parse_revoked_certificate(parsed.raw).key_data),
+    }
+    if parsed.mode == "string":
+        normalization_profile["normalization"] = normalization_profile["operation"]
     manifest = {
         "schema": "vdm.revoked_certificate.artifact.v2",
         "record_type": {
@@ -782,6 +833,12 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
             "name": "REVOKED_CERTIFICATE",
         },
         "raw_hex": parsed.raw.hex(),
+        "local_predicate_recipe": {
+            "callable": "lib.vdm.certificate_match.evaluate_revoked_certificate",
+            "result_type": "lib.vdm.certificate_match.RevokedCertificateMatch",
+            "unsupported_error": "lib.vdm.types._certificate_key.UnsupportedCertificateKey",
+            "scope": "record-local key/time/signed predicate, not final revocation/trust",
+        },
         "attribution": semantic_json_to_data(_receiver_attribution(parsed)),
         "key": {
             "length": parsed.key_len,
@@ -848,7 +905,7 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
                     "fast_path": "copy 20 bytes; add type modulo 256 to byte 0",
                     "other_input_shape": "type_byte concatenated with binary bytes",
                     "other_normalization": "SHA1(type_byte || data)",
-                    "normalized_key_hex": _binary_getkey_normalize(
+                    "normalized_key_hex": normalize_binary_certificate_key(
                         parsed.key_type, parsed.key_material_raw
                     ).hex()
                     if parsed.mode == "binary"
@@ -862,7 +919,7 @@ def export_revoked_certificate(parsed: RevokedCertificate) -> ArtifactExport:
                         "other types hash type plus UTF-8, falling back to "
                         "UTF-16 raw bytes on conversion failure"
                     ),
-                    "implementation": "confirmed_hex_subset",
+                    "implementation": "shared_successful_GetKey_projection",
                     "hex_subset": _wide_hex_getkey_profile(parsed),
                     "identity_mapping": "unknown",
                 },
@@ -929,7 +986,9 @@ def _binary_getkey_profile(parsed: RevokedCertificate) -> dict[str, object]:
             "ScanCertificate.type1" if is_binary and parsed.key_type == 1 else None
         ),
         "normalized_key_hex": (
-            _binary_getkey_normalize(parsed.key_type, parsed.key_material_raw).hex()
+            normalize_binary_certificate_key(
+                parsed.key_type, parsed.key_material_raw
+            ).hex()
             if is_binary
             else None
         ),
@@ -937,60 +996,19 @@ def _binary_getkey_profile(parsed: RevokedCertificate) -> dict[str, object]:
 
 
 def _wide_hex_getkey_profile(parsed: RevokedCertificate) -> dict[str, object]:
-    """Model only terminated HASH/BADHASH strings containing ASCII hex."""
-    result: dict[str, object] = {
+    """Hex view of the common raw-authoritative successful projection."""
+    raw = parse_revoked_certificate(parsed.raw)
+    if raw.mode == "string" and raw.key_type in {1, 4}:
+        profile = certificate_key_profile(raw.key_data)
+        return {
+            name: profile[name]
+            for name in ("status", "normalized_key_hex", "unsupported_reason")
+        }
+    return {
         "status": "not_modeled",
         "normalized_key_hex": None,
-        "unsupported_reason": None,
+        "unsupported_reason": "key_type_is_not_wide_HASH_or_BADHASH",
     }
-    reason = None
-    if parsed.mode != "string":
-        reason = "key_mode_is_not_string"
-    elif parsed.key_type not in {1, 4}:
-        reason = "key_type_is_not_HASH_or_BADHASH"
-    elif not parsed.terminator_raw:
-        reason = "explicit_utf16le_nul_terminator_required"
-    elif parsed.decode_error is not None:
-        reason = "string_decode_error"
-    else:
-        expected_prefix = {1: "HASH:", 4: "BADHASH:"}[parsed.key_type]
-        expected_raw = expected_prefix.encode("utf-16le")
-        if (
-            parsed.prefix_raw.upper() != expected_raw.upper()
-            or parsed.text_raw[: len(parsed.prefix_raw)] != parsed.prefix_raw
-        ):
-            reason = "confirmed_HASH_or_BADHASH_prefix_required"
-        else:
-            material_raw = parsed.text_raw[len(parsed.prefix_raw) :]
-            try:
-                material = material_raw.decode("utf-16le")
-            except UnicodeDecodeError:
-                reason = "hex_material_decode_error"
-            else:
-                if not material:
-                    reason = "empty_hex_material_is_not_modeled"
-                elif len(material) % 2:
-                    reason = "hex_material_must_have_even_length"
-                elif any(char not in "0123456789abcdefABCDEF" for char in material):
-                    reason = "hex_material_must_contain_only_ASCII_hex_digits"
-                else:
-                    normalized = _binary_getkey_normalize(
-                        parsed.key_type, bytes.fromhex(material)
-                    )
-                    result["status"] = "normalized"
-                    result["normalized_key_hex"] = normalized.hex()
-    if reason is not None:
-        result["unsupported_reason"] = reason
-    return result
-
-
-def _binary_getkey_normalize(key_type: int, data: bytes) -> bytes:
-    """Apply the confirmed binary GetKey transform without matching records."""
-    if not 0 <= key_type <= 0xFF:
-        raise ValueError(f"binary GetKey type must fit in one byte: {key_type}")
-    if key_type in {1, 4} and len(data) == 20:
-        return bytes(((data[0] + key_type) & 0xFF,)) + data[1:]
-    return hashlib.sha1(bytes((key_type,)) + data).digest()
 
 
 SPEC = FamilySpec(
