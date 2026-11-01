@@ -243,11 +243,187 @@ def build_kcrce_oep_recipe_profile() -> JSONObject:
             ),
             (
                 "unknown_boundary",
-                "kind2 unsupported; candidate origin/coordinate, VMM/mapper outcomes, bytes, successful AddData, crc1/fastcrc arbitration, weak fallback and final verdict remain outside",
+                "kind2 unsupported by this kind0/1 entrypoint; the separate oep_kind2_region_recipe_profile requires explicit snapshots; candidate origin/coordinate, VMM/mapper outcomes, bytes, successful AddData, crc1/fastcrc arbitration, weak fallback and final verdict remain outside this entrypoint",
             ),
             (
                 "high_flags_boundary",
                 "stage2 masks low28; global bits28-29 remain unresolved and existing status/issues stay unchanged",
+            ),
+        )
+    )
+
+
+def build_kcrce_kind2_recipe_profile() -> JSONObject:
+    """Describe the separate kind2 snapshot contract without running its model."""
+    return JSONObject(
+        (
+            ("representation", "kcrce.oep_kind2_region_recipe.v1"),
+            ("evidence_tier", "engine_static"),
+            ("callback", "oepkcrc_callback@0x18003F0D0"),
+            ("callable", "lib.vdm.kcrce_kind2.project_kcrce_kind2"),
+            (
+                "mapping_helper_callable",
+                "lib.vdm.kcrce_kind2.project_kcrce_kind2_mapping",
+            ),
+            ("snapshot_type", "lib.vdm.kcrce_kind2.K2Snapshot"),
+            ("result_type", "lib.vdm.kcrce_kind2.K2Projection"),
+            ("request_type", "lib.vdm.kcrce_kind2.K2Request"),
+            ("event_type", "lib.vdm.kcrce_kind2.K2Event"),
+            (
+                "call_contract",
+                "project_kcrce_kind2(packed=parsed.length_flags & 0x0fffffff, snapshot=explicit_K2Snapshot); exporting this static profile does not invoke it",
+            ),
+            (
+                "applicability",
+                "explicit callback family=oepkcrc_callback, kind=2, mode0/1/2 and same-epoch opaque mapper_profile; never selected from the wire record",
+            ),
+            (
+                "packed_argument",
+                "CompareValues stage2 supplies length_flags & 0x0fffffff; mode2 offset=(packed>>16)&0xfff and count=packed&0xffff",
+            ),
+            (
+                "required_snapshots",
+                JSONObject(
+                    (
+                        (
+                            "top",
+                            "K2Snapshot: epoch, callback_family, kind, mode, mapper_profile, page_size, iterator, pe, mode2_ptr, selected_length, selected_base, state_084",
+                        ),
+                        (
+                            "iterator",
+                            "K2Iterator: epoch, initialized, init_result, complete ordered ranges, next_index, current_index, cached_ptr, cached_offset, cached_length, cached_flags, locked",
+                        ),
+                        (
+                            "region",
+                            "K2Region: epoch, page_start:u64, page_count:u32, kind:u32, covering; current_index==len(ranges) means explicit NULL",
+                        ),
+                        (
+                            "covering",
+                            "K2Covering: epoch, search_complete, base, size, index, index_count, excluded; complete search with base=None denotes no covering entry",
+                        ),
+                        (
+                            "pe",
+                            "K2PeGates: epoch, allowed_start/end, bypass, complete ordered overlap intervals, special_start",
+                        ),
+                        (
+                            "missing_facts",
+                            "None means unknown; boolean/numeric facts have no implicit false/zero defaults; same-epoch validation applies to supplied nested snapshots",
+                        ),
+                        (
+                            "path_requirements",
+                            "only facts reached by the projected path are needed: mode0 needs no iterator; mode2 non-NULL userdata+0x98 reuse still needs selected-length bounds but no current/page_size; initialized enumeration needs no init_result",
+                        ),
+                        (
+                            "initialization",
+                            "uninitialized iterator needs explicit init_result; successful init starts at range index0; no init_enum_ranges service is executed or inferred",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "coordinate_domains",
+                JSONObject(
+                    (
+                        (
+                            "descriptor",
+                            "B=page_start*page_size within the normal uint64 subset, C=u32(page_count*page_size); u64 base wrap is a typed error; descriptor and page_size are explicit VMM facts, not disk offsets",
+                        ),
+                        (
+                            "metadata",
+                            "userdata+0xa8=B and +0xa0=C; if B==pe.allowed_start and C>0x1000, metadata base+=0x1000 and length-=0x1000; current descriptor is unchanged",
+                        ),
+                        (
+                            "mapping",
+                            "mode1 and cold mode2 map from descriptor B, never from adjusted metadata +0xa8; +0xa8+offset is not the byte-source formula",
+                        ),
+                        (
+                            "lengths",
+                            "descriptor C, selected metadata length, logical mapper request, page-aligned copy request and AddData count remain distinct",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "mode0",
+                "write userdata+0x85=0 and pe+0x83fd0=1 only; no mapping/AddData and no reset of userdata+0x84 or selected region",
+            ),
+            (
+                "mode1",
+                JSONObject(
+                    (
+                        (
+                            "reset_order",
+                            "entry writes; clear userdata+0x98/+0xa0/+0xa8/+0x84; each selection loop clears iterator.cached_ptr/flags but preserves length and locked",
+                        ),
+                        (
+                            "selection",
+                            "consume ordered ranges with next cursor; page-scaled descriptor and conditional prior-lock unlock; image interval/bypass accept, covering vdll exclusion skips, first overlap accepts unless fully covered, otherwise special_start with C==0x1000 skips; partial overlap does not clip descriptor",
+                        ),
+                        (
+                            "request",
+                            "C<0x100 skips; otherwise kind1 descriptor uses mmap64_lock(B,0x100,flags=1,out_locked); other descriptor kinds allocate/copy aligned 0x100 bytes from B",
+                        ),
+                        (
+                            "success",
+                            "only conditional service success writes cache length,pointer,flags,offset in that order, then userdata+0x84=1 and AddData(pointer,0x100)",
+                        ),
+                        (
+                            "failure",
+                            "init failure, exhaustion or mapping/allocation/copy failure does not set userdata+0x85; no unconditional post-AddData unlock",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "mode2",
+                JSONObject(
+                    (
+                        (
+                            "bounds",
+                            "bounds use the original u64 selected_length: zero sets userdata+0x85=1; offset+count>selected_length skips without setting error; count0 is not rejected by callback",
+                        ),
+                        (
+                            "callback_cache",
+                            "non-NULL userdata+0x98 reuses the full-range pointer; otherwise request u32(selected_length), flags1 from mmap_crt_range; first explicit helper parameter is unused",
+                        ),
+                        (
+                            "iterator_cache",
+                            "helper checks current!=NULL before warm cache; cached_offset0, positive cached_length>=request, flags&1 and non-NULL pointer hit before cold request0/capacity gates",
+                        ),
+                        (
+                            "cold_request",
+                            "unlock previous lock before page_size/capacity gates; request=u32(selected_length), truncating high32 after the u64 callback bounds check; request0 or request>C returns NULL; kind1 maps(B,request,1), otherwise allocate/copy page-aligned request",
+                        ),
+                        (
+                            "success",
+                            "helper cache writes offset,length,flags,pointer; callback caches pointer at userdata+0x98; AddData(pointer+offset,count), conditional on service success or explicit cache availability",
+                        ),
+                        (
+                            "failure",
+                            "NULL helper result caches NULL and sets userdata+0x85=1; userdata+0x84 is unchanged throughout mode2",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "conditional_events",
+                "K2Event target/value/condition preserve operation order; mapper_out_bool is an independent output during mapper_returned, before success cache writes; mapping_success and allocation_and_copy_success are unevaluated conditions, never observed outcomes; userdata+0x85=0 is not success and +0x84=1 does not establish current mode2 AddData",
+            ),
+            (
+                "result_boundary",
+                "projected means conditional recipe available, unknown means missing required facts; K2SnapshotError rejects wrong types, bool-as-uint, mixed epochs, malformed assertions and normal-subset u64 wrap; capacity product retains u32 wrap",
+            ),
+            (
+                "runtime_boundary",
+                "no default snapshots, automatic PE/VMM reads, mapper/allocation/copy services, byte source, CRC, local match, Lookup arbitration or final verdict; supplied facts do not establish mapping success",
+            ),
+            (
+                "relation_to_kind0_1",
+                "lib.vdm.kcrce_oep.project_kcrce_oep_request still returns unsupported for kind2; this separate snapshot-based entrypoint does not change its behavior or common PE file slicing",
+            ),
+            (
+                "high_flags_boundary",
+                "the stage2 low28 argument does not resolve global bits28-29; preserve raw flags, scoped known uses, unresolved issues and existing status",
             ),
         )
     )
@@ -375,6 +551,7 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
                     _COMMON_PE_CRC2,
                 ),
                 ("oep_adddata_recipe_profile", build_kcrce_oep_recipe_profile()),
+                ("oep_kind2_region_recipe_profile", build_kcrce_kind2_recipe_profile()),
                 (
                     "high_flags_known_uses",
                     JSONObject(
@@ -541,6 +718,28 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
         issues=tuple(issues),
         claims=(
             SemanticClaim(
+                id="kcrce_oep_kind2_region_recipe",
+                scope="runtime_consumer",
+                statement=(
+                    "With explicit same-epoch OEP kind2 iterator, current-region, selection "
+                    "and cache snapshots, mode0/1/2 project conditional VMM service requests "
+                    "and ordered state-write recipes; adjusted selected metadata does not "
+                    "replace the descriptor mapping base, and full mapping/copy lengths "
+                    "remain distinct from AddData offset/count."
+                ),
+                coverage="subset",
+                evidence_refs=("kcrce_oep_kind2_static",),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "The wire does not identify this callback or supply snapshots. "
+                        "Missing path facts remain unknown; service success, actual bytes, "
+                        "CRC values, local match, outer arbitration and final verdict are "
+                        "not projected. This adds no global semantics for bits28-29.",
+                    ),
+                ),
+            ),
+            SemanticClaim(
                 id="kcrce_high_flags_scoped_uses",
                 scope="runtime_consumer",
                 statement=(
@@ -574,7 +773,8 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
                     SemanticUnknown(
                         "runtime_consumer",
                         "Callback identity is not encoded; candidate origin and mapping outcome, "
-                        "kind2, successful bytes/AddData and final verdict are not modeled. "
+                        "successful bytes/AddData and final verdict are not modeled by this "
+                        "kind0/1 entrypoint; kind2 uses a separate snapshot-based recipe. "
                         "Fresh reset no-AddData can still equal record.crc2 locally.",
                     ),
                 ),
@@ -703,6 +903,25 @@ def export_kcrce_semantics(parsed: KcrcePayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                id="kcrce_oep_kind2_static",
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                locator=(
+                    "oepkcrc_callback@0x18003F0D0/0x772 kind2 entry@0x18003F113, "
+                    "metadata stores@0x18003F37F and trim@0x18003F677, "
+                    "mode1 success cache writes@0x18003F485..0x18003F493, "
+                    "mode2 bounds/map/AddData@0x18003F6AE..0x18003F70D; "
+                    "VMM_range_iterator::mmap_crt_range@0x18003EEA8/0x1E3 "
+                    "current-before-warm@0x18003EEC0, cold unlock-before-gates@0x18003EEF9..0x18003EF64; "
+                    "VMM_range_iterator::init@0x18013F538/0x119 and mmap_unlock@0x18003F08C/0x42; "
+                    "docs/signature/KCRCE_kind2_region_next_private.md; "
+                    "lib/vdm/kcrce_kind2.py source-only conditional recipe; "
+                    "saved static disassembly/machine-byte evidence only, no runtime service execution"
+                ),
+                supports=("kcrce_oep_kind2_region_recipe",),
+            ),
             SemanticEvidence(
                 id="kcrce_high_flags_static",
                 axis="consumer",
