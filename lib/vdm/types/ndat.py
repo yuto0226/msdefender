@@ -32,6 +32,7 @@ from ..raw_ssl_cert import (
     compile_raw_ssl_byte_pattern,
     raw_ssl_yara_rhs,
 )
+from ..vdll_api_attribute import ApiAttributeProjection, project_api_attribute
 from ..vdll_api_membership import VdllApiProjection, project_vdll_api
 from ..vdll_fire_event import (
     FireEventRecipe,
@@ -54,6 +55,208 @@ class NdatPayload:
     callback_index: int
     record_id_suffix_raw: bytes | None
     trailing_raw: bytes
+
+
+class UnsupportedNdatApiAttribute(ValueError):
+    """The authoritative raw NDAT record is not callback7 API metadata."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatApiAttribute:
+    """Wire byte projection, without initialized tables or stored pointers."""
+
+    raw: bytes
+    counted_data: bytes
+    projection: ApiAttributeProjection
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+
+
+def project_ndat_api_attribute(parsed: NdatPayload) -> NdatApiAttribute:
+    """Reparse callback7 raw bytes; ordinary parse skips remain metadata."""
+    if not isinstance(parsed, NdatPayload):
+        raise TypeError("parsed must be NdatPayload")
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 7:
+        raise UnsupportedNdatApiAttribute("requires callback decimal7 (0x07)")
+    return NdatApiAttribute(
+        parsed.raw,
+        parsed.data_raw,
+        project_api_attribute(parsed.data_raw, parsed.data_length),
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _api_attribute_manifest(parsed: NdatPayload) -> JSONObject:
+    model = project_ndat_api_attribute(parsed)
+    p, api = model.projection, model.projection.api
+    ordinal = p.ordinal
+    recipe_paths = (
+        ("projector", "lib.vdm.types.ndat.project_ndat_api_attribute"),
+        ("model_type", "lib.vdm.types.ndat.NdatApiAttribute"),
+        ("unsupported_type", "lib.vdm.types.ndat.UnsupportedNdatApiAttribute"),
+        ("pair_projector", "lib.vdm.vdll_api_attribute.project_api_attribute"),
+        ("projection_type", "lib.vdm.vdll_api_attribute.ApiAttributeProjection"),
+        ("resolver", "lib.vdm.vdll_api_attribute.resolve_api_attribute"),
+        ("store_outcome_type", "lib.vdm.vdll_api_attribute.ApiAttributeStoreOutcome"),
+        ("stored_value_type", "lib.vdm.vdll_api_attribute.ApiAttributeStoredValue"),
+        ("store_request_type", "lib.vdm.vdll_api_attribute.ApiAttributeStoreRequest"),
+        ("resolution_type", "lib.vdm.vdll_api_attribute.ApiAttributeResolution"),
+        (
+            "callback_projection_type",
+            "lib.vdm.vdll_api_attribute.ApiAttributeCallbackProjection",
+        ),
+        ("map_type", "lib.vdm.vdll_api_attribute.ApiAttributeMapSnapshot"),
+        ("map_entry_type", "lib.vdm.vdll_api_attribute.ApiAttributeMapEntry"),
+        ("map_lookup", "lib.vdm.vdll_api_attribute.ApiAttributeMapSnapshot.lookup"),
+        (
+            "consumer_projector",
+            "lib.vdm.vdll_api_attribute.project_api_attribute_consumer",
+        ),
+        (
+            "consumer_projection_type",
+            "lib.vdm.vdll_api_attribute.ApiAttributeConsumerProjection",
+        ),
+        (
+            "aggregate_request_type",
+            "lib.vdm.vdll_api_attribute.AggregateApiAttributeRequest",
+        ),
+        ("state_error_type", "lib.vdm.vdll_api_attribute.UnsupportedApiAttribute"),
+        ("host_type", "lib.vdm.vdll_api_membership.VdllApiHost"),
+        ("module_selection_type", "lib.vdm.vdll_api_membership.VdllModuleSelection"),
+        ("export_table_type", "lib.vdm.vdll_api_membership.VdllExportTable"),
+        ("named_export_type", "lib.vdm.vdll_api_membership.VdllNamedExport"),
+        ("ordinal_parser", "lib.vdm.vdll_api_membership.parse_vdll_ordinal"),
+        ("ordinal_type", "lib.vdm.vdll_api_membership.VdllOrdinal"),
+        ("crc", "lib.vdm.vdll_api_membership.vdll_api_crc"),
+        ("bucket", "lib.vdm.vdll_api_membership.vdll_api_bucket"),
+    )
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.vdll-api-attribute-metadata.v1"),
+            ("kind", "engine_vdll_api_attribute_metadata_not_ioc"),
+            ("counted_data_hex", model.counted_data.hex()),
+            (
+                "module_raw_hex",
+                None if api.module_name is None else api.module_name.hex(),
+            ),
+            (
+                "copied_selector_raw_hex",
+                None if api.selector is None else api.selector.hex(),
+            ),
+            ("selector_copy_hresult", api.selector_copy_hresult),
+            ("delimiter_offset", api.delimiter_offset),
+            ("colon_offset", p.colon_offset),
+            (
+                "selector_before_colon_raw_hex",
+                None
+                if p.colon_offset is None
+                else api.selector[: p.colon_offset].hex(),
+            ),
+            (
+                "attribute_name_raw_hex",
+                None if p.attribute_name is None else p.attribute_name.hex(),
+            ),
+            ("route", api.route),
+            ("name_crc_before_colon_u32", p.name_crc),
+            (
+                "ordinal_from_full_tail",
+                None
+                if ordinal is None
+                else JSONObject(
+                    (
+                        ("value_u32", ordinal.value),
+                        ("hresult", ordinal.hresult),
+                        ("end_offset", ordinal.end_offset),
+                    )
+                ),
+            ),
+            (
+                "wire_parse_skip_reason",
+                api.skip_reason
+                or ("colon_missing" if p.colon_offset is None else None),
+            ),
+            (
+                "wire_parse_scope",
+                "local byte projection only; runtime module binding is consulted before the native colon gate",
+            ),
+            (
+                "record_name_raw_hex",
+                None
+                if model.record_id_suffix_raw is None
+                else model.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", model.trailing_raw.hex()),
+            ("runtime_recid_used_by_callback", False),
+            ("last_nul_required", False),
+            ("stored_value_state", "unknown"),
+            ("callback_return", None),
+            ("registration_completed", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            (
+                "recipe",
+                JSONObject(
+                    (
+                        *recipe_paths,
+                        (
+                            "copy",
+                            "counted first ! at1..127, first-NUL copy128; ignored HRESULT; first colon in copied CString",
+                        ),
+                        (
+                            "selector",
+                            "named rawCRC only before colon; @ ordinal parser reads full copied tail including colon and attribute, ignores HRESULT, failed out0 still looked up",
+                        ),
+                        (
+                            "bindings",
+                            "four explicit host gates and selected VDLL tables; index0 valid, unknown distinct from confirmed miss; resolvedVA nonzero before host2 bit0 clearing, stored0 remains valid",
+                        ),
+                        (
+                            "object_storage",
+                            "attribute CString plusNUL, kstore size=len+1 flags0; returned pointer is borrowed object-store value, distinct from raw wire storage; allocator and lifetime remain external",
+                        ),
+                        (
+                            "store_outcomes",
+                            "explicit actual kstore call order; missing unknown vs confirmedNULL; NULL stops8007 preserving prior candidates; duplicates still callstore; candidates do not prove map allocation/insertion success",
+                        ),
+                        (
+                            "runtime_maps",
+                            "explicit successful history within one caller-confirmed active epoch; first wins per host/fullu64key; no implicit initialization, wire order or liveness proof",
+                        ),
+                        (
+                            "consumer",
+                            "static pre-only exact rawu64VA lookup without bit clearing; MpAggregateAttributeEx request uses symbolic EmptySha1, return ignored; DWORD ADD512 wraps, not bitwiseOR; no whole pe_notify or aggregation verdict",
+                        ),
+                        (
+                            "unknown",
+                            "actual module bindings/table epoch, original object storage/borrowed lifetime, allocation/exception partial state, complete aggregation and final policy",
+                        ),
+                    )
+                ),
+            ),
+        )
+    )
+
+
+def _export_api_attribute(parsed: NdatPayload) -> ArtifactExport:
+    model = project_ndat_api_attribute(parsed)
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("vdll-api-attribute-data.bin", "binary", model.counted_data),
+            Artifact(
+                "vdll-api-attribute-metadata.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_api_attribute_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode("utf-8")
+                + b"\n",
+            ),
+        ),
+    )
 
 
 class UnsupportedNdatFireEvent(ValueError):
@@ -1919,6 +2122,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs and linkage metadata."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 7:
+        return _export_api_attribute(parsed)
     if parsed.callback_index == 4:
         return _export_fire_event(parsed)
     if parsed.callback_index == 3:
@@ -2194,10 +2399,33 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
             ),
             ("wire name candidate", model.candidate_issue or candidate_text),
         )
+    attribute_rows = ()
+    if parsed.callback_index == 7:
+        p = project_ndat_api_attribute(parsed).projection
+        api = p.api
+        attribute_rows = (
+            (
+                "module!selector",
+                "skip: " + api.skip_reason
+                if api.skip_reason is not None
+                else f"{api.module_name!r}!{api.selector[: p.colon_offset]!r}"
+                if p.colon_offset is not None
+                else f"{api.module_name!r}!{api.selector!r}; colon missing",
+            ),
+            (
+                "attribute",
+                "not selected" if p.attribute_name is None else repr(p.attribute_name),
+            ),
+        )
     return FormatResult(
         sections=(
             DisplaySection("NDAT Metadata", rows=tuple(rows)),
             DisplaySection("NDAT Data", rows=_preview_rows(parsed.data_raw)),
+            *(
+                (DisplaySection("VDLL API Attribute", rows=attribute_rows),)
+                if attribute_rows
+                else ()
+            ),
             *((DisplaySection("VFS Link", rows=link_rows),) if link_rows else ()),
             *(
                 (DisplaySection("VDLL API Membership", rows=api_rows),)
@@ -2252,6 +2480,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     has_vfs_link_consumer = parsed.callback_index == 6
     has_vdll_api_consumer = parsed.callback_index == 3
     has_fire_event_consumer = parsed.callback_index == 4
+    has_api_attribute_consumer = parsed.callback_index == 7
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
@@ -2273,10 +2502,19 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         if has_vdll_api_consumer
         else "vdll_runtime_name_event_recipe_metadata"
         if has_fire_event_consumer
+        else "vdll_api_attribute_metadata_and_pre_call_aggregation_request"
+        if has_api_attribute_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_api_attribute_consumer:
+        issues.append(
+            SemanticIssue(
+                "api_attribute_runtime_storage_and_map_required",
+                "Raw module!selector:attribute projection does not initialize VDLL tables, establish kstore or borrowed pointer lifetime, or prove map insertion. Consumer request and DWORD ADD512 are static projections; full aggregation and final policy remain external.",
+            )
+        )
     if has_fire_event_consumer:
         issues.append(
             SemanticIssue(
@@ -2483,6 +2721,11 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
                 *(
+                    (("vdll_api_attribute", _api_attribute_manifest(parsed)),)
+                    if has_api_attribute_consumer
+                    else ()
+                ),
+                *(
                     (("vdll_fire_event", _fire_event_manifest(parsed)),)
                     if has_fire_event_consumer
                     else ()
@@ -2583,6 +2826,25 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-vdll-api-attribute-metadata",
+                        "runtime_consumer",
+                        "Callback7 copies counted module!selector:attribute into128-byte CStrings. Named CRC includes only bytes before the first colon; ordinal parsing sees the full tail. RuntimeRecID is unused. Explicit kstore outcomes project attribute CString storage and partial NULL failure; successful map history keeps first host/fullu64key value. The static pre-only exact-VA consumer requests aggregation and adds512 to a DWORD with wrap, ignoring the aggregation return.",
+                        "subset",
+                        ("ndat-api-attribute-static", "ndat-api-attribute-native"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Wire bytes do not prove loaded tables, native object storage, borrowed-pointer lifetime, map insertion or an active epoch. Native38 uses module-index and owned CString services; aggregation/counter behavior is static only. Whole pe_notify, resource exceptions and final disposition remain external.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_api_attribute_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -2892,6 +3154,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     if has_vdll_api_consumer
                     else "The copied API and conditional wire-name event recipe are exported separately; resolved getter/VDLL bindings, publication and whole consumer policy remain external."
                     if has_fire_event_consumer
+                    else "The copied selector/attribute and explicit store/map contracts are exported separately; original object storage, active epoch and aggregation execution remain external."
+                    if has_api_attribute_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -2930,6 +3194,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             if has_vdll_api_consumer
                             else "Actual runtime name, map/guest state, allocations and __siga_check policy are external; wire candidate is not a confirmed getter value."
                             if has_fire_event_consumer
+                            else "Actual VDLL tables, object-store resources/borrowed lifetime, successful map history, aggregation execution and final policy remain external."
+                            if has_api_attribute_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -3001,6 +3267,28 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-api-attribute-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine1.443.903.0",
+                        ("ndat-vdll-api-attribute-metadata",),
+                        "VdllNdatApiAttributeCallback180CA53F0/247: ignored copy128 HRESULT, first colon, namedCRC beforecolon/ordinal fulltail; kstore1800FB54C flags0 with NUL; Emplace40020C/DC first-wins pointer map E00+64bucket+16host. pe_notify_api_call1800B1C50/635 pre-only exact-u64 query, callB202C MpAggregateAttributeEx, ADD DWORD pe+AAB30,200h atB2031. RecID unused; objectstore pages and lifecycle external. docs/mpengine.dll/1.443.903.0/ndat_api_attribute_contract_private.md.",
+                    ),
+                    SemanticEvidence(
+                        "ndat-api-attribute-native",
+                        "consumer",
+                        "engine_runtime",
+                        "Original callback/CRC/export/map with explicit module-index and owned CString services",
+                        ("ndat-vdll-api-attribute-metadata",),
+                        "tests/local_cb7_native_v1.py SHA61d7921a22e3f5570dce40702fae43db4d6772635269b3ebb467ada8ee4ced16 results02cc4e9fdb1c07ef2570f53bb79ec29b7f574030a8d41dd42e8ebd0b419f806c:38children,6actualdata+32synthetic; executable relocation-aware/eight CRC tables/global restore readback/guarded maps and owned value capture verified. Root subset0,34,36 resultsae8525ae716572423b3d12090103a1a304b9e0e4a5c5bfb62eb0d613da6a1f9a. Consumer/aggregation/ADD not executed; attempt1 separate harness shadow failure. Offline bridges: tests/local_vdll_api_attribute_bridge.py and tests/local_ndat_api_attribute_bridge.py. docs/mpengine.dll/1.443.903.0/ndat_api_attribute_contract_current_private.md.",
+                    ),
+                )
+                if has_api_attribute_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
