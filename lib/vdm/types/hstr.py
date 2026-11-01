@@ -48,6 +48,7 @@ from ..core import (
     SemanticIssue,
     SemanticUnknown,
 )
+from ..hstr_code_page import build_hstr_code_page_recipe
 
 
 @dataclass(frozen=True, slots=True)
@@ -1631,6 +1632,7 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
     unsupported = False
     raw17_literal_indices: list[int] = []
     lowcase_fixed_repeat_indices: list[int] = []
+    code_page_recipe_indices: list[int] = []
     issues: list[SemanticIssue] = [_outer_verdict_issue(parsed.type_byte)]
     if parsed.receiver_ignored:
         issues.append(
@@ -1682,6 +1684,15 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         candidate_disposition = _hstr_contextual_disposition(
             parsed.type_byte, subsig, meaning
         )
+        code_page_recipe = None
+        if (
+            parsed.type_byte in _PE_DYNAMIC_PAGE_HSTR_FAMILIES
+            and not parsed.receiver_ignored
+            and subsig.flags is not None
+            and subsig.flags.value & 0x0040
+        ):
+            code_page_recipe = build_hstr_code_page_recipe(subsig.flags.value)
+            code_page_recipe_indices.append(index)
 
         if meaning.unknown_flag_bits:
             unsupported = True
@@ -1953,6 +1964,11 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
                         effective_candidate_disposition,
                     ),
                     ("bm_yara", bm_yara_data),
+                    *(
+                        (("code_page_validator_recipe", code_page_recipe),)
+                        if code_page_recipe is not None
+                        else ()
+                    ),
                 )
             )
         )
@@ -2015,6 +2031,50 @@ def export_hstr_semantics(parsed: HstrPayload) -> RuleSemantics:
         raw17_literal_indices=tuple(raw17_literal_indices),
         lowcase_fixed_repeat_indices=tuple(lowcase_fixed_repeat_indices),
     )
+    if code_page_recipe_indices:
+        claim_id = f"hstr_{parsed.type_byte:02x}_code_page_validator_recipe"
+        evidence_id = f"hstr_{parsed.type_byte:02x}_code_page_validator_static"
+        claims += (
+            SemanticClaim(
+                id=claim_id,
+                scope="runtime_consumer",
+                statement=(
+                    "Given explicit scan_vbuff PE-validator invocation and an actual "
+                    "nonzero-span worker match, the validator calls mmap_is_code_page "
+                    "only for low-byte flags&0x5C == 0x40, with u64(base+match_offset). "
+                    "Its separately resolved same-epoch helper result gates this candidate."
+                ),
+                coverage="subset",
+                evidence_refs=(evidence_id,),
+                unknowns=(
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "This validator layer does not establish matcher behavior, VMM "
+                        "page classification, location/score aggregation or a final verdict. "
+                        "Unknown helper outcomes remain unknown; existing status/issues stay.",
+                    ),
+                ),
+            ),
+        )
+        claim_evidence += (
+            SemanticEvidence(
+                id=evidence_id,
+                axis="consumer",
+                kind="engine_static",
+                source_ref="mpengine 1.443.903.0 DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3",
+                locator=(
+                    "scan_vbuff@0x1801A2DFC base stores@0x1801A2E56/0x1801A2EC3; "
+                    "hstr_internal_search worker calls@0x1800E994D/0x1800E99D2; "
+                    "worker NULL/span gates@0x1800EB1D2..0x1800EB1E4 and validator call@0x1800EB234; "
+                    "ValidateAttribute@0x1800E94C0 exact mask@0x1800E9515 "
+                    "bytes a8 40 74 1c 24 5c 3c 40 75 12, u64 ADD@0x1800E9527 "
+                    "and mmap_is_code_page@0x1804C1F40 call@0x1800E952A; "
+                    "docs/signature/HSTR_code_page_next_contract_private.md; "
+                    "tests/local_hstr_code_page_primary_next_v1.receipt.json; static evidence only"
+                ),
+                supports=(claim_id,),
+            ),
+        )
     legacy_evidence = [
         "mpengine 1.443.903.0 hstr_internal_push_ex @ 0x1800FDA6C",
         "mpengine 1.443.903.0 add_sstring_internal @ 0x1800FE008",
