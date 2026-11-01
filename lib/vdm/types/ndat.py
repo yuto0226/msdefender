@@ -20,6 +20,13 @@ from ..core import (
     SemanticUnknown,
     semantic_json_to_data,
 )
+from ..dns_cache_info import (
+    DnsCacheInfoPattern,
+    DnsCacheInfoReceiverProjection,
+    UnsupportedDnsCacheInfo,
+    compile_dns_cache_info_pattern,
+    project_dns_cache_info_receiver,
+)
 from ..raw_body import (
     RawBodyPattern,
     UnsupportedRawBodyPattern,
@@ -55,6 +62,250 @@ class NdatPayload:
     callback_index: int
     record_id_suffix_raw: bytes | None
     trailing_raw: bytes
+
+
+class UnsupportedNdatDnsCacheInfo(ValueError):
+    """The authoritative raw record is not callback12 collection metadata."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatDnsCacheInfo:
+    raw: bytes
+    counted_data: bytes
+    projection: DnsCacheInfoReceiverProjection
+    portable_pattern: DnsCacheInfoPattern | None
+    portable_reason: str | None
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+
+
+def project_ndat_dns_cache_info(parsed: NdatPayload) -> NdatDnsCacheInfo:
+    """Reparse raw callback12; wire empty data is non-NULL count0, not finalize.
+
+    Gate rejection and local compiler support are separate from original
+    constructor acceptance, allocation and successful append history.
+    """
+    if not isinstance(parsed, NdatPayload):
+        raise TypeError("parsed must be NdatPayload")
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 12:
+        raise UnsupportedNdatDnsCacheInfo("requires callback decimal12 (0x0C)")
+    projection = project_dns_cache_info_receiver(parsed.data_raw, parsed.data_length)
+    portable, reason = None, None
+    if projection.branch == "compile_candidate":
+        try:
+            portable = compile_dns_cache_info_pattern(projection.effective_utf8)
+        except UnsupportedDnsCacheInfo as exc:
+            reason = str(exc)
+    return NdatDnsCacheInfo(
+        parsed.raw,
+        parsed.data_raw,
+        projection,
+        portable,
+        reason,
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _dns_cache_info_manifest(parsed: NdatPayload) -> JSONObject:
+    model = project_ndat_dns_cache_info(parsed)
+    p, portable = model.projection, model.portable_pattern
+    recipe = JSONObject(
+        (
+            ("projector", "lib.vdm.types.ndat.project_ndat_dns_cache_info"),
+            ("model_type", "lib.vdm.types.ndat.NdatDnsCacheInfo"),
+            ("unsupported_type", "lib.vdm.types.ndat.UnsupportedNdatDnsCacheInfo"),
+            (
+                "receiver_projector",
+                "lib.vdm.dns_cache_info.project_dns_cache_info_receiver",
+            ),
+            ("receiver_type", "lib.vdm.dns_cache_info.DnsCacheInfoReceiverProjection"),
+            ("decoder", "lib.vdm.dns_cache_info.decode_dns_cache_info_utf8"),
+            ("compiler", "lib.vdm.dns_cache_info.compile_dns_cache_info_pattern"),
+            ("pattern_type", "lib.vdm.dns_cache_info.DnsCacheInfoPattern"),
+            ("subject_type", "lib.vdm.dns_cache_info.DnsCacheInfoSubject"),
+            ("predicate", "lib.vdm.dns_cache_info.fullmatch_dns_cache_info_pattern"),
+            (
+                "collection_type",
+                "lib.vdm.dns_cache_info.DnsCacheInfoCollectionSnapshot",
+            ),
+            ("collection_predicate", "lib.vdm.dns_cache_info.should_collect_dns_info"),
+            (
+                "local_unsupported_type",
+                "lib.vdm.dns_cache_info.UnsupportedDnsCacheInfo",
+            ),
+        )
+    )
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.dns-cache-info.collection-pattern.v1"),
+            ("type", "NDAT"),
+            ("kind", "report_collection_selector"),
+            (
+                "callback",
+                JSONObject(
+                    (
+                        ("index", 12),
+                        ("dispatch_target", "DnsCacheInfoNdatCallback"),
+                        ("dispatch_target_confirmed", True),
+                        (
+                            "business_semantics",
+                            "wide_regex_fullmatch_report_collection_selector",
+                        ),
+                        ("is_final_detection", False),
+                    )
+                ),
+            ),
+            ("raw_hex", model.raw.hex()),
+            ("data_count", p.count),
+            ("counted_data_hex", model.counted_data.hex()),
+            ("wire_data_pointer", "non_null_storage; count0 is not NULL finalize"),
+            ("receiver_branch", p.branch),
+            ("receiver_ensure_vector_before_gate", p.ensure_vector),
+            ("receiver_known_return_u32", p.known_return_u32),
+            ("receiver_last_byte_nul_required", True),
+            (
+                "effective_utf8_hex",
+                None if p.effective_utf8 is None else p.effective_utf8.hex(),
+            ),
+            (
+                "after_pattern_terminator_hex",
+                None
+                if p.after_pattern_terminator is None
+                else p.after_pattern_terminator.hex(),
+            ),
+            (
+                "record_name_raw_hex",
+                None
+                if model.record_id_suffix_raw is None
+                else model.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_raw_hex", model.trailing_raw.hex()),
+            ("runtime_recid_used_by_callback", False),
+            ("record_name_used_by_callback", False),
+            ("constructor", "mpengine.dll+0x35D144; UTF16 CString"),
+            ("constructor_syntax_flags_u32", 0x400000),
+            (
+                "native_decoder",
+                "mpengine.dll+0x668794; CP65001 flags0 CString length=-1",
+            ),
+            ("match_flags_u32", 0x400),
+            ("match_mode", "wide CString full-match"),
+            (
+                "subject_contract",
+                "external supplied UTF16LE storage, first aligned NUL; raw tail and lone surrogate units preserved",
+            ),
+            ("portable_supported", portable is not None),
+            ("portable_reason", model.portable_reason),
+            ("portable_wildcard", None if portable is None else portable.wildcard),
+            (
+                "portable_literal_units",
+                None if portable is None else JSONArray(portable.literal_units),
+            ),
+            (
+                "portable_pattern_units",
+                None if portable is None else JSONArray(portable.utf16_units),
+            ),
+            (
+                "portable_domain",
+                "valid UTF8 empty/literal/single edge .*; no other regex metacharacters; local syntax support is not native acceptance",
+            ),
+            (
+                "malformed_utf8",
+                "locally unsupported; original converter accepts replacement inputs; 405-case candidate is experimental, not default or full Windows equivalence",
+            ),
+            ("native_compile_valid", None),
+            ("callback_completed", None),
+            ("registration_completed", None),
+            (
+                "collection_contract",
+                "external successful-ingestion snapshot in runtime append order, duplicates retained; NULL and initialized-empty vectors distinct, both predicates false for supplied readable subjects",
+            ),
+            (
+                "receiver_state_boundary",
+                "non-NULL ensures vector before 0x800C gate; invalid leaves existing rows intact; allocation and resulting initialized-empty state remain external",
+            ),
+            (
+                "consumer_boundary",
+                "ShouldCollectDnsInfo OR predicate; SpynetThreat/BM reporting collection bool, external NID103/enginekind17/source generation; not domain IoC, detection, full-report or actual DNS acquisition",
+            ),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            ("recipe", recipe),
+        )
+    )
+
+
+def _export_dns_cache_info(parsed: NdatPayload) -> ArtifactExport:
+    model = project_ndat_dns_cache_info(parsed)
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("dns-cache-info-data.bin", "binary", model.counted_data),
+            Artifact(
+                "dns-cache-info-metadata.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_dns_cache_info_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode("utf8")
+                + b"\n",
+            ),
+        ),
+    )
+
+
+def _dns_cache_info_semantics(parsed: NdatPayload) -> RuleSemantics:
+    return RuleSemantics(
+        status="confirmed_subset",
+        representation="ndat.dns-cache-info.collection-pattern.v1",
+        data=_dns_cache_info_manifest(parsed),
+        profile="mpengine-1.443.903.0",
+        evidence=(
+            "DnsCacheInfoNdatCallback 0x180BBAE20/0x10C; ShouldCollectDnsInfo 0x180520AAC/0x66; wide regex_match 0x180520B14/0xD0",
+        ),
+        issues=(
+            SemanticIssue(
+                "dns_collection_runtime_state_external",
+                "Local pattern predicate does not establish successful ingestion, report gates, subject generation, DNS collection or detection. Malformed UTF8 local unsupported is not engine rejection.",
+            ),
+        ),
+        claims=(
+            SemanticClaim(
+                "ndat-dns-cache-info-collection-selector",
+                "runtime_consumer",
+                "Callback12 checks non-NULL count/last NUL, converts first-NUL UTF8 to wide regex flags0x400000 and appends without RecID/dedup. ShouldCollectDnsInfo ORs wide full-matches flags0x400; reporting callers set collection bool. A local empty/literal/single-edge-dotstar IR supplies an explicit-UTF16-subject predicate.",
+                "subset",
+                ("ndat-dns-cache-info-static", "ndat-dns-cache-info-native"),
+                (
+                    SemanticUnknown(
+                        "runtime_consumer",
+                        "Native evidence covers original3 patterns/empty, finite supplied controls and single-unit oracle. Arbitrary Unicode literal acceptance/multiunit equivalence, malformed UTF8 default decoding, successful ingestion state, report gates and downstream collection remain external.",
+                    ),
+                ),
+            ),
+        ),
+        claim_evidence=(
+            SemanticEvidence(
+                "ndat-dns-cache-info-static",
+                "consumer",
+                "engine_static",
+                "docs/mpengine.dll/1.443.903.0/ndat_dns_cache_info_contract_private.md",
+                ("ndat-dns-cache-info-collection-selector",),
+                "DnsCacheInfoNdatCallback@0x180BBAE20; ShouldCollectDnsInfo@0x180520AAC; SpynetThreat@0x1809BCBCC",
+            ),
+            SemanticEvidence(
+                "ndat-dns-cache-info-native",
+                "engine_equivalent_test",
+                "engine_runtime",
+                "tests/local_ndat_cb12_current_docs_v2.json",
+                ("ndat-dns-cache-info-collection-selector",),
+                "five bounded original-DLL jobs: original3/45matches/6OR, receiver11, single-unit196608, UTF8 325+80 finite observations",
+            ),
+        ),
+    )
 
 
 class UnsupportedNdatApiAttribute(ValueError):
@@ -2122,6 +2373,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs and linkage metadata."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 12:
+        return _export_dns_cache_info(parsed)
     if parsed.callback_index == 7:
         return _export_api_attribute(parsed)
     if parsed.callback_index == 4:
@@ -2328,6 +2581,40 @@ def _preview_rows(data: bytes) -> tuple[tuple[str, str], ...]:
 
 def render_ndat(parsed: NdatPayload) -> FormatResult:
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 12:
+        model = project_ndat_dns_cache_info(parsed)
+        p = model.projection
+        pattern_text = (
+            repr(p.effective_utf8.decode("utf8", errors="backslashreplace"))
+            if p.effective_utf8 is not None
+            else "not selected"
+        )
+        if len(pattern_text) > 64:
+            pattern_text = pattern_text[:61] + "..."
+        return FormatResult(
+            sections=(
+                DisplaySection(
+                    "DNS Collection Pattern",
+                    rows=(
+                        ("pattern", pattern_text),
+                        ("match", "UTF16 full-match"),
+                        ("role", "report collection selector"),
+                        (
+                            "receiver",
+                            "format rejected (0x800c)"
+                            if p.branch == "invalid"
+                            else "pattern input; registration external",
+                        ),
+                        (
+                            "local syntax",
+                            "supported"
+                            if model.portable_pattern is not None
+                            else model.portable_reason or "not selected",
+                        ),
+                    ),
+                ),
+            )
+        )
     suffix = parsed.record_id_suffix_raw
     rows = [
         ("data_length", f"{parsed.data_length} B"),
@@ -2444,6 +2731,8 @@ def render_ndat(parsed: NdatPayload) -> FormatResult:
 def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     """Export only NDAT callbacks tied to a static registration and consumer."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 12:
+        return _dns_cache_info_semantics(parsed)
     callback_targets = {
         1: "VbasicPathNdatCallback",
         3: "VdllNdatDontCountCallback",
