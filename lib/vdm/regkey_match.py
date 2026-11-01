@@ -1,12 +1,18 @@
 """REGKEY query projection and a local, prebound registry-state predicate.
 
 This models successful CP_UTF8 conversion of valid UTF-8 and the original
-ASCII-only WCHAR comparator. Registry binding, expansion and report policy are
-external. Buffers contain physical readable bytes, not padded declared sizes.
+ASCII-only WCHAR comparator. Resolver outputs and post-offline-patch bytes are
+external observations; path equality is computed locally. Buffers contain
+physical readable bytes, not padded declared sizes.
 """
 
 from dataclasses import dataclass
 
+from .regkey_paths import (
+    RegKeyExpansionSnapshot,
+    RegKeyPathComparison,
+    project_regkey_expansion,
+)
 from .types.regkey import REGKEY_HIVES, REGKEY_PREFIXES, RegKeyPayload, parse_regkey
 
 
@@ -141,6 +147,7 @@ class RegKeyMatch:
     recipe: RegKeyQueryRecipe
     record_local_match: bool | None
     reason: str
+    path_comparison: RegKeyPathComparison | None = None
 
 
 def _ascii_wide_lower(raw: bytes) -> tuple[int, ...]:
@@ -155,15 +162,13 @@ def evaluate_regkey(
     query_snapshot: RegKeyQuerySnapshot,
     *,
     asep_binding: RegKeyAsepBinding | None = None,
-    expansion_result: bool | None = None,
+    expansion_snapshot: RegKeyExpansionSnapshot | None = None,
 ) -> RegKeyMatch:
     """Evaluate only ResutilsRegKeyInHive's local predicate, lazily.
 
-    expansion_result is the external LUM/expand_path_cmp predicate for a direct
-    string mismatch. None means unknown, never false. No registry I/O occurs.
+    Direct string mismatch requires concrete, invocation-bound postpatch and
+    resolver observations. None means unknown. No registry or path I/O occurs.
     """
-    if expansion_result is not None and type(expansion_result) is not bool:
-        raise TypeError("expansion_result must be bool or None")
     recipe = project_regkey_query(record, asep_binding=asep_binding)
 
     def result(value: bool | None, reason: str) -> RegKeyMatch:
@@ -197,7 +202,12 @@ def evaluate_regkey(
             return result(None, "readable_wchar_terminator_required")
         if _ascii_wide_lower(content) == _ascii_wide_lower(expected):
             return result(True, "direct_string_equal")
-        return result(expansion_result, "external_expansion_predicate")
+        comparison = project_regkey_expansion(
+            record.raw, data, expected, kind == 2, expansion_snapshot
+        )
+        return RegKeyMatch(
+            recipe, comparison.record_local_match, comparison.reason, comparison
+        )
     if kind == 3:
         size = value.declared_size & 0xFFFFFFFF
         if size not in (len(expected), len(expected) + 2):

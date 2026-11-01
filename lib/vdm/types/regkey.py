@@ -196,9 +196,9 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
             "confirmed outer scan verdict.",
         ),
         SemanticIssue(
-            "regkey_expansion_comparator_unknown",
-            "REG_SZ/REG_EXPAND_SZ may use expand_path_cmp after direct comparison; "
-            "that helper's expansion rules are not modeled.",
+            "regkey_expansion_producer_external",
+            "REG_SZ/REG_EXPAND_SZ path equality is computed from explicit resolved "
+            "lists; offline patch and resolver output production remain external.",
         ),
     ]
     if not selector_accepted:
@@ -292,6 +292,7 @@ def export_regkey_semantics(parsed: RegKeyPayload) -> RuleSemantics:
                 ),
                 ("trailing_hex", parsed.tail_raw.hex()),
                 ("query_recipe", _query_recipe_contract(selector_accepted)),
+                ("resolved_path_comparison_profile", _resolved_path_profile()),
                 (
                     "storage_routing",
                     JSONObject(
@@ -341,6 +342,27 @@ def _regkey_claims(
     parsed: RegKeyPayload, selector_accepted: bool
 ) -> tuple[SemanticClaim, ...]:
     return (
+        SemanticClaim(
+            id="regkey_resolved_path_comparison",
+            scope="detection_predicate",
+            statement=(
+                "After direct string mismatch, invocation-bound physical postpatch "
+                "bytes and ordered resolver outputs permit actual Cartesian WCHAR "
+                "comparison, including FriendlyFileName prefix handling, ASCII "
+                "case and slash equivalence. Resolver statuses and missing facts "
+                "remain distinct from empty successful lists."
+            ),
+            coverage="subset",
+            evidence_refs=("regkey_path_comparison_static",),
+            unknowns=(
+                SemanticUnknown(
+                    "detection_predicate",
+                    "Offline patch and seven-filter resolver services are not run; "
+                    "non-ASCII CRT UNC-prefix comparison requires an actual bound "
+                    "observation. No registry event, report or final verdict follows.",
+                ),
+            ),
+        ),
         SemanticClaim(
             id="regkey_wire_layout",
             scope="wire_layout",
@@ -486,6 +508,19 @@ def _regkey_claims(
 def _regkey_evidence() -> tuple[SemanticEvidence, ...]:
     return (
         SemanticEvidence(
+            id="regkey_path_comparison_static",
+            axis="consumer",
+            kind="engine_static",
+            source_ref="mpengine 1.443.903.0",
+            locator=(
+                "expand_path_cmp @ 0x180523660 (468 bytes); GetFriendlyFileNameW @ "
+                "0x18011790C (71 bytes); ResutilsRegKeyInHive @ 0x1800BE408; "
+                "DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; "
+                "docs/signature/REGKEY_expansion_value_contract_private.md"
+            ),
+            supports=("regkey_resolved_path_comparison",),
+        ),
+        SemanticEvidence(
             id="regkey_query_native",
             axis="consumer",
             kind="engine_equivalent_test",
@@ -586,8 +621,104 @@ def _query_recipe_contract(applicable: bool) -> JSONObject:
                 (
                     "Valid UTF-8 successful conversion; logical general key or actual "
                     "caller-resolved ASEP binding; prebound query statuses/type/physical bytes/declared "
-                    "size are external. NULL differs from empty. Expansion unknown unless supplied. "
+                    "size are external. NULL differs from empty. Direct mismatch uses "
+                    "invocation-bound postpatch bytes and resolved path lists, not an external bool. "
                     "No registry event or final verdict."
+                ),
+            ),
+        )
+    )
+
+
+def _resolved_path_profile() -> JSONObject:
+    return JSONObject(
+        (
+            ("representation", "regkey.resolved-path-comparison.v1"),
+            ("evaluator", "lib.vdm.regkey_match.evaluate_regkey"),
+            ("projector", "lib.vdm.regkey_paths.project_regkey_expansion"),
+            ("snapshot_type", "lib.vdm.regkey_paths.RegKeyExpansionSnapshot"),
+            ("list_type", "lib.vdm.regkey_paths.RegKeyResolvedPathList"),
+            ("path_type", "lib.vdm.regkey_paths.RegKeyPathValue"),
+            ("crt_observation_type", "lib.vdm.regkey_paths.RegKeyUncPrefixObservation"),
+            ("error_type", "lib.vdm.regkey_paths.RegKeyPathSnapshotError"),
+            ("runtime_inputs_resolved", False),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            ("direct_equal", "Lazy success; no expansion snapshot read."),
+            (
+                "binding",
+                (
+                    "Exact payload raw, physical original value and expected WCHAR content; "
+                    "epoch identifies one invocation. Each resolver binds epoch, exact input "
+                    "buffer, opaque profile identity and uint32(ctx_flags | 0x10)."
+                ),
+            ),
+            (
+                "snapshot_fields",
+                JSONArray(
+                    (
+                        "epoch",
+                        "payload_raw",
+                        "original_value_utf16",
+                        "expected_utf16",
+                        "postpatch",
+                        "profile_identity",
+                        "context_flags",
+                        "crt_profile_identity",
+                        "left",
+                        "right",
+                    )
+                ),
+            ),
+            (
+                "physical_strings",
+                (
+                    "Immutable physical UTF-16LE bytes read by code unit through NUL; "
+                    "no padding or truncation by declared size, no host Unicode decode. "
+                    "expected_utf16 is NUL-free content. Path readable bytes None means unknown."
+                ),
+            ),
+            (
+                "postpatch",
+                (
+                    "Explicit observed bytes after LUM_ResolveOfflineFile; caller ignores "
+                    "patch status. No unchanged-buffer assumption or offline patch service runs."
+                ),
+            ),
+            (
+                "resolver_order",
+                (
+                    "REG_EXPAND_SZ (2): left service first; REG_SZ (1): postpatch singleton. "
+                    "Right service always follows. Exact status 0 is success; nonzero false; "
+                    "None unknown. Empty successful list is false after status gates. "
+                    "Ordered tuples are complete outputs; None is not empty. No services run here."
+                ),
+            ),
+            (
+                "comparison",
+                (
+                    "Left-major Cartesian pairs; FriendlyName right then left. Literal \\\\?\\ "
+                    "prefix strips four WCHARs unless CRT _wcsnicmp first eight equals "
+                    "\\\\?\\UNC\\. ASCII UNC subset is computed; non-ASCII classifier requires "
+                    "actual CRT observation bound to bytes, invocation and CRT profile. "
+                    "Final equality folds only ASCII a..z to A..Z and / to \\, through NUL. "
+                    "No Unicode casefold, slash collapse, dot removal, prefix/basename comparison."
+                ),
+            ),
+            (
+                "outcomes",
+                (
+                    "Actual local equality, first matching pair and visited pairs retain candidate "
+                    "bytes. First unknown reached read stops projection; match skips later pairs. "
+                    "Missing facts yield None; malformed types or conflicting input/epoch/profile/flags "
+                    "raise RegKeyPathSnapshotError, never silently no-match."
+                ),
+            ),
+            (
+                "unresolved",
+                (
+                    "Offline patch producer, seven ordered path filters/environment/filesystem "
+                    "services, registry binding, outer report and final verdict remain external."
                 ),
             ),
         )
@@ -603,6 +734,9 @@ def export_regkey(parsed: RegKeyPayload) -> ArtifactExport:
         "raw_hex": parsed.raw.hex(),
         "query_recipe": dict(_query_recipe_contract(1 <= parsed.key_type <= 4).items),
         "receiver_projection": dict(_project_receiver_fields(parsed).items),
+        "resolved_path_comparison_profile": semantics["data"][
+            "resolved_path_comparison_profile"
+        ],
         "record_local_match": None,
         "final_verdict": None,
         "claims": semantics["claims"],
