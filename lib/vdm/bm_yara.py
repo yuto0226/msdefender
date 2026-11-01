@@ -870,7 +870,7 @@ def render_bm_yara(
             BmYaraFidelity.UNSUPPORTED,
             tuple(BmRenderIssue(issue, 0) for issue in program.issues),
         )
-    if not rewrites:
+    if not rewrites and not program.root_end_tail_closed:
         return direct
     requirements, issues = _raw17_context_requirements(context, strict_mode=False)
     missing = list(requirements)

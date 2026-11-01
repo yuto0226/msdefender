@@ -80,7 +80,12 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
 
     graph = fields(pattern_fields.get("execution_graph"))
     fidelity_basis = "flat_decoder_operations"
-    if graph.get("has_rewrites") and not (
+    end_tail_closed = bool(
+        graph.get("root_end_tail_closed")
+        and graph.get("structure_complete")
+        and graph.get("fidelity") == "exact"
+    )
+    if (graph.get("has_rewrites") or end_tail_closed) and not (
         status == "confirmed_subset" and graph.get("fidelity") == "conditional"
     ):
         graph_fidelity = graph.get("fidelity")
@@ -102,6 +107,16 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
             ("framing_complete", framing_complete),
             ("execution_graph_fidelity", graph.get("fidelity")),
             ("fidelity_basis", fidelity_basis),
+            *(
+                (
+                    (
+                        "end_tail_scope",
+                        "same-start worker Boolean fragment only; keep the full physical pattern and length for receiver framing/derived flags, initializer raw-marker scans and mapper length guards; no whole-wrapper or receiver-acceptance equivalence",
+                    ),
+                )
+                if end_tail_closed
+                else ()
+            ),
             ("byte_translation", "BM_MAP_ALL"),
             ("worker_flags", "(2 * !trie_flags_bit1) | 1"),
             ("worker_modes", JSONArray((1, 3))),
@@ -118,7 +133,11 @@ def _candidate_matcher_projection(pattern_data: JSONObject | None) -> JSONObject
                 JSONArray(
                     (
                         "caller supplies the mapped subject window and start cursor",
-                        "mode1/3 equivalence requires complete single-segment framing and no raw 90 1B bytes in the full physical pattern",
+                        (
+                            "root END-tail qualification requires complete whole-body framing, a literal/raw01 prefix and no raw 90 1B bytes anywhere in the full physical pattern"
+                            if end_tail_closed
+                            else "mode1/3 equivalence requires complete single-segment framing and no raw 90 1B bytes in the full physical pattern"
+                        ),
                         "conditional operations retain their serialized per-operation requirements",
                     )
                 ),
