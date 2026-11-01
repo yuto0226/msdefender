@@ -118,8 +118,26 @@ def render_pattmatch(parsed: PattMatchPayload) -> FormatResult:
     return FormatResult(sections=(DisplaySection("PATTMATCH", rows=rows),))
 
 
-def _decode_length_stream(raw: bytes) -> tuple[tuple[int, ...], int, str | None]:
-    """Decode the confirmed Q-template nibble length codec, failing closed."""
+@dataclass(frozen=True, slots=True)
+class _LengthProjection:
+    lengths: tuple[int, ...]
+    consumed_nibbles: int
+    termination: str
+    terminal_nibble_offset: int
+    terminal_opcode: int | None
+    returned_length: int | None
+    error: str | None = None
+
+
+def _decode_length_stream(
+    raw: bytes, *, consumer_boundary: bool = False
+) -> _LengthProjection:
+    """Separate wire codec diagnostics from the Q consumer's structural prefix.
+
+    The consumer checks the current byte for 90 00 before calling decodelen,
+    even at high-nibble phase, and exits on *any* zero length. Runtime candidate
+    bounds can stop earlier; this projection does not execute those gates.
+    """
     cursor = 0
     phase = 0
     decoded: list[int] = []
@@ -136,38 +154,69 @@ def _decode_length_stream(raw: bytes) -> tuple[tuple[int, ...], int, str | None]
             phase = 1
         return value
 
+    def stop(
+        kind: str,
+        start: int,
+        opcode: int | None = None,
+        value: int | None = None,
+        error: str | None = None,
+    ) -> _LengthProjection:
+        return _LengthProjection(
+            tuple(decoded), cursor * 2 + phase, kind, start, opcode, value, error
+        )
+
     while True:
+        start = cursor * 2 + phase
+        if consumer_boundary and cursor < len(raw) and raw[cursor] == 0x90:
+            if cursor + 1 >= len(raw):
+                return stop(
+                    "physical_stream_incomplete",
+                    start,
+                    error="truncated_sentinel_lookahead",
+                )
+            if raw[cursor + 1] == 0:
+                return stop("raw_90_00_sentinel", start)
         opcode = read_nibble()
         if opcode is None:
-            return tuple(decoded), cursor * 2 + phase, "length_stream_exhausted"
+            return stop(
+                "physical_stream_incomplete", start, error="length_stream_exhausted"
+            )
         if opcode == 0:
-            return tuple(decoded), cursor * 2 + phase, None
+            return stop("decodelen_returned_zero", start, opcode, 0)
         if opcode <= 7:
-            decoded.append(opcode)
-            continue
-        if opcode <= 0x0B:
+            value = opcode
+        elif opcode <= 0x0B:
             operand = read_nibble()
             if operand is None:
-                return tuple(decoded), cursor * 2 + phase, "truncated_length_operand"
-            decoded.append(16 * (opcode & 3) + operand)
-            continue
-        if opcode <= 0x0D:
+                return stop(
+                    "physical_stream_incomplete",
+                    start,
+                    opcode,
+                    error="truncated_length_operand",
+                )
+            value = 16 * (opcode & 3) + operand
+        elif opcode <= 0x0D:
             high = read_nibble()
             low = read_nibble()
             if high is None or low is None:
-                return tuple(decoded), cursor * 2 + phase, "truncated_length_operand"
-            decoded.append(256 * (opcode & 1) + 16 * high + low)
-            continue
-        # Runtime decodelen returns zero for both 0xE and 0xF. full_match
-        # treats that return as the end of the encoded length sequence.
-        return tuple(decoded), cursor * 2 + phase, None
+                return stop(
+                    "physical_stream_incomplete",
+                    start,
+                    opcode,
+                    error="truncated_length_operand",
+                )
+            value = 256 * (opcode & 1) + 16 * high + low
+        else:
+            return stop("decodelen_returned_zero", start, opcode, 0)
+        if consumer_boundary and value == 0:
+            return stop("decodelen_returned_zero", start, opcode, value)
+        decoded.append(value)
 
 
 def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
     """Export confirmed PATTMATCH prefilter and candidate CRC semantics."""
-    lengths, decoded_nibble_count, decode_error = _decode_length_stream(
-        parsed.nibble_stream_raw
-    )
+    wire = _decode_length_stream(parsed.nibble_stream_raw)
+    active = _decode_length_stream(parsed.nibble_stream_raw, consumer_boundary=True)
     issues: list[SemanticIssue] = [
         SemanticIssue(
             "engine_candidate_decoder_required",
@@ -181,13 +230,13 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
         ),
     ]
     unsupported = False
-    if decode_error is not None:
+    if active.error is not None:
         unsupported = True
         issues.append(
             SemanticIssue(
-                decode_error,
-                "The nibble stream cannot be interpreted as a confirmed "
-                "Q-template length sequence.",
+                active.error,
+                "The reached structural length prefix lacks physical encoded "
+                "bytes; this is not a candidate mismatch or a proven zero return.",
                 (("nibble_stream_raw_hex", parsed.nibble_stream_raw.hex()),),
             )
         )
@@ -224,8 +273,55 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
                 ),
             ),
             ("nibble_stream_raw_hex", parsed.nibble_stream_raw.hex()),
-            ("decoded_nibble_count", decoded_nibble_count),
-            ("instruction_lengths", JSONArray(lengths)),
+            ("wire_decoded_lengths", JSONArray(wire.lengths)),
+            ("wire_consumed_nibbles", wire.consumed_nibbles),
+            ("wire_decode_error", wire.error),
+            ("instruction_lengths", JSONArray(active.lengths)),
+            ("active_consumed_nibbles", active.consumed_nibbles),
+            (
+                "instruction_lengths_scope",
+                (
+                    "structural_consumer_prefix; runtime callback and candidate-size "
+                    "gates may stop before this prefix is consumed"
+                ),
+            ),
+            (
+                "length_termination",
+                JSONObject(
+                    (
+                        ("kind", active.termination),
+                        ("nibble_offset", active.terminal_nibble_offset),
+                        ("opcode", active.terminal_opcode),
+                        ("decoded_value", active.returned_length),
+                        ("error", active.error),
+                        ("candidate_match", None),
+                        ("crc_comparison_after_normal_loop_exit", True),
+                    )
+                ),
+            ),
+            (
+                "unconsumed_encoded_tail",
+                JSONObject(
+                    (
+                        (
+                            "scope",
+                            (
+                                "nibbles not consumed by decodelen; not a physical-read "
+                                "trace; containing byte may include a consumed low nibble"
+                            ),
+                        ),
+                        ("nibble_offset", active.consumed_nibbles),
+                        ("byte_offset", active.consumed_nibbles // 2),
+                        ("phase", active.consumed_nibbles % 2),
+                        (
+                            "raw_hex_from_containing_byte",
+                            parsed.nibble_stream_raw[
+                                active.consumed_nibbles // 2 :
+                            ].hex(),
+                        ),
+                    )
+                ),
+            ),
             (
                 "crc_check",
                 JSONObject(
@@ -246,7 +342,7 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
     )
     return RuleSemantics(
         status="unsupported" if unsupported else "confirmed_subset",
-        representation="pattmatch.instruction_crc.ir.v2",
+        representation="pattmatch.instruction_crc.ir.v3",
         data=data,
         evidence=(
             (
@@ -262,6 +358,11 @@ def export_pattmatch_semantics(parsed: PattMatchPayload) -> RuleSemantics:
                 "instruction length codec"
             ),
             "PattProcessor::full_match accumulates candidate bytes with CRC_0",
+            (
+                "full_match checks the current byte cursor for 90 00 before "
+                "decodelen, and any zero return exits to CRC comparison; wire "
+                "diagnostics after that boundary are not active CRC segments"
+            ),
             (
                 "patt_pushend sorts rows with s_patt_cmp_full; that comparator "
                 "compares the full metadata DWORD after the 8-byte key"
