@@ -528,6 +528,179 @@ def _export_ssl_cert_pattern(parsed: NdatPayload) -> ArtifactExport:
     )
 
 
+class UnsupportedNdatPdbPathPattern(ValueError):
+    """Outside callback-10 non-NULL pattern-registration framing."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatPdbPathPattern:
+    raw: bytes
+    counted_data: bytes
+    effective_pattern: bytes
+    after_pattern_terminator: bytes
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+    syntax_flags: int = 0x100000
+
+
+def project_ndat_pdb_path_pattern(parsed: NdatPayload) -> NdatPdbPathPattern:
+    """Reparse callback10, preserving byte spelling and first-NUL boundaries.
+
+    Nonempty counted data ending in NUL is the non-NULL registration profile,
+    not arbitrary Boost compilation validation or a wire NULL-finalize rule.
+    No path normalization, decoding, portable regex or policy evaluation runs.
+    """
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 10:
+        raise UnsupportedNdatPdbPathPattern("requires callback decimal10 (0x0A)")
+    data = parsed.data_raw
+    if not data or data[-1] != 0:
+        raise UnsupportedNdatPdbPathPattern(
+            "requires nonempty counted data ending in NUL"
+        )
+    first = data.index(0)
+    return NdatPdbPathPattern(
+        parsed.raw,
+        data,
+        data[:first],
+        data[first + 1 :],
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+    )
+
+
+def _pdb_path_manifest(parsed: NdatPayload) -> JSONObject:
+    try:
+        pattern = project_ndat_pdb_path_pattern(parsed)
+    except UnsupportedNdatPdbPathPattern as exc:
+        return JSONObject(
+            (
+                ("format", "vdm.ndat.pdb-path.boost-pattern.v1"),
+                ("framing_supported", False),
+                ("reason", str(exc)),
+            )
+        )
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.pdb-path.boost-pattern.v1"),
+            ("framing_supported", True),
+            ("callback_decimal", 10),
+            ("counted_data_hex", pattern.counted_data.hex()),
+            ("effective_pattern_hex", pattern.effective_pattern.hex()),
+            ("after_pattern_terminator_hex", pattern.after_pattern_terminator.hex()),
+            (
+                "record_id_suffix_hex",
+                None
+                if pattern.record_id_suffix_raw is None
+                else pattern.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_hex", pattern.trailing_raw.hex()),
+            ("syntax_flags_u32", 0x100000),
+            (
+                "backend",
+                "original RegExState::PushRegEx -> Boost re_detail_500 w32_regex_traits<char>, raw flags0x100000; native ASCII icase/capture-backreference controls, not portable regex equivalence",
+            ),
+            (
+                "locale_dependency",
+                "runtime default-LCID byte traits; UTF8 wire spelling does not imply Unicode decoding/casefold; host LCID/ACP is environment, not internal traits readback",
+            ),
+            (
+                "subject_recipe",
+                JSONObject(
+                    (
+                        ("projector", "lib.vdm.pdb_path.project_pdb_path_source"),
+                        ("snapshot_type", "lib.vdm.pdb_path.PdbDebugSnapshot"),
+                        ("mapping_type", "lib.vdm.pdb_path.PdbMappedBytes"),
+                        ("result_type", "lib.vdm.pdb_path.PdbPathSource"),
+                        (
+                            "unsupported_error",
+                            "lib.vdm.pdb_path.UnsupportedPdbPathSource",
+                        ),
+                        (
+                            "input",
+                            "resolved pecontext directory u32 fields+20F4/+20F8 and mapped base u64+83798; caller-supplied mapped stages, not disk file offsets or a PE mapper",
+                        ),
+                        (
+                            "selection",
+                            "first28-byte debug entry only: Type+12==2, AddressOfRawData+20 nonzero, SizeOfData+16>=25; map24-byte header and require RSDS",
+                        ),
+                        (
+                            "path",
+                            "CodeView+24 mapped CString; original mmap_string_ex maximum=SizeOfData-23, out length excludes NUL, empty skips; no added terminator or multi-entry/NB10 fallback",
+                        ),
+                        (
+                            "mapping_boundary",
+                            "missing stages/insufficient physical data/wrong addresses are typed unsupported; explicit mapping failure and normal gates remain distinct; successful resolved storage does not reconstruct mapping-window/cache/remap history",
+                        ),
+                        (
+                            "address_arithmetic",
+                            "zero-extended u32 fields plus mapped base modulo u64; maximum subtraction is original u32 SizeOfData-23 after >=25 gate",
+                        ),
+                        (
+                            "subject",
+                            "original full mapped path byte CString, not basename or process path; no caller Unicode/UTF8 conversion, slash rewriting or path virtualization in the regex loop",
+                        ),
+                        (
+                            "descriptor",
+                            JSONObject(
+                                (
+                                    ("address", "0x181289AB8"),
+                                    ("path_vector_offset", 0),
+                                    ("name_vector_offset", 8),
+                                    ("nid_snid_selector_offset", 16),
+                                    ("nid_snid_selector", 77),
+                                    ("nid_snid_selector_hex", "0x4D"),
+                                )
+                            ),
+                        ),
+                        (
+                            "boundary",
+                            "recipe-local source only; attributes/NID/SNID/basename processing can change execution, and ShouldContinueScanning/delayed reporting remain external",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "query",
+                "RegExState::Match searches byte CString through its first NUL with original find_imp; regex hit passes row RecID to ShouldContinueScanning(result1,sequence0,EmptySha1), not final disposition",
+            ),
+            ("projector", "lib.vdm.types.ndat.project_ndat_pdb_path_pattern"),
+            ("pattern_type", "lib.vdm.types.ndat.NdatPdbPathPattern"),
+            ("unsupported_error", "lib.vdm.types.ndat.UnsupportedNdatPdbPathPattern"),
+            ("runtime_record_id", None),
+            ("runtime_name", None),
+            ("compile_valid", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+            ("evaluator", None),
+            ("portable_projection", None),
+        )
+    )
+
+
+def _export_pdb_path_pattern(parsed: NdatPayload) -> ArtifactExport:
+    try:
+        pattern = project_ndat_pdb_path_pattern(parsed)
+    except UnsupportedNdatPdbPathPattern as exc:
+        return ArtifactExport("unsupported", reason=str(exc))
+    return ArtifactExport(
+        "ready",
+        (
+            Artifact("pdb-path-pattern.boost.bin", "binary", pattern.effective_pattern),
+            Artifact(
+                "pdb-path-pattern.json",
+                "json",
+                json.dumps(
+                    semantic_json_to_data(_pdb_path_manifest(parsed)),
+                    ensure_ascii=True,
+                    indent=2,
+                ).encode()
+                + b"\n",
+            ),
+        ),
+    )
+
+
 class UnsupportedNdatRawBodyPattern(ValueError):
     """Outside callback-19 non-NULL pattern-registration framing."""
 
@@ -1010,6 +1183,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs with their distinct backend contracts."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 10:
+        return _export_pdb_path_pattern(parsed)
     if parsed.callback_index == 19:
         return _export_raw_body_pattern(parsed)
     if parsed.callback_index == 20:
@@ -1253,6 +1428,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     has_ssl_cert_consumer = parsed.callback_index == 18
     has_raw_ssl_consumer = parsed.callback_index == 20
     has_raw_body_consumer = parsed.callback_index == 19
+    has_pdb_path_consumer = parsed.callback_index == 10
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
@@ -1264,10 +1440,26 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         if has_raw_ssl_consumer
         else "boost_w32_binary_pattern_ingest_and_ordered_raw_views_search"
         if has_raw_body_consumer
+        else "boost_w32_pdb_path_pattern_ingest_and_rsds_cstring_search"
+        if has_pdb_path_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_pdb_path_consumer:
+        issues.append(
+            SemanticIssue(
+                "pdb_path_backend_and_resolved_mappings_required",
+                "Only first-entry RSDS source preparation over explicit resolved mappings is projected; Boost w32 locale/compiler, attributes/NID/SNID/basename and reporting policy remain external.",
+            )
+        )
+        if not parsed.data_raw or parsed.data_raw[-1] != 0:
+            issues.append(
+                SemanticIssue(
+                    "pdb_path_nonnull_pattern_profile_unsupported",
+                    "Outside non-NULL pattern registration, without declaring generic wire malformed or inferring NULL finalize.",
+                )
+            )
     if has_raw_body_consumer:
         issues.append(
             SemanticIssue(
@@ -1425,7 +1617,9 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
                 *(
-                    (("raw_body_pattern", _raw_body_manifest(parsed)),)
+                    (("pdb_path_pattern", _pdb_path_manifest(parsed)),)
+                    if has_pdb_path_consumer
+                    else (("raw_body_pattern", _raw_body_manifest(parsed)),)
                     if has_raw_body_consumer
                     else (("raw_ssl_pattern", _raw_ssl_manifest(parsed)),)
                     if has_raw_ssl_consumer
@@ -1506,6 +1700,25 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-pdb-path-pattern-source-contract",
+                        "runtime_consumer",
+                        "Callback10 stores first-NUL Boost byte patterns through original PushRegEx with flags0x100000 and row RecID+16. The traced scan_debugdir caller selects a mapped first-entry CodeView RSDS path CString at+24, using SizeOfData-23 as original string bound and rejecting empty paths. scan_filepath supplies the original full path to CString Match; basename and earlier NID/SNID/attribute paths are separate.",
+                        "subset",
+                        ("ndat-pdb-path-static", "ndat-pdb-path-native-host"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Resolved mapped snapshots do not implement a PE mapper/window/cache lifecycle; full compiler/traits/locale acceptance, upstream mapping failures and ShouldContinueScanning/delayed-report/namespace policy remain external. Arbitrary new pattern compile/match/verdict is unknown.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_pdb_path_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -1710,6 +1923,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     if has_raw_ssl_consumer
                     else "The raw body pattern, two ordered binary views and strict byte predicate are exported separately; upstream view roles and post-match policy remain external."
                     if has_raw_body_consumer
+                    else "The PDB path pattern and first-entry mapped RSDS source contract are exported separately; complete mapping, attributes/NID/SNID and reporting policy remain external."
+                    if has_pdb_path_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -1738,6 +1953,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             if has_raw_ssl_consumer
                             else "Upstream view roles/decoding, whole Boost grammar and native exception/resource/namespace/post-match state remain external."
                             if has_raw_body_consumer
+                            else "Complete mapped-window lifecycle, runtime Boost traits/compiler and ShouldContinueScanning/delayed-report state remain external."
+                            if has_pdb_path_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -1809,6 +2026,29 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-pdb-path-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine1.443.903.0",
+                        ("ndat-pdb-path-pattern-source-contract",),
+                        "PdbPathNdatCallback180573920/15 -> FilePathNdatCallback1801FB7E4/105 -> PushRegEx1801FC020/3F stores RecID+16,strlen->do_assign1801FC300/E6 flags100000,row24. scan_debugdir1804B7EB0/1FB maps first debug entry Type2,AddressOfRawData+20,Size>=25,RSDS24,path+24 -> mmap_string_ex18013C100/FA(max=Size-23,outlen excludesNUL). scan_filepath180143EE4/AFE descriptor181289AB8(pathvec/namevec/selector77) -> original full CString Match1800B6D64 at1440C4 -> ShouldContinueScanning1801449E4. docs/mpengine.dll/1.443.903.0/ndat_pdb_path_contract_private.md; snapshot address/gate projection is static attribution, not executed complete mapper/consumer.",
+                    ),
+                    SemanticEvidence(
+                        "ndat-pdb-path-native-host",
+                        "consumer",
+                        "engine_runtime",
+                        "Pinned original Windows DLL actual PushRegEx and CString Match",
+                        ("ndat-pdb-path-pattern-source-contract",),
+                        "Current offline production bridge tests/local_ndat_pdb_path_bridge.py SHA256 e3ed31294d8156ec1dd60214ef0bef5b2f03d9aa84ca9bcdbe0a64205b3210f4. "
+                        "DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; tests/local_cb10_push_native_v2.py SHAc6ccf199144b9a1ce9eef66a935fdc69d73c59494b0d74a95e7e97f2caa5ab91; manifestff9d307a13a4877ea6215c3279d96174290781b56742952431972d4699dfd76d; .tmp/local_cb10_native_audit_v1.json SHA9a7a7061ec5ba79ccb108dec6fd974e46fca5b0fff973f5cddbec7a60de22944 pins40batches/640Push0/3200Match/201true67rows. Original zero24rows/RecID+16/padding/codepin/canary checks; no Unicorn trace, complete callback or RSDS/map/policy execution. v2 raw_utf8 was actually3f3f00 (mislabel, not Unicode failure); corrected tests/local_cb10_synthetic_utf8_native_v3.py SHAfa98646da9af2334f4d61d4f12971bbda184d6d14512f73ec3d3ec6f5a15df2c uses e6b8ace8a9a600,Push0/exact/prefix/suffix/NULafter true. Root native subset .tmp/local_cb10_native_root_subset_v1.json SHA250009b2a865c1535853e0656fe3c575125cc5e90cf3ed25238de9c6e27a07da; separate offline root audit cd0c5ab0bbf2ec900348ee33cf404c65de5fadd4f9351752c452c8a9d1c18025.",
+                    ),
+                )
+                if has_pdb_path_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
