@@ -535,7 +535,6 @@ def _execution_graph(
         and context.pattern_preparation == "identity"
         and context.worker_modes in ((1,), (3,), (1, 3))
         and context.capture_enabled is False
-        and context.match_offset_output_supplied is False
         and context.matches_vector_supplied is False
         and b"\x90\x1b" not in pattern.raw
     )
@@ -554,7 +553,7 @@ def _execution_graph(
         "structure_complete": program.complete,
         "fidelity": fidelity,
         "has_rewrites": any(node.rewrite is not None for node in program.invocations),
-        "scope": "same-start Boolean acceptance; valid backing and successful temporary allocation; child scratch is local and nonnull; outer scratch may be null; null backrefs and external outputs; excludes first-success cursor, match end and reporting",
+        "scope": "same-start Boolean acceptance; valid disjoint backing and scalar output storage, and successful temporary allocation; child scratch is local and nonnull; outer scratch may be null; null backrefs and matches vector; scalar output may be null or nonnull; excludes first-success cursor, match end and reporting",
         "issues": list(program.issues),
         "invocations": [
             {

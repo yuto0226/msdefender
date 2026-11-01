@@ -883,7 +883,14 @@ def _hstr_bm_runtime_context(
     if identity:
         translation = bytes(range(256))
     capture_marker_bytes_present = b"\x90\x1b" in pattern.raw
-    capture_enabled = None if capture_marker_bytes_present else False
+    # Ex2 arg9 is always &var_1C0; arg10 is a separate vector selected by
+    # row flag 0x0020. Only the vector can affect backref initialization.
+    matches_vector_supplied = bool(flags & 0x0020)
+    capture_enabled = (
+        False
+        if not matches_vector_supplied and not capture_marker_bytes_present
+        else None
+    )
     worker_mode = ((flags >> 6) & 2) | 1
     display = JSONObject(
         (
@@ -896,7 +903,9 @@ def _hstr_bm_runtime_context(
                 "identity" if identity else "BMPatternToLower @ 0x1800FECFC",
             ),
             ("worker_mode", worker_mode),
-            ("offsets_argument_present", False),
+            ("match_offset_output_supplied", True),
+            ("matches_vector_supplied", matches_vector_supplied),
+            ("offsets_argument_present", matches_vector_supplied),
             ("capture_marker_bytes_present", capture_marker_bytes_present),
             ("capture_enabled", capture_enabled),
         )
@@ -907,22 +916,17 @@ def _hstr_bm_runtime_context(
         worker_mode=worker_mode,
         capture_enabled=capture_enabled,
         pattern_preparation="identity" if identity else "ascii_lowercase",
-    )
-    complete_single_segment = (
-        pattern.issue is None and pattern.ended and not pattern.remaining_raw
+        match_offset_output_supplied=True,
+        matches_vector_supplied=matches_vector_supplied,
     )
     semantic_context = BmSemanticContext(
         reader_kind="BUFFER",
         translation="identity" if identity else "ascii_lowercase",
         worker_modes=(worker_mode,),
-        capture_enabled=(
-            False
-            if complete_single_segment
-            and worker_mode == 1
-            and not capture_marker_bytes_present
-            else None
-        ),
+        capture_enabled=capture_enabled,
         pattern_preparation="identity" if identity else "ascii_lowercase",
+        match_offset_output_supplied=True,
+        matches_vector_supplied=matches_vector_supplied,
     )
     return display, match_context, semantic_context
 

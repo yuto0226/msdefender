@@ -874,15 +874,14 @@ def render_bm_yara(
         return direct
     requirements, issues = _raw17_context_requirements(context, strict_mode=False)
     missing = list(requirements)
-    for name, expected in (
-        ("match_offset_output_supplied", False),
-        ("matches_vector_supplied", False),
-    ):
-        value = getattr(context, name, None)
-        if value is None:
-            missing.append(f"{name}={expected}")
-        elif value is not expected:
-            issues += (BmRenderIssue(f"incompatible_context.{name}", 0),)
+    # Ex2 writes its optional scalar match end only after worker success. It
+    # neither reaches the worker nor controls backref initialization. The
+    # matches vector does control initialization and remains a separate gate.
+    value = context.matches_vector_supplied if context else None
+    if value is None:
+        missing.append("matches_vector_supplied=False")
+    elif value is not False:
+        issues += (BmRenderIssue("incompatible_context.matches_vector_supplied", 0),)
     requirements = tuple(missing)
     if b"\x90\x1b" in pattern.raw:
         issues += (BmRenderIssue("unsupported.recursive_capture_marker", 0),)
