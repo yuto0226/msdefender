@@ -20,6 +20,12 @@ from ..core import (
     SemanticUnknown,
     semantic_json_to_data,
 )
+from ..raw_body import (
+    RawBodyPattern,
+    UnsupportedRawBodyPattern,
+    compile_raw_body_pattern,
+    render_raw_body_yara,
+)
 from ..raw_ssl_cert import (
     RawSslBytePattern,
     UnsupportedRawSslPattern,
@@ -522,6 +528,250 @@ def _export_ssl_cert_pattern(parsed: NdatPayload) -> ArtifactExport:
     )
 
 
+class UnsupportedNdatRawBodyPattern(ValueError):
+    """Outside callback-19 non-NULL pattern-registration framing."""
+
+
+@dataclass(frozen=True, slots=True)
+class NdatRawBodyPattern:
+    raw: bytes
+    counted_data: bytes
+    effective_pattern: bytes
+    after_pattern_terminator: bytes
+    record_id_suffix_raw: bytes | None
+    trailing_raw: bytes
+    portable_pattern: RawBodyPattern | None
+    portable_reason: str | None
+    syntax_flags: int = 0x400000
+
+
+def project_ndat_raw_body_pattern(parsed: NdatPayload) -> NdatRawBodyPattern:
+    """Reparse callback19 and preserve backend bytes beyond portable grammar.
+
+    Nonempty counted data ending in NUL is a non-NULL registration profile;
+    effective bytes exclude the first NUL, with remaining counted bytes and
+    suffix/trailing separate. Framing never asserts arbitrary compile validity.
+    """
+    parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index != 19:
+        raise UnsupportedNdatRawBodyPattern("requires callback decimal19 (0x13)")
+    data = parsed.data_raw
+    if not data or data[-1] != 0:
+        raise UnsupportedNdatRawBodyPattern(
+            "requires nonempty counted data ending in NUL"
+        )
+    first = data.index(0)
+    effective = data[:first]
+    try:
+        portable, reason = compile_raw_body_pattern(effective), None
+    except UnsupportedRawBodyPattern as exc:
+        portable, reason = None, str(exc)
+    return NdatRawBodyPattern(
+        parsed.raw,
+        data,
+        effective,
+        data[first + 1 :],
+        parsed.record_id_suffix_raw,
+        parsed.trailing_raw,
+        portable,
+        reason,
+    )
+
+
+def _raw_body_manifest(parsed: NdatPayload) -> JSONObject:
+    try:
+        pattern = project_ndat_raw_body_pattern(parsed)
+    except UnsupportedNdatRawBodyPattern as exc:
+        return JSONObject(
+            (
+                ("format", "vdm.ndat.raw-body.boost-pattern.v1"),
+                ("framing_supported", False),
+                ("reason", str(exc)),
+            )
+        )
+    portable = pattern.portable_pattern
+    rule_name = (
+        "ndat_raw_body_" + hashlib.sha256(pattern.raw).hexdigest()
+        if portable is not None
+        else None
+    )
+    return JSONObject(
+        (
+            ("format", "vdm.ndat.raw-body.boost-pattern.v1"),
+            ("framing_supported", True),
+            ("callback_decimal", 19),
+            ("counted_data_hex", pattern.counted_data.hex()),
+            ("effective_pattern_hex", pattern.effective_pattern.hex()),
+            ("after_pattern_terminator_hex", pattern.after_pattern_terminator.hex()),
+            (
+                "record_id_suffix_hex",
+                None
+                if pattern.record_id_suffix_raw is None
+                else pattern.record_id_suffix_raw.hex(),
+            ),
+            ("trailing_hex", pattern.trailing_raw.hex()),
+            ("syntax_flags_u32", 0x400000),
+            ("search_match_flags_u32", 0x400),
+            (
+                "backend",
+                "original Boost re_detail_500 w32 byte traits; binary iterator Search, not CString subject or BM",
+            ),
+            (
+                "locale_dependency",
+                "original runtime default-LCID traits; host locale observations are environment, not internal traits readback",
+            ),
+            (
+                "subject_recipe",
+                JSONObject(
+                    (
+                        ("projector", "lib.vdm.raw_body.project_raw_body_queries"),
+                        ("view_type", "lib.vdm.raw_body.RawBodyView"),
+                        ("query_type", "lib.vdm.raw_body.RawBodyQuery"),
+                        (
+                            "unsupported_error",
+                            "lib.vdm.raw_body.UnsupportedRawBodySubject",
+                        ),
+                        ("ordered_metadata_offsets", JSONArray((0x30, 0x38))),
+                        ("ordered_policy_bytes", JSONArray((0, 1))),
+                        (
+                            "range",
+                            "each independent view: full buffer pointer+8, zero-extended u32 size+4; NULL view/buffer or zero size skips only that view",
+                        ),
+                        (
+                            "boundary",
+                            "no SSL+6/BE24 framing, concatenation or inferred HTTP request/response/decoding; pattern-vector presence and runtime policy remain external",
+                        ),
+                    )
+                ),
+            ),
+            (
+                "portable_projection",
+                JSONObject(
+                    (
+                        ("supported", portable is not None),
+                        ("reason", pattern.portable_reason),
+                        (
+                            "language",
+                            "strict printable ASCII/hex/escaped-punctuation bytes, dot-any256, top-level alternatives, CC{1,8}, internal .{32}/.{0,8} jumps only; nonnullable branches",
+                        ),
+                        (
+                            "anchors",
+                            "only fixed literal branches excluding boundary bytes; previous/next 0A/0C/0D/85 or selected-span bounds; not general regex anchors",
+                        ),
+                        (
+                            "branches",
+                            None
+                            if portable is None
+                            else JSONArray(
+                                tuple(
+                                    JSONObject(
+                                        (
+                                            ("start_anchor", branch.start_anchor),
+                                            ("end_anchor", branch.end_anchor),
+                                            (
+                                                "tokens",
+                                                JSONArray(
+                                                    tuple(
+                                                        JSONObject(
+                                                            (
+                                                                ("value", token.value),
+                                                                (
+                                                                    "minimum",
+                                                                    token.minimum,
+                                                                ),
+                                                                (
+                                                                    "maximum",
+                                                                    token.maximum,
+                                                                ),
+                                                            )
+                                                        )
+                                                        for token in branch.tokens
+                                                    )
+                                                ),
+                                            ),
+                                        )
+                                    )
+                                    for branch in portable.branches
+                                )
+                            ),
+                        ),
+                        ("compiler", "lib.vdm.raw_body.compile_raw_body_pattern"),
+                        ("pattern_type", "lib.vdm.raw_body.RawBodyPattern"),
+                        ("branch_type", "lib.vdm.raw_body.RawBodyBranch"),
+                        ("token_type", "lib.vdm.raw_body.RawBodyToken"),
+                        ("predicate", "lib.vdm.raw_body.search_raw_body_bytes"),
+                        ("renderer", "lib.vdm.raw_body.render_raw_body_yara"),
+                        (
+                            "unsupported_error",
+                            "lib.vdm.raw_body.UnsupportedRawBodyPattern",
+                        ),
+                        ("rule_name", rule_name),
+                        (
+                            "yara_source",
+                            None
+                            if portable is None
+                            else render_raw_body_yara(portable, rule_name),
+                        ),
+                        (
+                            "scope",
+                            "Boolean search/YARA only on identical explicit selected subject bytes; no native resource/exception or post-match policy model",
+                        ),
+                        (
+                            "validated_yara_version",
+                            "4.5.4 frozen corpus/recorded-span differential",
+                        ),
+                        ("yara_compile_valid", None),
+                    )
+                ),
+            ),
+            ("projector", "lib.vdm.types.ndat.project_ndat_raw_body_pattern"),
+            ("pattern_type", "lib.vdm.types.ndat.NdatRawBodyPattern"),
+            ("unsupported_error", "lib.vdm.types.ndat.UnsupportedNdatRawBodyPattern"),
+            (
+                "query",
+                "all rows Search then ProcessMatchedSignature consumes runtime RecID/SigSeq/context/metadata and per-view0/1 policy; regex hit is not final policy success",
+            ),
+            ("runtime_record_id", None),
+            ("runtime_signature_sequence", None),
+            ("compile_valid", None),
+            ("record_local_match", None),
+            ("final_verdict", None),
+        )
+    )
+
+
+def _export_raw_body_pattern(parsed: NdatPayload) -> ArtifactExport:
+    try:
+        pattern = project_ndat_raw_body_pattern(parsed)
+    except UnsupportedNdatRawBodyPattern as exc:
+        return ArtifactExport("unsupported", reason=str(exc))
+    manifest = _raw_body_manifest(parsed)
+    artifacts = [
+        Artifact("raw-body-pattern.boost.bin", "binary", pattern.effective_pattern),
+        Artifact(
+            "raw-body-pattern.json",
+            "json",
+            json.dumps(
+                semantic_json_to_data(manifest), ensure_ascii=True, indent=2
+            ).encode()
+            + b"\n",
+        ),
+    ]
+    if pattern.portable_pattern is not None:
+        name = "ndat_raw_body_" + hashlib.sha256(pattern.raw).hexdigest()
+        artifacts.append(
+            Artifact(
+                "raw-body-pattern.yar",
+                "yara",
+                (
+                    "// Same selected explicit body-view span only; no network policy or HTTP-role inference.\n"
+                    + render_raw_body_yara(pattern.portable_pattern, name)
+                ).encode("ascii"),
+            )
+        )
+    return ArtifactExport("ready", tuple(artifacts))
+
+
 class UnsupportedNdatRawSslPattern(ValueError):
     """Outside callback-20 non-NULL pattern-registration framing."""
 
@@ -760,6 +1010,8 @@ def _export_raw_ssl_pattern(parsed: NdatPayload) -> ArtifactExport:
 def export_ndat(parsed: NdatPayload) -> ArtifactExport:
     """Export supported NDAT pattern inputs with their distinct backend contracts."""
     parsed = parse_ndat(parsed.raw)
+    if parsed.callback_index == 19:
+        return _export_raw_body_pattern(parsed)
     if parsed.callback_index == 20:
         return _export_raw_ssl_pattern(parsed)
     if parsed.callback_index == 18:
@@ -1000,6 +1252,7 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
     has_generic_regex_consumer = parsed.callback_index == 13
     has_ssl_cert_consumer = parsed.callback_index == 18
     has_raw_ssl_consumer = parsed.callback_index == 20
+    has_raw_body_consumer = parsed.callback_index == 19
     business_semantics = (
         "boost_w32_byte_pattern_ingest_and_uri_search"
         if has_http_url_consumer
@@ -1009,10 +1262,26 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         if has_ssl_cert_consumer
         else "boost_w32_binary_pattern_ingest_and_explicit_raw_span_search"
         if has_raw_ssl_consumer
+        else "boost_w32_binary_pattern_ingest_and_ordered_raw_views_search"
+        if has_raw_body_consumer
         else callback_semantics.get(parsed.callback_index, "unknown")
     )
     has_logskip_consumer = parsed.callback_index in callback_semantics
     issues = []
+    if has_raw_body_consumer:
+        issues.append(
+            SemanticIssue(
+                "raw_body_explicit_views_and_policy_boundary",
+                "Two independent metadata views supply full explicit byte spans and policy0/1 in order; the strict byte language does not model general Boost grammar or final network policy.",
+            )
+        )
+        if not parsed.data_raw or parsed.data_raw[-1] != 0:
+            issues.append(
+                SemanticIssue(
+                    "raw_body_nonnull_pattern_profile_unsupported",
+                    "Outside non-NULL pattern registration, without declaring generic wire malformed or inferring NULL finalize.",
+                )
+            )
     if has_raw_ssl_consumer:
         issues.append(
             SemanticIssue(
@@ -1156,7 +1425,9 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                 ),
                 ("trailing_raw_hex", parsed.trailing_raw.hex()),
                 *(
-                    (("raw_ssl_pattern", _raw_ssl_manifest(parsed)),)
+                    (("raw_body_pattern", _raw_body_manifest(parsed)),)
+                    if has_raw_body_consumer
+                    else (("raw_ssl_pattern", _raw_ssl_manifest(parsed)),)
                     if has_raw_ssl_consumer
                     else (("ssl_cert_pattern", _ssl_cert_manifest(parsed)),)
                     if has_ssl_cert_consumer
@@ -1235,6 +1506,25 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            *(
+                (
+                    SemanticClaim(
+                        "ndat-raw-body-byte-predicate",
+                        "runtime_consumer",
+                        "Callback19 constructs first-NUL Boost binary patterns with flags0x400000. Two independent metadata views at+0x30/+0x38 supply full buffer/u32 ranges in order, with policy0/1. A bounded immutable byte AST provides case-sensitive local search and YARA on the same explicit span; dot covers256bytes, anchors only fixed literals with observed0A/0C/0D/85 or span boundaries.",
+                        "subset",
+                        ("ndat-raw-body-static", "ndat-raw-body-native-differential"),
+                        (
+                            SemanticUnknown(
+                                "runtime_consumer",
+                                "Upstream view roles/decoding, global-vector presence, general regex acceptance, native exceptions/resources and runtime RecID/SigSeq/ProcessMatchedSignature are outside the local predicate; no HTTP event or final verdict.",
+                            ),
+                        ),
+                    ),
+                )
+                if has_raw_body_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticClaim(
@@ -1418,6 +1708,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                     if has_ssl_cert_consumer
                     else "The raw binary pattern/explicit remaining-span contract and strict byte predicate are exported separately; compiler and post-match policy remain external."
                     if has_raw_ssl_consumer
+                    else "The raw body pattern, two ordered binary views and strict byte predicate are exported separately; upstream view roles and post-match policy remain external."
+                    if has_raw_body_consumer
                     else "The callback target does not establish a traced "
                     "callback-specific schema or downstream business effect."
                 ),
@@ -1444,6 +1736,8 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
                             if has_ssl_cert_consumer
                             else "Whole Boost grammar, upstream metadata and native exception/resource/namespace/post-match state remain external."
                             if has_raw_ssl_consumer
+                            else "Upstream view roles/decoding, whole Boost grammar and native exception/resource/namespace/post-match state remain external."
+                            if has_raw_body_consumer
                             else "Callback-specific schema and effects are "
                             "unresolved for this record."
                         ),
@@ -1515,6 +1809,29 @@ def export_ndat_semantics(parsed: NdatPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            *(
+                (
+                    SemanticEvidence(
+                        "ndat-raw-body-static",
+                        "consumer",
+                        "engine_static",
+                        "mpengine1.443.903.0",
+                        ("ndat-raw-body-byte-predicate",),
+                        "RawBodyNdatCallback1804B4E70/BE -> shared append1804B4F30/reallocate1804B4F8C -> ctor1801FBFE4 flags400000,row32. NetworkHipsMatch18008E567/586 binds metadata+30/+38 views; calls8EAD0/8EB1A RegExBinaryMatch1801F10D0 with buffer+8/fullDWORDsize+4, independent NULLview/NULLbuffer/size0 gates and policy0/1. Search1801F1170 explicit unsigned iterator range -> regex_search1801F1190 matchflags400/find_imp; docs/mpengine.dll/1.443.903.0/ndat_raw_body_contract_private.md",
+                    ),
+                    SemanticEvidence(
+                        "ndat-raw-body-native-differential",
+                        "consumer",
+                        "engine_runtime",
+                        "Pinned original Windows DLL Search and YARA4.5.4 recorded-span differential",
+                        ("ndat-raw-body-byte-predicate",),
+                        "DLL SHA256 928e171c60a44bb326776d2a356412ae98d78469bdf8c94ebfbfa09f8ec4b4b3; tests/local_cb19_rawbody_native_v1.py SHA256 68a1245fd2b2908e61b55aa2f735d2f4e68cadfefe207f33fa0a0f2bc8a5c20f; manifest ece0794c33eaa0188f10fbeed23e96a6c2d6cd1124827f7610f6f85ea3cafdd7; results99f0ab3083b4348edc8489f73569d4ff638c23e558277dece7b9d37cf8f3c8b0. 28constructors/1554Search, dot256all and anchorboundary256controls. tests/local_cb19_yara_feasibility.py SHA256 cf0311a2b13eef62713978e715189d4ec9cf5647e59049b909c4e2bd75a44ae6; .tmp/local_cb19_yara_differential_v1.json SHAb2059dfe48fbb830cba15c825d6ca36860eb497f9940da08810cf53023d7995a: 27single+combinedcompile,1554same-span/0mismatch. Root native subsetv2 SHA111e854920c2fed2ae5896431019382c7a04df957d568df3d8bf0b1fa4dbf764 and YARA replay0215ee994ad731bbde45e79256849e956ce8692a5a6b8baaf1da8429afe46b44. Host codepins/canaries/children only; no Unicorn trace or execution of two-view caller/fullpolicy. "
+                        "Current offline production bridge tests/local_ndat_raw_body_bridge.py SHA256 25d16f021d72b994cbd0727febeedd7a833eeac2ce75dab3bc8ee9c00dee5f6b.",
+                    ),
+                )
+                if has_raw_body_consumer
+                else ()
+            ),
             *(
                 (
                     SemanticEvidence(
