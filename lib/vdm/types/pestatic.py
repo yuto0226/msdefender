@@ -17,6 +17,7 @@ from ..core import (
     SemanticEvidence,
     SemanticIssue,
     SemanticUnknown,
+    semantic_json_to_data,
 )
 from ..recid import RecIdTail, parse_recid_tail
 
@@ -31,6 +32,49 @@ CRC_PARAMETERS: Final = {
     "initial_value": 0xFFFFFFFF,
     "final_xor": 0,
 }
+
+
+def _byte_predicate_recipe() -> JSONObject:
+    return JSONObject(
+        (
+            ("callable", "lib.vdm.pestatic_match.evaluate_pestatic"),
+            ("context_decoder", "lib.vdm.pestatic_match.decode_pestatic_section"),
+            ("context_type", "lib.vdm.pestatic_match.PeStaticSectionContext"),
+            ("selection_type", "lib.vdm.pestatic_match.PeStaticSourceSelection"),
+            ("result_type", "lib.vdm.pestatic_match.PeStaticMatch"),
+            ("stage_type", "lib.vdm.pestatic_match.PeStaticStageResult"),
+            ("unsupported_error", "lib.vdm.pestatic_match.UnsupportedPeStaticContext"),
+            (
+                "input_start",
+                "raw normalized pe_vars section caller fields +2150/+4048, base +83798, optional header adjustment; not a standard PE parser",
+            ),
+            (
+                "source_binding",
+                "explicit file complete current UFS bytes, or complete available mapped-address window and base",
+            ),
+            (
+                "execution",
+                "one cold immutable-source attempt; lazy prefix64/prefix512/content, later stages None after mismatch; no automatic file/mmap OR",
+            ),
+            (
+                "constructor_seed",
+                "consumed=0; running_crc=FFFFFFFF, confirmed original check_by_addr initialization",
+            ),
+            ("file_read_chunk_bytes", 2048),
+            (
+                "content_bound",
+                "record content_size, not whole-file or section size; prefix64/512 not clipped to content_size",
+            ),
+            (
+                "sentinel_match",
+                "incomplete prefix reads may match sentinels; read_complete, error and matched remain separate",
+            ),
+            (
+                "unknown_boundary",
+                "negative HRESULT, arbitrary short-read scheduling, unknown mapper/source binding, warm/mutable caches, full store/EX/NID/report/final verdict",
+            ),
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +179,7 @@ def export_pestatic(parsed: PeStaticPayload) -> ArtifactExport:
             ),
         },
         "payload_length": len(parsed.raw),
+        "byte_predicate_recipe": semantic_json_to_data(_byte_predicate_recipe()),
         "payload_raw_hex": parsed.raw.hex(),
         "fingerprints": {
             "crc_first_64": {
@@ -339,6 +384,7 @@ def export_pestatic_semantics(parsed: PeStaticPayload) -> RuleSemantics:
             ("type", "staged_pe_fingerprint_candidate"),
             ("source_start", "provider_selected_start"),
             ("stages", stages),
+            ("byte_predicate_recipe", _byte_predicate_recipe()),
             ("content_size", parsed.content_size),
             ("recid_tail", _tail_data(parsed.recid_tail)),
             ("final_verdict", "not_represented"),
@@ -361,6 +407,19 @@ def export_pestatic_semantics(parsed: PeStaticPayload) -> RuleSemantics:
         profile="mpengine-1.443.903.0",
         issues=tuple(issues),
         claims=(
+            SemanticClaim(
+                id="pestatic_bound_byte_predicate",
+                scope="detection_predicate",
+                statement="For the normalized section caller, raw runtime-context fields derive mapped/file starts; one explicitly bound cold immutable source supports lazy prefix64/prefix512/content CRC comparisons, including native incomplete-read sentinel matches. The helper returns only a record-local fingerprint candidate.",
+                coverage="subset",
+                evidence_refs=("pestatic_provider_native_projection",),
+                unknowns=(
+                    SemanticUnknown(
+                        "final_verdict",
+                        "Complete VMM/OS initialization, negative HRESULTs, arbitrary short-read scheduling, warm/mutable caches, multi-record/EX fallback and report/verdict policies remain outside the projection.",
+                    ),
+                ),
+            ),
             SemanticClaim(
                 id="pestatic_wire_layout",
                 scope="wire_layout",
@@ -463,6 +522,14 @@ def export_pestatic_semantics(parsed: PeStaticPayload) -> RuleSemantics:
             ),
         ),
         claim_evidence=(
+            SemanticEvidence(
+                id="pestatic_provider_native_projection",
+                axis="consumer",
+                kind="engine_equivalent_test",
+                source_ref="Pinned mpengine 1.443.903.0 original caller/constructor/ordinary Lookup/equal_range/provider/CRCOnFile/CRC and MakeSigSha; ReadAt/mmap byte services and explicit namespace/NID/report/EX services, no digest seam.",
+                locator="tests/local_pestatic_provider_native.py SHA256 e488833a20ce2ae4679b9a126ce2b031d6ef4bbfe49fa464f2e3c374e0853508 (41 cases); current bridge tests/local_pestatic_provider_differential.py SHA256 1f21f6360465780f0ca8f86186226b4d9ee9fe7348fae6fc151d2afafe1e7e33 (108 cases, including 2 additional original section-caller controls); docs/mpengine.dll/1.443.903.0/pestatic_provider_native_private.md",
+                supports=("pestatic_bound_byte_predicate",),
+            ),
             SemanticEvidence(
                 id="pestatic_dispatch",
                 axis="dispatch",
